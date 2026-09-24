@@ -1,0 +1,28 @@
+{
+  "type": "gitlab",
+  "body": {
+    "object_kind": "merge_request",
+    "event_type": "merge_request",
+    "user": {
+      "id": 7,
+      "name": "Pat Example",
+      "username": "pat"
+    },
+    "project": {
+      "id": 42,
+      "name": "widget",
+      "path_with_namespace": "acme/widget",
+      "web_url": "https://gitlab.com/acme/widget"
+    },
+    "object_attributes": {
+      "id": 700,
+      "iid": 7,
+      "title": "Add shared ingestion intake",
+      "state": "opened",
+      "action": "open",
+      "source_branch": "feature/intake",
+      "target_branch": "develop",
+      "url": "https://gitlab.com/acme/widget/-/merge_requests/7"
+    }
+  }
+}

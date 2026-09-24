@@ -1,0 +1,38 @@
+{
+  "type": "github",
+  "body": {
+    "action": "opened",
+    "issue": {
+      "id": 10042,
+      "number": 42,
+      "title": "Login redirect drops the query string",
+      "state": "open",
+      "html_url": "https://github.com/acme/widget/issues/42",
+      "user": {
+        "login": "octocat",
+        "id": 1,
+        "type": "User"
+      },
+      "body": "Repro: sign in with ?next=/settings and land on /.",
+      "created_at": "2026-09-23T22:15:00Z",
+      "updated_at": "2026-09-23T22:15:00Z"
+    },
+    "repository": {
+      "id": 2001,
+      "name": "widget",
+      "full_name": "acme/widget",
+      "private": false,
+      "owner": {
+        "login": "acme",
+        "id": 100,
+        "type": "Organization"
+      },
+      "html_url": "https://github.com/acme/widget"
+    },
+    "sender": {
+      "login": "octocat",
+      "id": 1,
+      "type": "User"
+    }
+  }
+}

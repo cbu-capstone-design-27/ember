@@ -12,6 +12,10 @@ Reasons:
 - Keeps each app/service self-contained while the design is still moving.
 - Makes the extraction a deliberate, reviewable step with a real consumer on each side.
 
+## Current packages
+
+- `ingestion-envelope` — v1 shared ingestion intake, `{type, body}` raw connector JSON (EMBER-39). Landed as a package because every source connector and the pipeline share it, before those consumers have their own code.
+
 ## Adding a package
 
 1. Name the directory after what it provides (e.g. `packages/graph-client`), not after who uses it.

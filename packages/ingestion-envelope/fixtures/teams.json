@@ -1,0 +1,20 @@
+{
+  "type": "teams",
+  "body": {
+    "value": [
+      {
+        "subscriptionId": "11111111-1111-1111-1111-111111111111",
+        "changeType": "created",
+        "clientState": "sample-client-state",
+        "subscriptionExpirationDateTime": "2026-09-24T00:00:00.0000000Z",
+        "resource": "teams/team-engineering/channels/19:channel@thread.tacv2/messages/1699900000000",
+        "resourceData": {
+          "id": "1699900000000",
+          "@odata.type": "#Microsoft.Graph.chatMessage",
+          "@odata.id": "teams/team-engineering/channels/19:channel@thread.tacv2/messages/1699900000000"
+        },
+        "tenantId": "00000000-0000-0000-0000-000000000001"
+      }
+    ]
+  }
+}

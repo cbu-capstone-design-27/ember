@@ -1,0 +1,44 @@
+{
+  "type": "jira",
+  "body": {
+    "timestamp": 1758668948000,
+    "webhookEvent": "jira:issue_updated",
+    "issue_event_type_name": "issue_updated",
+    "user": {
+      "accountId": "712020:654a9918-3b7f-4e37-9847-651e20e3f7c9",
+      "displayName": "Ryan Stoffel"
+    },
+    "issue": {
+      "id": "10204",
+      "self": "https://ember-capstone.atlassian.net/rest/api/3/issue/10204",
+      "key": "EMBER-39",
+      "fields": {
+        "summary": "Define shared payload schema for all ingestion pipelines",
+        "issuetype": {
+          "id": "10004",
+          "name": "Story"
+        },
+        "project": {
+          "id": "10000",
+          "key": "EMBER",
+          "name": "Ember"
+        },
+        "status": {
+          "id": "10001",
+          "name": "In Progress"
+        }
+      }
+    },
+    "changelog": {
+      "id": "10001",
+      "items": [
+        {
+          "field": "status",
+          "fieldtype": "jira",
+          "fromString": "To Do",
+          "toString": "In Progress"
+        }
+      ]
+    }
+  }
+}

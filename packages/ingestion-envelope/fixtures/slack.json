@@ -1,0 +1,20 @@
+{
+  "type": "slack",
+  "body": {
+    "token": "sample-verification-token",
+    "team_id": "T012WORKSPACE",
+    "api_app_id": "A012APP",
+    "type": "event_callback",
+    "event_id": "Ev012EVENT",
+    "event_time": 1717000001,
+    "event": {
+      "type": "message",
+      "channel": "C012AB3CD",
+      "user": "U012ABCDEF",
+      "text": "Shared intake is type plus body.",
+      "ts": "1717000001.000200",
+      "event_ts": "1717000001.000200",
+      "channel_type": "channel"
+    }
+  }
+}
