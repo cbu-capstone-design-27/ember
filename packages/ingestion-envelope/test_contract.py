@@ -44,6 +44,22 @@ class EnvelopeContractTest(unittest.TestCase):
         self.assertTrue(any("source_native_id" in error for error in errors))
         self.assertTrue(any("embedding" in error for error in errors))
 
+    def test_raw_ref_is_an_optional_pointer(self):
+        with_pointer = [name for name, fixture in self.fixtures.items() if "raw_ref" in fixture]
+        omitted = [name for name, fixture in self.fixtures.items() if "raw_ref" not in fixture]
+        self.assertEqual(with_pointer, ["github"])
+        self.assertTrue(omitted)
+        for name in omitted:
+            assert_valid(self.fixtures[name], self.schema)
+
+        as_string = copy.deepcopy(self.fixtures["jira"])
+        as_string["raw_ref"] = "object://jira/ember-capstone/EMBER-39.json"
+        assert_valid(as_string, self.schema)
+
+        inlined = copy.deepcopy(self.fixtures["jira"])
+        inlined["raw_ref"] = {"webhookEvent": "jira:issue_updated", "issue": {"key": "EMBER-39"}}
+        self.assertTrue(validate(inlined, self.schema))
+
     def test_rejects_payload_from_the_wrong_source(self):
         mixed = copy.deepcopy(self.fixtures["jira"])
         mixed["payload"] = {"repository": "acme/widget", "number": 1, "title": "nope"}

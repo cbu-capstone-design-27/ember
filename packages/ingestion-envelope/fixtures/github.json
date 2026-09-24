@@ -18,6 +18,10 @@
       "ref": "https://github.com/acme/widget/issues/42"
     }
   ],
+  "raw_ref": {
+    "kind": "object",
+    "ref": "s3://ember-raw/github/acme/widget/issues/42.json"
+  },
   "type": "issue.opened",
   "metadata": {
     "delivery": "webhook"

@@ -74,6 +74,24 @@
         }
       }
     },
+    "raw_ref": {
+      "description": "Optional pointer to opaque connector JSON not yet in typed payload. Pointer only; do not inline the blob. Embeddings stay out (EMBER-3).",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "ref"],
+          "properties": {
+            "kind": { "enum": ["url", "object"] },
+            "ref": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
     "type": {
       "type": "string",
       "minLength": 1,

@@ -2,7 +2,7 @@
 
 Stdlib only. Covers the JSON Schema subset this contract uses:
 type, enum, const, required, properties, additionalProperties, items,
-minLength, minimum, format date-time, allOf, if/then.
+minLength, minimum, format date-time, allOf, oneOf, if/then.
 """
 
 from __future__ import annotations
@@ -102,6 +102,12 @@ def validate(instance, schema: dict, path: str = "$") -> list[str]:
 
     for sub in schema.get("allOf", []):
         errors.extend(validate(instance, sub, path))
+
+    if "oneOf" in schema:
+        branches = schema["oneOf"]
+        matched = sum(1 for branch in branches if not validate(instance, branch, path))
+        if matched != 1:
+            errors.append(f"{path}: expected exactly one matching schema, got {matched}")
 
     if "if" in schema:
         if not validate(instance, schema["if"], path):

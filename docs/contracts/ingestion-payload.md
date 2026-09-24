@@ -21,6 +21,9 @@ Content is referenced, not embedded. `content_refs` holds URLs (`kind: url`) or 
 | `type` | Event kind (`issue.opened`, `message.posted`, …) |
 | `metadata` | Open bag for small non-content facts |
 | `payload` | Typed body for `source.system` |
+| `raw_ref` | Optional. Omit is valid |
+
+raw_ref (optional): pointer to opaque connector JSON not yet in typed payload. Pointer only — do not inline raw blobs. Embeddings stay out (EMBER-3).
 
 ## Payload by source
 
