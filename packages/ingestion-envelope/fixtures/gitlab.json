@@ -1,0 +1,30 @@
+{
+  "identity": {
+    "id": "gitlab:acme/widget:merge_request:7",
+    "source_native_id": "acme/widget!7"
+  },
+  "source": {
+    "system": "gitlab",
+    "org": "acme",
+    "actor": "pat"
+  },
+  "time": {
+    "occurred_at": "2026-09-23T22:30:00Z",
+    "ingested_at": "2026-09-23T22:30:02Z"
+  },
+  "content_refs": [
+    {
+      "kind": "url",
+      "ref": "https://gitlab.com/acme/widget/-/merge_requests/7"
+    }
+  ],
+  "type": "merge_request.opened",
+  "metadata": {
+    "delivery": "webhook"
+  },
+  "payload": {
+    "project_path": "acme/widget",
+    "iid": 7,
+    "title": "Add shared ingestion envelope"
+  }
+}

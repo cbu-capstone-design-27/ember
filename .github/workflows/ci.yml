@@ -69,6 +69,8 @@ jobs:
           echo "layout ok"
       - name: docker-compose is valid YAML
         run: docker compose -f infra/docker-compose.yml config --quiet
+      - name: Ingestion envelope contract
+        run: python3 packages/ingestion-envelope/test_contract.py
 
   # Placeholder for future per-area jobs. Gate each on the matching `changes`
   # output, e.g.:

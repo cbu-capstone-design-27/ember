@@ -1,0 +1,31 @@
+{
+  "identity": {
+    "id": "jira:ember-capstone:EMBER-39",
+    "source_native_id": "EMBER-39"
+  },
+  "source": {
+    "system": "jira",
+    "org": "ember-capstone",
+    "actor": "712020:654a9918-3b7f-4e37-9847-651e20e3f7c9"
+  },
+  "time": {
+    "occurred_at": "2026-09-23T22:09:08Z",
+    "ingested_at": "2026-09-23T22:09:12Z"
+  },
+  "content_refs": [
+    {
+      "kind": "url",
+      "ref": "https://ember-capstone.atlassian.net/browse/EMBER-39"
+    }
+  ],
+  "type": "issue.updated",
+  "metadata": {
+    "delivery": "webhook"
+  },
+  "payload": {
+    "key": "EMBER-39",
+    "project_key": "EMBER",
+    "issue_type": "Story",
+    "summary": "Define shared payload schema for all ingestion pipelines"
+  }
+}

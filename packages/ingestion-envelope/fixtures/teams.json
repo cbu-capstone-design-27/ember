@@ -1,0 +1,30 @@
+{
+  "identity": {
+    "id": "teams:tenant-contoso:19:channel@thread.tacv2:1699900000000",
+    "source_native_id": "1699900000000"
+  },
+  "source": {
+    "system": "teams",
+    "org": "tenant-contoso",
+    "actor": "user-aad-00000000-0000-0000-0000-000000000001"
+  },
+  "time": {
+    "occurred_at": "2026-09-23T22:25:00Z",
+    "ingested_at": "2026-09-23T22:25:06Z"
+  },
+  "content_refs": [
+    {
+      "kind": "url",
+      "ref": "https://teams.microsoft.com/l/message/19:channel@thread.tacv2/1699900000000"
+    }
+  ],
+  "type": "message.posted",
+  "metadata": {
+    "delivery": "change_notification"
+  },
+  "payload": {
+    "team_id": "team-engineering",
+    "channel_id": "19:channel@thread.tacv2",
+    "message_id": "1699900000000"
+  }
+}

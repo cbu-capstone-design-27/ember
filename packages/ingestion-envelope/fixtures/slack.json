@@ -1,0 +1,29 @@
+{
+  "identity": {
+    "id": "slack:T012WORKSPACE:C012AB3CD:1717000001.000200",
+    "source_native_id": "C012AB3CD:1717000001.000200"
+  },
+  "source": {
+    "system": "slack",
+    "org": "T012WORKSPACE",
+    "actor": "U012ABCDEF"
+  },
+  "time": {
+    "occurred_at": "2026-09-23T22:20:01Z",
+    "ingested_at": "2026-09-23T22:20:03Z"
+  },
+  "content_refs": [
+    {
+      "kind": "url",
+      "ref": "https://acme.slack.com/archives/C012AB3CD/p1717000001000200"
+    }
+  ],
+  "type": "message.posted",
+  "metadata": {
+    "delivery": "events_api"
+  },
+  "payload": {
+    "channel": "C012AB3CD",
+    "ts": "1717000001.000200"
+  }
+}
