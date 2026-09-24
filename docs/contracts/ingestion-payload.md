@@ -2,6 +2,8 @@
 
 Jira: EMBER-39. Schema: `packages/ingestion-envelope/schema/envelope.v1.schema.json`.
 
+This contract is the shared intake schema for all raw connector data; ingestion workers emit into it, and the processing pipeline (not this schema) cleans and sorts.
+
 Every source emits **one envelope**. There is no separate top-level schema per source. Source-specific fields live in `payload`. Embeddings are not in this envelope (EMBER-3).
 
 Content is referenced, not embedded. `content_refs` holds URLs (`kind: url`) or object pointers (`kind: object`). Do not put issue bodies, message text, or file blobs in the envelope.
