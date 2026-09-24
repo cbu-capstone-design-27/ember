@@ -24,7 +24,7 @@ Embeddings stay out (EMBER-3). This object has no embedding field.
 
 One sample each, under `packages/ingestion-envelope/fixtures/`:
 
-- `github.json` — GitHub `issues` `opened` webhook
+- `github.json` — GitHub `issues` `opened` webhook. `services/github-ingestion` emits this shape from `POST /webhook/github` (EMBER-35).
 - `jira.json` — Jira `jira:issue_updated` webhook
 - `slack.json` — Slack `event_callback` message
 - `teams.json` — Microsoft Graph change notification
