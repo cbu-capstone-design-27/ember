@@ -39,7 +39,7 @@ Native ids also appear inside `payload` so a connector can correlate without par
 | Teams | `team_id`, `channel_id`, `message_id` | message id |
 | GitLab | `project_path`, `iid`, `title` | `group/project!iid` |
 
-GitHub v1 payload is issue/PR-shaped only (repository / number / title). Push and commits events are out of this contract; follow up under EMBER-35.
+GitHub typed payload is issue/PR-shaped (repository / number / title). Other GH event kinds (e.g. push/commits) use raw_ref until the processing pipeline needs typed fields; EMBER-35 is the GitHub worker that emits into this schema.
 
 ## Fixtures
 
