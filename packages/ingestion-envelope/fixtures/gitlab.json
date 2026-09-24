@@ -1,30 +1,28 @@
 {
-  "identity": {
-    "id": "gitlab:acme/widget:merge_request:7",
-    "source_native_id": "acme/widget!7"
-  },
-  "source": {
-    "system": "gitlab",
-    "org": "acme",
-    "actor": "pat"
-  },
-  "time": {
-    "occurred_at": "2026-09-23T22:30:00Z",
-    "ingested_at": "2026-09-23T22:30:02Z"
-  },
-  "content_refs": [
-    {
-      "kind": "url",
-      "ref": "https://gitlab.com/acme/widget/-/merge_requests/7"
+  "type": "gitlab",
+  "body": {
+    "object_kind": "merge_request",
+    "event_type": "merge_request",
+    "user": {
+      "id": 7,
+      "name": "Pat Example",
+      "username": "pat"
+    },
+    "project": {
+      "id": 42,
+      "name": "widget",
+      "path_with_namespace": "acme/widget",
+      "web_url": "https://gitlab.com/acme/widget"
+    },
+    "object_attributes": {
+      "id": 700,
+      "iid": 7,
+      "title": "Add shared ingestion intake",
+      "state": "opened",
+      "action": "open",
+      "source_branch": "feature/intake",
+      "target_branch": "develop",
+      "url": "https://gitlab.com/acme/widget/-/merge_requests/7"
     }
-  ],
-  "type": "merge_request.opened",
-  "metadata": {
-    "delivery": "webhook"
-  },
-  "payload": {
-    "project_path": "acme/widget",
-    "iid": 7,
-    "title": "Add shared ingestion envelope"
   }
 }
