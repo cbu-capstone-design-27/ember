@@ -34,6 +34,13 @@ python3 services/github-ingestion/receiver.py
 
 `GITHUB_INGESTION_PORT` defaults to `8080`.
 
+Own container, optional compose profile. A plain `up` still starts only Neo4j:
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env \
+  --profile github-ingestion up --build github-ingestion
+```
+
 ## Test
 
 ```sh
