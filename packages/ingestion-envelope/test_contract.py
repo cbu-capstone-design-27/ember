@@ -1,4 +1,4 @@
-"""Contract test: each golden fixture matches the v1 ingestion envelope."""
+"""Contract test: each golden fixture is {type, body} raw intake."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import unittest
 from validate import SOURCES, assert_valid, load_fixtures, load_schema, validate
 
 
-class EnvelopeContractTest(unittest.TestCase):
+class IntakeContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.schema = load_schema()
@@ -20,51 +20,35 @@ class EnvelopeContractTest(unittest.TestCase):
     def test_each_fixture_matches_schema(self):
         for source, fixture in self.fixtures.items():
             with self.subTest(source=source):
-                self.assertEqual(fixture["source"]["system"], source)
+                self.assertEqual(fixture["type"], source)
+                self.assertIsInstance(fixture["body"], dict)
+                self.assertTrue(fixture["body"])
                 assert_valid(fixture, self.schema)
-                self.assertNotIn("embedding", fixture)
-                self.assertNotIn("embeddings", fixture)
 
-    def test_native_ids_stay_in_the_envelope(self):
-        native = {
-            "github": "acme/widget#42",
-            "jira": "EMBER-39",
-            "slack": "C012AB3CD:1717000001.000200",
-            "teams": "1699900000000",
-            "gitlab": "acme/widget!7",
-        }
-        for source, expected in native.items():
-            self.assertEqual(self.fixtures[source]["identity"]["source_native_id"], expected)
-
-    def test_rejects_missing_identity_and_top_level_embedding(self):
+    def test_rejects_missing_type(self):
         broken = copy.deepcopy(self.fixtures["github"])
-        del broken["identity"]["source_native_id"]
-        broken["embedding"] = [0.1, 0.2]
+        del broken["type"]
         errors = validate(broken, self.schema)
-        self.assertTrue(any("source_native_id" in error for error in errors))
-        self.assertTrue(any("embedding" in error for error in errors))
+        self.assertTrue(any("type" in error for error in errors))
 
-    def test_raw_ref_is_an_optional_pointer(self):
-        with_pointer = [name for name, fixture in self.fixtures.items() if "raw_ref" in fixture]
-        omitted = [name for name, fixture in self.fixtures.items() if "raw_ref" not in fixture]
-        self.assertEqual(with_pointer, ["github"])
-        self.assertTrue(omitted)
-        for name in omitted:
-            assert_valid(self.fixtures[name], self.schema)
+    def test_rejects_missing_body(self):
+        broken = copy.deepcopy(self.fixtures["jira"])
+        del broken["body"]
+        errors = validate(broken, self.schema)
+        self.assertTrue(any("body" in error for error in errors))
 
-        as_string = copy.deepcopy(self.fixtures["jira"])
-        as_string["raw_ref"] = "object://jira/ember-capstone/EMBER-39.json"
-        assert_valid(as_string, self.schema)
-
-        inlined = copy.deepcopy(self.fixtures["jira"])
-        inlined["raw_ref"] = {"webhookEvent": "jira:issue_updated", "issue": {"key": "EMBER-39"}}
-        self.assertTrue(validate(inlined, self.schema))
-
-    def test_rejects_payload_from_the_wrong_source(self):
-        mixed = copy.deepcopy(self.fixtures["jira"])
-        mixed["payload"] = {"repository": "acme/widget", "number": 1, "title": "nope"}
-        errors = validate(mixed, self.schema)
+    def test_rejects_unknown_type(self):
+        broken = copy.deepcopy(self.fixtures["slack"])
+        broken["type"] = "email"
+        errors = validate(broken, self.schema)
         self.assertTrue(errors)
+
+    def test_rejects_non_object_body(self):
+        for bad in ("raw text", ["not", "an", "object"], None, 1):
+            with self.subTest(body=bad):
+                broken = copy.deepcopy(self.fixtures["gitlab"])
+                broken["body"] = bad
+                self.assertTrue(validate(broken, self.schema))
 
 
 if __name__ == "__main__":
