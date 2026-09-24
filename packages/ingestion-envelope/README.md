@@ -1,8 +1,8 @@
 # packages/ingestion-envelope
 
-Shared v1 envelope every ingestion source emits into the core pipeline.
+Shared v1 intake every ingestion source emits into the core pipeline.
 
-Jira: EMBER-39. Embeddings stay out of this envelope (EMBER-3).
+Jira: EMBER-39. Shape is `{type, body}`: a source name and opaque raw connector JSON. The processing pipeline cleans and sorts later. Embeddings stay out (EMBER-3).
 
 ## Consumers
 
@@ -13,8 +13,8 @@ The package lands before those consumers have code because the connectors are se
 
 ## Layout
 
-- `schema/envelope.v1.schema.json` — one envelope. Source-specific fields live in `payload`.
-- `fixtures/` — one golden sample per source.
+- `schema/envelope.v1.schema.json` — `{type, body}` intake. `body` is any object.
+- `fixtures/` — one golden raw sample per source.
 - `validate.py` — stdlib checker for the schema subset this contract uses.
 - `test_contract.py` — validates each fixture.
 

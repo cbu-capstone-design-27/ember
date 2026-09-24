@@ -14,7 +14,7 @@ Reasons:
 
 ## Current packages
 
-- `ingestion-envelope` — v1 shared ingestion envelope (EMBER-39). Landed as a package because every source connector and the pipeline share it, before those consumers have their own code.
+- `ingestion-envelope` — v1 shared ingestion intake, `{type, body}` raw connector JSON (EMBER-39). Landed as a package because every source connector and the pipeline share it, before those consumers have their own code.
 
 ## Adding a package
 
