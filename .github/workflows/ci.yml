@@ -73,6 +73,8 @@ jobs:
         run: python3 packages/ingestion-envelope/test_contract.py
       - name: GitHub ingestion webhook contract
         run: python3 services/github-ingestion/test_webhook.py
+      - name: GitHub ingestion local pull contract
+        run: python3 services/github-ingestion/test_pull.py
 
   # Placeholder for future per-area jobs. Gate each on the matching `changes`
   # output, e.g.:
