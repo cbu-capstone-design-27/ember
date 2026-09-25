@@ -1,0 +1,60 @@
+---
+- name: Common prep for all nodes
+  hosts: k3s_cluster
+  become: true
+  tasks:
+    - name: Require the node to be on the tailnet
+      ansible.builtin.assert:
+        that:
+          - "'tailscale0' in ansible_facts.interfaces"
+          - ansible_facts.tailscale0.ipv4.address == ts_ip
+        fail_msg: "{{ inventory_hostname }} is not on Tailscale or ts_ip is wrong"
+        quiet: true
+
+    - name: Require the hostname to match the inventory
+      ansible.builtin.assert:
+        that: ansible_facts.hostname == inventory_hostname
+        fail_msg: >-
+          {{ ts_ip }} reports hostname {{ ansible_facts.hostname }}, not {{ inventory_hostname }}.
+          Wrong disk or card, or host_vars points at the wrong IP.
+        quiet: true
+
+    - name: Require enough memory for k3s
+      vars:
+        role: "{{ 'server' if 'server' in group_names else 'agent' }}"
+      ansible.builtin.assert:
+        that: ansible_facts.memtotal_mb >= min_memory_mb[role]
+        fail_msg: >-
+          {{ inventory_hostname }} has {{ ansible_facts.memtotal_mb }} MB; a k3s {{ role }} needs
+          {{ min_memory_mb[role] }} MB. For a Hyper-V worker: VM Settings > Memory, set 4096 MB and
+          uncheck Dynamic Memory.
+        quiet: true
+
+    - name: Upgrade packages
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+        upgrade: safe
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name: [curl, jq]
+        state: present
+
+    # k3s certificates and the Tailscale TLS handshake both need a correct clock
+    - name: Keep the clock synced
+      ansible.builtin.systemd_service:
+        name: systemd-timesyncd
+        enabled: true
+        state: started
+
+    - name: Check whether an upgrade needs a reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Reboot one node at a time
+      when: reboot_required.stat.exists
+      throttle: 1
+      ansible.builtin.reboot:
+        reboot_timeout: 600

@@ -1,0 +1,10 @@
+---
+# Connection vars live here, not in all/, so localhost (smoke tests, kubeconfig merge) is unaffected.
+# Ansible connects over the tailnet by IP (avoids WSL MagicDNS issues).
+ansible_user: control
+ansible_host: "{{ ts_ip }}"
+
+# Checked by playbooks/prep.yml before k3s is installed
+min_memory_mb:
+  server: 1800
+  agent: 3500
