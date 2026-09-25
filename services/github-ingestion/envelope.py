@@ -52,6 +52,27 @@ def wrap_github(payload: dict) -> dict:
     return {"type": "github", "body": payload}
 
 
+def delivery_key(payload: dict) -> dict[str, int | str | None]:
+    """Installation id and repository full_name, when the payload has them.
+
+    Later routing can use this. It is not a filter and it is not added to
+    the emitted envelope. Missing fields stay None; the delivery is still intake.
+    """
+    installation = payload.get("installation")
+    repository = payload.get("repository")
+    installation_id = None
+    full_name = None
+    if isinstance(installation, dict):
+        candidate = installation.get("id")
+        if isinstance(candidate, int) and not isinstance(candidate, bool):
+            installation_id = candidate
+    if isinstance(repository, dict):
+        candidate_name = repository.get("full_name")
+        if isinstance(candidate_name, str) and candidate_name:
+            full_name = candidate_name
+    return {"installation_id": installation_id, "full_name": full_name}
+
+
 def ingest(raw_body: bytes, signature_header: str | None, secret: str) -> dict:
     """Verify the optional HMAC and return the {type, body} envelope."""
     if secret:

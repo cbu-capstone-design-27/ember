@@ -1,7 +1,10 @@
-"""Minimal GitHub webhook receiver. POST /webhook/github.
+"""GitHub App webhook receiver. POST /webhook/github.
 
-Stdlib HTTP server. Verifies X-Hub-Signature-256 when GITHUB_WEBHOOK_SECRET
-is set, wraps the raw JSON body as {"type":"github","body":...}, and logs it.
+Repo- and account-agnostic. Stdlib HTTP server. Verifies X-Hub-Signature-256
+when GITHUB_WEBHOOK_SECRET is set, wraps the raw JSON body as
+{"type":"github","body":...}, and logs it. When the payload includes them,
+logs installation id and repository full_name for later routing. Does not
+filter on a configured repository.
 """
 
 from __future__ import annotations
@@ -11,7 +14,14 @@ import logging
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from envelope import MAX_BODY_BYTES, WebhookError, emit, ingest, note_verification
+from envelope import (
+    MAX_BODY_BYTES,
+    WebhookError,
+    delivery_key,
+    emit,
+    ingest,
+    note_verification,
+)
 
 LOG = logging.getLogger("github-ingestion")
 WEBHOOK_PATH = "/webhook/github"
@@ -71,7 +81,14 @@ class GithubWebhookHandler(BaseHTTPRequestHandler):
         emit(envelope)
         delivery = self.headers.get("X-GitHub-Delivery", "")
         event = self.headers.get("X-GitHub-Event", "")
-        LOG.info("ingested github delivery=%s event=%s", delivery, event)
+        key = delivery_key(envelope["body"])
+        LOG.info(
+            "ingested github delivery=%s event=%s installation_id=%s full_name=%s",
+            delivery,
+            event,
+            key["installation_id"],
+            key["full_name"],
+        )
         self._send(202, {"status": "accepted"})
 
 
@@ -79,9 +96,6 @@ def serve(host: str = "0.0.0.0", port: int | None = None) -> ThreadingHTTPServer
     if port is None:
         port = int(os.environ.get("GITHUB_INGESTION_PORT", "8080"))
     note_verification(os.environ.get("GITHUB_WEBHOOK_SECRET", ""))
-    repo = os.environ.get("GITHUB_REPO", "")
-    if repo:
-        LOG.info("GITHUB_REPO=%s", repo)
     server = ThreadingHTTPServer((host, port), GithubWebhookHandler)
     LOG.info("listening on %s:%s", host, server.server_address[1])
     return server
