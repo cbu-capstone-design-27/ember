@@ -42,6 +42,43 @@ class EnvelopeContractTest(unittest.TestCase):
         self.assertEqual(got["type"], "github")
         self.assertEqual(got["body"], fixture["body"])
         self.assertEqual(set(got), {"type", "body"})
+        self.assertEqual(
+            envelope.delivery_key(got["body"]),
+            {"installation_id": None, "full_name": "acme/widget"},
+        )
+        assert_valid(got)
+
+    def test_keys_two_installations_without_filtering(self):
+        deliveries = [
+            {"installation": {"id": 11}, "repository": {"full_name": "acme/widget"}},
+            {"installation": {"id": 22}, "repository": {"full_name": "other-org/other-repo"}},
+        ]
+        os.environ["GITHUB_REPO"] = "someone/not-used"
+        try:
+            keys = []
+            for payload in deliveries:
+                got = envelope.ingest(json.dumps(payload).encode("utf-8"), None, "")
+                self.assertEqual(set(got), {"type", "body"})
+                self.assertEqual(got["body"], payload)
+                assert_valid(got)
+                keys.append(envelope.delivery_key(got["body"]))
+        finally:
+            os.environ.pop("GITHUB_REPO", None)
+        self.assertEqual(
+            keys,
+            [
+                {"installation_id": 11, "full_name": "acme/widget"},
+                {"installation_id": 22, "full_name": "other-org/other-repo"},
+            ],
+        )
+
+    def test_missing_installation_still_ingests(self):
+        raw = b'{"action":"created","repository":{"full_name":"org/name"}}'
+        got = envelope.ingest(raw, signature_header=None, secret="")
+        self.assertEqual(
+            envelope.delivery_key(got["body"]),
+            {"installation_id": None, "full_name": "org/name"},
+        )
         assert_valid(got)
 
     def test_minimal_payload_validates(self):
@@ -82,6 +119,7 @@ class WebhookHttpTest(unittest.TestCase):
     def setUpClass(cls):
         cls._prior_secret = os.environ.get("GITHUB_WEBHOOK_SECRET")
         os.environ["GITHUB_WEBHOOK_SECRET"] = SECRET
+        os.environ["GITHUB_REPO"] = "someone/not-used"
         cls.server = serve("127.0.0.1", 0)
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
@@ -96,6 +134,7 @@ class WebhookHttpTest(unittest.TestCase):
             os.environ.pop("GITHUB_WEBHOOK_SECRET", None)
         else:
             os.environ["GITHUB_WEBHOOK_SECRET"] = cls._prior_secret
+        os.environ.pop("GITHUB_REPO", None)
 
     def _post(self, body: bytes, signature: str | None):
         request = urllib.request.Request(
@@ -113,7 +152,10 @@ class WebhookHttpTest(unittest.TestCase):
             return exc.code, exc.read()
 
     def test_post_accepts_signed_payload(self):
-        body = b'{"zen":"keep it logically awesome"}'
+        body = (
+            b'{"zen":"keep it logically awesome","installation":{"id":7},'
+            b'"repository":{"full_name":"example-org/example-repo"}}'
+        )
         status, payload = self._post(body, sign(SECRET, body))
         self.assertEqual(status, 202)
         self.assertEqual(json.loads(payload), {"status": "accepted"})
