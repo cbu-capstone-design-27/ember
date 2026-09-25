@@ -8,7 +8,9 @@ Installing the App on an account or org defaults to all repositories. Choosing w
 
 ## Status
 
-Stub HTTP receiver. It checks an optional HMAC, wraps the raw body, and writes the envelope to stdout. No queue yet. It does not load `GITHUB_APP_ID` or the private key, and it does not call the GitHub API.
+Stub HTTP receiver for live deliveries, plus a local pull command for one test repository. The receiver checks an optional HMAC, wraps the raw body, and writes the envelope to stdout. No queue yet. The receiver does not call the GitHub API and does not filter on a repository.
+
+Live App webhooks still need a public URL. This change does not open a tunnel or register a webhook.
 
 ## Contract
 
@@ -28,21 +30,25 @@ When the payload includes them, the process log also records `installation.id` a
 
 `GET /health` returns `{"status":"ok"}`.
 
-## GitHub App placeholders
+## GitHub App
 
-This is a GitHub App webhook endpoint, not a classic OAuth app and not a single-repo webhook. The lists below are what the App will need when it is created. Nothing here is requested or subscribed yet.
+This is a GitHub App webhook endpoint, not a classic OAuth app and not a single-repo webhook. `ember-ingest` is an example App. The worker does not hard-code its slug, id, or install target.
+
+Permissions below are what `pull_test.py` needs on the installation. Event subscriptions are for live webhooks later; the receiver does not filter on them, and this PR does not register them.
 
 ### Credentials
 
 | Variable | Role |
 | --- | --- |
-| `GITHUB_APP_ID` | App id. Placeholder; not read by the stub. |
-| `GITHUB_APP_PRIVATE_KEY` | PEM path, or the PEM contents including the BEGIN/END lines. Placeholder; not loaded by the stub. A path is the compose-friendly option. |
-| `GITHUB_WEBHOOK_SECRET` | Used now for HMAC. Empty skips verification. |
+| `GITHUB_APP_ID` | App id. Example: `5075660` (`ember-ingest`). Not a secret. The webhook receiver does not read it. `pull_test.py` does. |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | Path to the App `.pem`. Preferred. Never commit the file. |
+| `GITHUB_APP_PRIVATE_KEY` | PEM contents, including the BEGIN/END lines. Used by `pull_test.py` only when the path is empty. |
+| `GITHUB_WEBHOOK_SECRET` | Used by the webhook receiver for HMAC. Empty skips verification. Not used by `pull_test.py`. |
+| `GITHUB_TEST_REPO` | `owner/name` for `pull_test.py` only. Example test target: `ryan-stoffel/photon`. Not a filter on the webhook path. |
 
-### Permissions (placeholder)
+### Permissions (read)
 
-Repository permissions, read only, to request when the App is created:
+Repository permissions this cut uses:
 
 - Metadata
 - Contents
@@ -80,8 +86,64 @@ docker compose -f infra/docker-compose.yml --env-file .env \
   --profile github-ingestion up --build github-ingestion
 ```
 
+## Local test pull
+
+Example App already created (not hard-coded in the worker):
+
+- Slug: `ember-ingest`
+- App ID: `5075660`
+- Client ID: `Iv23liDrl4PFQRt0KB4t`
+- Org: `cbu-capstone-design-27`
+- Installed on the current test target: `ryan-stoffel/photon`
+
+The private key and webhook secret stay on your machine.
+
+After checkout:
+
+```sh
+git fetch && git checkout feature/EMBER-35-github-ingestion-worker
+
+export GITHUB_APP_ID=5075660
+export GITHUB_APP_PRIVATE_KEY_PATH="/absolute/path/to/ember-ingest.private-key.pem"
+export GITHUB_WEBHOOK_SECRET="your-webhook-secret"
+export GITHUB_TEST_REPO=ryan-stoffel/photon
+
+python3 services/github-ingestion/pull_test.py
+```
+
+That writes JSONL to stdout, one envelope per item:
+
+```json
+{"type":"github","body":{}}
+```
+
+`body` is the raw list object from the GitHub API. To write a file instead:
+
+```sh
+python3 services/github-ingestion/pull_test.py --output "$HOME/ember-github-intake.jsonl"
+```
+
+`--repo owner/name` overrides `GITHUB_TEST_REPO` for that run.
+
+RS256 is not in the Python standard library. The script signs the App JWT with `openssl dgst -sha256 -sign` and does not install a crypto package. `openssl` must be on `PATH`.
+
+### What this cut pulls
+
+For the one test repo, every page of:
+
+- Issues API (`state=all`). GitHub includes pull requests in this list; those objects are emitted as returned.
+- Pulls API (`state=all`).
+- Commits API (the list on the default branch, 100 per page).
+
+### What this cut does not pull
+
+Issue comments, pull request reviews, review comments, check runs, statuses, releases, file contents, diffs, or any repository other than `GITHUB_TEST_REPO`. It does not replay webhooks.
+
 ## Test
 
 ```sh
 python3 services/github-ingestion/test_webhook.py
+python3 services/github-ingestion/test_pull.py
 ```
+
+`test_pull.py` mocks HTTP. CI runs both. Neither test calls GitHub.
