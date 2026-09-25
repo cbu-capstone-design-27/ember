@@ -4,8 +4,10 @@
 #   cp .env.example .env          # first time only; fill in values
 #   docker compose -f infra/docker-compose.yml --env-file .env up -d
 #
-# Only Neo4j for now. Queue, app, and service containers will be added
-# under their own Jira tickets once there is code to run.
+# Neo4j starts by default. github-ingestion is an optional profile so a
+# plain `up` stays Neo4j-only:
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile github-ingestion up --build github-ingestion
 
 name: ember
 
@@ -27,6 +29,23 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # EMBER-35. Not part of the default `up` (see profiles).
+  github-ingestion:
+    profiles: ["github-ingestion"]
+    build:
+      context: ..
+      dockerfile: services/github-ingestion/Dockerfile
+    container_name: ember-github-ingestion
+    ports:
+      - "${GITHUB_INGESTION_PORT:-8080}:${GITHUB_INGESTION_PORT:-8080}"
+    environment:
+      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+      GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
+      GITHUB_APP_PRIVATE_KEY: "${GITHUB_APP_PRIVATE_KEY:-}"
+      GITHUB_APP_PRIVATE_KEY_PATH: "${GITHUB_APP_PRIVATE_KEY_PATH:-}"
+      GITHUB_TEST_REPO: "${GITHUB_TEST_REPO:-}"
+      GITHUB_INGESTION_PORT: "${GITHUB_INGESTION_PORT:-8080}"
 
 volumes:
   neo4j-data:

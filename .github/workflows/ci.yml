@@ -63,7 +63,7 @@ jobs:
       - name: Repo layout present
         run: |
           set -euo pipefail
-          for p in apps/web apps/cli apps/mcp services/pipeline packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
+          for p in apps/web apps/cli apps/mcp services/pipeline services/github-ingestion packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
             test -e "$p" || { echo "missing: $p"; exit 1; }
           done
           echo "layout ok"
@@ -71,6 +71,10 @@ jobs:
         run: docker compose -f infra/docker-compose.yml config --quiet
       - name: Ingestion envelope contract
         run: python3 packages/ingestion-envelope/test_contract.py
+      - name: GitHub ingestion webhook contract
+        run: python3 services/github-ingestion/test_webhook.py
+      - name: GitHub ingestion local pull contract
+        run: python3 services/github-ingestion/test_pull.py
 
   # Placeholder for future per-area jobs. Gate each on the matching `changes`
   # output, e.g.:
