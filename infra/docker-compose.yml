@@ -41,8 +41,9 @@ services:
       - "${GITHUB_INGESTION_PORT:-8080}:${GITHUB_INGESTION_PORT:-8080}"
     environment:
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+      GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
+      GITHUB_APP_PRIVATE_KEY: "${GITHUB_APP_PRIVATE_KEY:-}"
       GITHUB_INGESTION_PORT: "${GITHUB_INGESTION_PORT:-8080}"
-      GITHUB_REPO: "${GITHUB_REPO:-ryan-stoffel/photon}"
 
 volumes:
   neo4j-data:
