@@ -28,7 +28,7 @@ apps/
   mcp/          MCP server exposing the graph to AI coding tools
 services/
   pipeline/          Ingestion pipeline and job queue (GitHub, Jira, Slack -> Neo4j)
-  github-ingestion/  GitHub webhook receiver; emits {type, body} (EMBER-35)
+  github-ingestion/  GitHub App webhook receiver; emits {type, body} (EMBER-35)
 packages/            Shared libraries - add one only when there is a second consumer
 infra/               Local infrastructure (docker-compose: Neo4j; optional github-ingestion profile)
 docs/
