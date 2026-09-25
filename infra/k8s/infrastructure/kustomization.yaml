@@ -1,0 +1,6 @@
+# Cluster-wide pieces apps depend on: namespaces, CRDs, operators, ingress, cert-manager.
+# Applied before apps/.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml

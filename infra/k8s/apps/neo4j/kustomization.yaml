@@ -1,0 +1,6 @@
+# The chart itself is installed by ansible/playbooks/neo4j.yml (make neo4j-up) from values.yaml.
+# Not listed in ../kustomization.yaml, so apply -k k8s/apps doesn't create this without the release.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - service-lb.yaml

@@ -309,6 +309,8 @@ make nodes
 
 `kubectl` from `.venv/bin` works directly: `ansible/.venv/bin/kubectl --context homelab get pods -A` (or put `.venv/bin` on your PATH).
 
+Workload manifests live in `infra/k8s/` (see its README), not here.
+
 ### Storage
 
 - k3s's bundled `local-path` provisioner stores volumes under `/var/lib/rancher/k3s/storage` on the node that runs the pod. The Pi carries a `CriticalAddonsOnly` taint, so volumes only land on the workers. Workers carry the label `ember.io/storage=true` for nodeSelectors.

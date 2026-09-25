@@ -1,0 +1,30 @@
+# Values for the neo4j/neo4j Helm chart (https://helm.neo4j.com/neo4j), release "neo4j" in namespace "ember".
+# Installed by ansible/playbooks/neo4j.yml (make neo4j-up); becomes a Flux HelmRelease later.
+neo4j:
+  name: neo4j
+  edition: community
+  # Dev-only password, committed on purpose to verify connectivity. Move to
+  # passwordFromSecret before anything real goes in here.
+  password: ember-dev-password
+  resources:
+    cpu: "1000m"
+    memory: "2Gi" # chart minimum
+
+volumes:
+  data:
+    mode: dynamic
+    dynamic:
+      storageClassName: local-path-retain
+      accessModes:
+        - ReadWriteOnce
+      requests:
+        storage: 10Gi
+
+# local-path volumes stay on the node they were created on, so pin this explicitly.
+nodeSelector:
+  kubernetes.io/hostname: hv-worker-1
+
+services:
+  # Node-IP exposure is service-lb.yaml instead (see there for why).
+  neo4j:
+    enabled: false
