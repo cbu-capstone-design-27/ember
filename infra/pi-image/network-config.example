@@ -1,0 +1,14 @@
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: true
+      optional: true
+  wifis:
+    wlan0:
+      dhcp4: true
+      regulatory-domain: "US"
+      access-points:
+        "<SSID>":
+          password: "<64-hex PSK from: wpa_passphrase SSID password>"
+      optional: true

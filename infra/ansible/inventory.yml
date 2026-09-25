@@ -1,0 +1,11 @@
+---
+# Hosts only. Each node's Tailscale IP is in host_vars/<name>.yml.
+k3s_cluster:
+  children:
+    server:
+      hosts:
+        pi-cp:
+    agent:
+      hosts:
+        hv-worker-1:
+        # hv-worker-2: add once it has joined the tailnet (and create host_vars/hv-worker-2.yml)

@@ -1,0 +1,28 @@
+---
+# ---- k3s.orchestration (k3s-io/k3s-ansible) ----
+k3s_version: v1.36.4+k3s1
+token: "{{ vault_k3s_token }}"
+api_endpoint: "{{ hostvars[groups['server'][0]]['ts_ip'] }}"
+cluster_context: homelab
+# MagicDNS suffix: every node is reachable as <node>.<tailnet_domain> from the tailnet
+tailnet_domain: tail470a31.ts.net
+# config.yaml on the server holds the token. k3s and kubectl read it even as a normal
+# user, so playbooks/post.yml gives it group adm (ansible_user is in adm).
+k3s_server_config_mode: "0640"
+
+# Pin k3s to tailscale0 so nodes never advertise a changing LAN IP.
+# The taint keeps workloads off the Pi; only critical add-ons run there.
+extra_server_args: >-
+  --node-taint CriticalAddonsOnly=true:NoExecute
+  --node-ip {{ ts_ip }}
+  --flannel-iface tailscale0
+  --tls-san pi-cp
+
+extra_agent_args: >-
+  --node-ip {{ ts_ip }}
+  --flannel-iface tailscale0
+  --node-label ember.io/storage=true
+
+# Copied into k3s's auto-deploy directory; k3s applies them on start
+extra_manifests:
+  - "{{ inventory_dir }}/manifests/local-path-retain.yaml"
