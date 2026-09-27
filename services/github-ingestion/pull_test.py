@@ -199,6 +199,36 @@ def emit_jsonl(envelopes: Iterator[dict], stream) -> int:
     return count
 
 
+def describe_item(body: dict) -> str:
+    """One scan line. The envelope body is still written in full below it."""
+    commit = body.get("commit")
+    sha = body.get("sha")
+    if isinstance(commit, dict) and isinstance(sha, str):
+        message = str(commit.get("message") or "").splitlines()
+        summary = message[0] if message else ""
+        return f"commit {sha[:7]}  {summary}".rstrip()
+    number = body.get("number")
+    title = body.get("title")
+    if isinstance(number, int) and not isinstance(number, bool) and isinstance(title, str):
+        kind = "pull" if "pull_request" in body or "merged_at" in body else "issue"
+        return f"{kind} #{number}  {title}"
+    return "item"
+
+
+def emit_readable(envelopes: Iterator[dict], stream) -> int:
+    """Labels plus indented envelopes, so a person can see each ingested object."""
+    count = 0
+    for envelope in envelopes:
+        count += 1
+        body = envelope.get("body")
+        label = describe_item(body) if isinstance(body, dict) else "item"
+        stream.write(f"--- {count}. {label} ---\n")
+        stream.write(json.dumps(envelope, indent=2, ensure_ascii=False))
+        stream.write("\n\n")
+    stream.flush()
+    return count
+
+
 def pull(
     repo: str,
     app_id: str,
@@ -217,10 +247,23 @@ def pull(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Pull one test repo into EMBER-39 JSONL.")
-    parser.add_argument("--output", help="Write JSONL here instead of stdout.")
+    parser = argparse.ArgumentParser(description="Pull one test repo into EMBER-39 envelopes.")
+    parser.add_argument("--output", help="Write a file instead of stdout.")
+    parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Indent each envelope and add a one-line label (issue, pull, or commit).",
+    )
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Force one-line JSONL even when writing --output.",
+    )
     parser.add_argument("--repo", help="owner/name. Defaults to GITHUB_TEST_REPO.")
     args = parser.parse_args(argv)
+    if args.pretty and args.compact:
+        print("Use only one of --pretty or --compact.", file=sys.stderr)
+        return 2
 
     repo = (args.repo or os.environ.get("GITHUB_TEST_REPO", "")).strip()
     app_id = os.environ.get("GITHUB_APP_ID", "").strip()
@@ -234,13 +277,16 @@ def main(argv: list[str] | None = None) -> int:
     pem_path, cleanup = _private_key_file()
     try:
         envelopes = pull(repo, app_id, pem_path, urllib_exchange)
+        # A file is for a person to open. Stdout stays machine JSONL unless --pretty.
+        readable = args.pretty or (args.output is not None and not args.compact)
+        emit = emit_readable if readable else emit_jsonl
         if args.output:
             output = Path(args.output)
             with output.open("w", encoding="utf-8") as handle:
-                count = emit_jsonl(envelopes, handle)
+                count = emit(envelopes, handle)
             print(f"wrote {count} envelopes to {output}", file=sys.stderr)
         else:
-            count = emit_jsonl(envelopes, sys.stdout)
+            count = emit(envelopes, sys.stdout)
             print(f"wrote {count} envelopes", file=sys.stderr)
     except PullError as exc:
         print(str(exc), file=sys.stderr)

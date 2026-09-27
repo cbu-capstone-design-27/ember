@@ -44,6 +44,30 @@ class JwtTest(unittest.TestCase):
         self.assertNotIn("GITHUB_REPO", text)
 
 
+class ReadableOutputTest(unittest.TestCase):
+    def test_label_then_indented_envelope(self):
+        envelopes = [
+            {"type": "github", "body": {"number": 12, "title": "Login redirect drops the query string"}},
+            {"type": "github", "body": {"number": 3, "title": "Add parser", "pull_request": {"url": "x"}}},
+            {
+                "type": "github",
+                "body": {"sha": "abcdef1234567890", "commit": {"message": "init\n\nmore"}},
+            },
+        ]
+        import io
+
+        buffer = io.StringIO()
+        count = pull_test.emit_readable(iter(envelopes), buffer)
+        text = buffer.getvalue()
+        self.assertEqual(count, 3)
+        self.assertIn("--- 1. issue #12  Login redirect drops the query string ---", text)
+        self.assertIn("--- 2. pull #3  Add parser ---", text)
+        self.assertIn("--- 3. commit abcdef1  init ---", text)
+        self.assertIn('\n  "type": "github"', text)
+        for envelope in envelopes:
+            assert_valid(envelope)
+
+
 class LinkTest(unittest.TestCase):
     def test_next_rel(self):
         header = (

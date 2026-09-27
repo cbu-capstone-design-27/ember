@@ -117,11 +117,13 @@ That writes JSONL to stdout, one envelope per item:
 {"type":"github","body":{}}
 ```
 
-`body` is the raw list object from the GitHub API. To write a file instead:
+`body` is the raw list object from the GitHub API. To write a file a person can scan, use `--output`. That file puts a label on each record (`issue`, `pull`, or `commit`, plus number or sha and title) and then the full envelope indented. The label is only a reading aid. The JSON object under it is still `{"type":"github","body":...}`.
 
 ```sh
-python3 services/github-ingestion/pull_test.py --output "$HOME/ember-github-intake.jsonl"
+python3 services/github-ingestion/pull_test.py --output "$HOME/ember-github-intake.txt"
 ```
+
+`--compact` keeps that file as one-line JSONL. `--pretty` does the labeled form on stdout too.
 
 `--repo owner/name` overrides `GITHUB_TEST_REPO` for that run.
 
