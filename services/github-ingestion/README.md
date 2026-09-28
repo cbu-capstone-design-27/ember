@@ -117,7 +117,9 @@ That writes JSONL to stdout, one envelope per item:
 {"type":"github","body":{}}
 ```
 
-`body` is the raw list object from the GitHub API. To keep that JSONL in a file and also get a glance summary:
+For issues and pull requests, `body` inside that object is the full GitHub payload from `GET /repos/{owner}/{repo}/issues/{number}` or `GET /repos/{owner}/{repo}/pulls/{number}`. That payload's `body` field is the description text (JSON `null` when the description is empty). Commits stay the Commits API list object, including `commit.message` when GitHub sent it.
+
+To keep that JSONL in a file and also get a glance summary:
 
 ```sh
 python3 services/github-ingestion/pull_test.py --output "$HOME/ember-github-intake.jsonl"
@@ -126,7 +128,7 @@ python3 services/github-ingestion/pull_test.py --output "$HOME/ember-github-inta
 That writes:
 
 - `$HOME/ember-github-intake.jsonl` — one EMBER-39 object per line, same as stdout
-- `$HOME/ember-github-intake.jsonl.readable.md` — issues (`#`, title, state), pull requests (`#`, title, state), and commits (short sha, subject), grouped under headings
+- `$HOME/ember-github-intake.jsonl.readable.md` — issues (`#`, title, state, short description), pull requests (`#`, title, state, short description), and commits (short sha, subject), grouped under headings
 
 `--readable PATH` chooses a different summary file. `--readable -` prints the summary on stdout and requires `--output` so the JSONL stays in the file. `--no-readable` writes JSONL only.
 
@@ -138,11 +140,11 @@ RS256 is not in the Python standard library. The script signs the App JWT with `
 
 ### What this cut pulls
 
-For the one test repo, every page of:
+For the one test repo:
 
-- Issues API (`state=all`). GitHub includes pull requests in this list; those objects are emitted as returned.
-- Pulls API (`state=all`).
-- Commits API (the list on the default branch, 100 per page).
+- Issues API list (`state=all`) to find numbers, then `GET /repos/{owner}/{repo}/issues/{number}` for each issue. A list row that is a pull request is fetched with the pull request URL instead.
+- Pulls API list (`state=all`), then `GET /repos/{owner}/{repo}/pulls/{number}` for each one.
+- Commits API list on the default branch (100 per page). Those list objects are emitted as returned.
 
 ### What this cut does not pull
 
