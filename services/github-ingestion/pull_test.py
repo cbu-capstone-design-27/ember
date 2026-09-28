@@ -8,6 +8,9 @@ Machine intake is JSONL, one object per line:
   {"type":"github","body":<opaque raw GitHub API object>}
 Stdout is that JSONL. --output FILE writes the same JSONL and, by default,
 a glance summary at FILE.readable.md (issues, pull requests, commits).
+Issue and pull-request detail GETs run DEFAULT_CONCURRENCY at a time
+(--concurrency or GITHUB_PULL_CONCURRENCY). List pages and commits stay
+serial. A Retry-After or primary rate-limit reset is waited out.
 --readable PATH chooses the summary file. --no-readable skips it.
 --readable - prints the summary on stdout and requires --output so the
 JSONL stays a file. Progress goes to stderr.
@@ -29,6 +32,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from envelope import wrap_github
@@ -36,6 +40,9 @@ from envelope import wrap_github
 API = "https://api.github.com"
 USER_AGENT = "ember-github-ingestion"
 MAX_PAGES = 50
+DEFAULT_CONCURRENCY = 12
+MAX_CONCURRENCY = 32
+MAX_RETRY_WAIT = 120.0
 Signer = Callable[[str, bytes], bytes]
 
 
@@ -96,6 +103,68 @@ class Response:
 
     def json(self):
         return json.loads(self.body.decode("utf-8"))
+
+
+def resolve_concurrency(cli_value: int | None) -> int:
+    """CLI wins, then GITHUB_PULL_CONCURRENCY, then DEFAULT_CONCURRENCY."""
+    if cli_value is None:
+        raw = os.environ.get("GITHUB_PULL_CONCURRENCY", "").strip()
+        if not raw:
+            return DEFAULT_CONCURRENCY
+        try:
+            cli_value = int(raw)
+        except ValueError as exc:
+            raise PullError("GITHUB_PULL_CONCURRENCY must be an integer") from exc
+    if cli_value < 1 or cli_value > MAX_CONCURRENCY:
+        raise PullError(f"concurrency must be from 1 to {MAX_CONCURRENCY}")
+    return cli_value
+
+
+def retry_after_seconds(response: Response, *, now: float | None = None) -> float | None:
+    """Seconds to wait on a GitHub throttle, or None when the response is final."""
+    if response.status < 400:
+        return None
+    headers = {key.lower(): value for key, value in response.headers.items()}
+    raw = headers.get("retry-after")
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            return None
+    if response.status in (403, 429) and headers.get("x-ratelimit-remaining") == "0":
+        reset = headers.get("x-ratelimit-reset")
+        if reset:
+            try:
+                clock = time.time() if now is None else now
+                return max(0.0, float(reset) - clock)
+            except ValueError:
+                return None
+    if response.status in (429, 502, 503):
+        return 1.0
+    return None
+
+
+def exchange_with_retry(exchange, method: str, url: str, headers: dict[str, str], body: bytes | None, *, attempts: int = 5, sleep: Callable[[float], None] = time.sleep) -> Response:
+    """Repeat when GitHub sends Retry-After or a primary rate-limit reset."""
+    response = exchange(method, url, headers, body)
+    for _ in range(attempts - 1):
+        wait = retry_after_seconds(response)
+        if wait is None:
+            return response
+        wait = min(wait, MAX_RETRY_WAIT)
+        print(f"GitHub asked to wait {wait:.0f}s ({response.status}) {url}", file=sys.stderr)
+        sleep(wait)
+        response = exchange(method, url, headers, body)
+    return response
+
+
+def map_ordered(fn, items: list, workers: int) -> list:
+    """Run fn over items concurrently and return results in input order."""
+    if not items:
+        return []
+    workers = max(1, min(workers, len(items)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(fn, items))
 
 
 def urllib_exchange(method: str, url: str, headers: dict[str, str], body: bytes | None) -> Response:
@@ -175,7 +244,7 @@ def iter_pages(url: str, token: str, exchange) -> Iterator[dict]:
         pages += 1
         if pages > MAX_PAGES:
             raise PullError(f"stopped after {MAX_PAGES} pages for {url}")
-        response = exchange("GET", url, _headers(token), None)
+        response = exchange_with_retry(exchange, "GET", url, _headers(token), None)
         payload = _read_json(response, f"GET {url}")
         if not isinstance(payload, list):
             raise PullError(f"expected a JSON list from {url}")
@@ -187,7 +256,7 @@ def iter_pages(url: str, token: str, exchange) -> Iterator[dict]:
 
 
 def fetch_object(url: str, token: str, exchange) -> dict:
-    response = exchange("GET", url, _headers(token), None)
+    response = exchange_with_retry(exchange, "GET", url, _headers(token), None)
     payload = _read_json(response, f"GET {url}")
     if not isinstance(payload, dict):
         raise PullError(f"expected a JSON object from {url}")
@@ -207,19 +276,39 @@ def full_issue_or_pull(repo: str, number: int, collection: str, token: str, exch
     return payload
 
 
-def iter_envelopes(repo: str, token: str, exchange) -> Iterator[dict]:
-    """Issues and pull requests are the full GET payload. Commits stay list objects."""
-    for item in iter_pages(f"{API}/repos/{repo}/issues?state=all&per_page=100", token, exchange):
+def _numbered(items: list[dict], label: str) -> list[tuple[int, str]]:
+    jobs: list[tuple[int, str]] = []
+    for item in items:
         number = item.get("number")
         if not isinstance(number, int) or isinstance(number, bool):
-            raise PullError("issue list item had no number")
-        collection = "pulls" if "pull_request" in item else "issues"
-        yield wrap_github(full_issue_or_pull(repo, number, collection, token, exchange))
-    for item in iter_pages(f"{API}/repos/{repo}/pulls?state=all&per_page=100", token, exchange):
-        number = item.get("number")
-        if not isinstance(number, int) or isinstance(number, bool):
-            raise PullError("pull list item had no number")
-        yield wrap_github(full_issue_or_pull(repo, number, "pulls", token, exchange))
+            raise PullError(f"{label} list item had no number")
+        collection = "pulls" if label == "pull" or "pull_request" in item else "issues"
+        jobs.append((number, collection))
+    return jobs
+
+
+def iter_envelopes(repo: str, token: str, exchange, *, workers: int = DEFAULT_CONCURRENCY) -> Iterator[dict]:
+    """Issues and pull requests are the full GET payload. Commits stay list objects.
+
+    List pages stay in order. Detail GETs run workers-at-a-time, then the
+    envelopes are yielded in the same list order as a serial pull.
+    """
+    issue_items = list(iter_pages(f"{API}/repos/{repo}/issues?state=all&per_page=100", token, exchange))
+    issue_jobs = _numbered(issue_items, "issue")
+    for payload in map_ordered(
+        lambda job: full_issue_or_pull(repo, job[0], job[1], token, exchange),
+        issue_jobs,
+        workers,
+    ):
+        yield wrap_github(payload)
+    pull_items = list(iter_pages(f"{API}/repos/{repo}/pulls?state=all&per_page=100", token, exchange))
+    pull_jobs = _numbered(pull_items, "pull")
+    for payload in map_ordered(
+        lambda job: full_issue_or_pull(repo, job[0], job[1], token, exchange),
+        pull_jobs,
+        workers,
+    ):
+        yield wrap_github(payload)
     for item in iter_pages(f"{API}/repos/{repo}/commits?per_page=100", token, exchange):
         yield wrap_github(item)
 
@@ -322,13 +411,14 @@ def pull(
     *,
     now: int | None = None,
     sign: Signer = openssl_sign,
+    workers: int = DEFAULT_CONCURRENCY,
 ) -> Iterator[dict]:
     if "/" not in repo or repo.startswith("/") or repo.endswith("/"):
         raise PullError("GITHUB_TEST_REPO must look like owner/name")
     now = int(time.time()) if now is None else now
     app_jwt = build_app_jwt(app_id, pem_path, now=now, sign=sign)
     token = installation_token(app_jwt, repo, exchange)
-    return iter_envelopes(repo, token, exchange)
+    return iter_envelopes(repo, token, exchange, workers=workers)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -355,6 +445,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip the glance summary. JSONL only.",
     )
     parser.add_argument("--repo", help="owner/name. Defaults to GITHUB_TEST_REPO.")
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help=f"Parallel issue/PR detail GETs (default {DEFAULT_CONCURRENCY}, "
+        "or GITHUB_PULL_CONCURRENCY). Lists and commits stay serial.",
+    )
     args = parser.parse_args(argv)
     if args.no_readable and args.readable:
         print("Use only one of --readable or --no-readable.", file=sys.stderr)
@@ -374,7 +471,8 @@ def main(argv: list[str] | None = None) -> int:
 
     pem_path, cleanup = _private_key_file()
     try:
-        envelopes = list(pull(repo, app_id, pem_path, urllib_exchange))
+        workers = resolve_concurrency(args.concurrency)
+        envelopes = list(pull(repo, app_id, pem_path, urllib_exchange, workers=workers))
         if args.output:
             output = Path(args.output)
             with output.open("w", encoding="utf-8") as handle:

@@ -202,5 +202,45 @@ class PullFlowTest(unittest.TestCase):
             )
 
 
+class ConcurrencyTest(unittest.TestCase):
+    def test_parallel_results_stay_in_list_order(self):
+        import time
+
+        def work(number: int) -> int:
+            time.sleep(0.02 if number == 1 else 0)
+            return number
+
+        self.assertEqual(pull_test.map_ordered(work, [1, 2, 3, 4], 4), [1, 2, 3, 4])
+
+    def test_retry_after_is_waited_then_the_body_is_kept(self):
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return pull_test.Response(429, {"Retry-After": "2"}, b"slow down")
+            return pull_test.Response(200, {}, b'{"body":"kept"}')
+
+        waits: list[float] = []
+        response = pull_test.exchange_with_retry(
+            exchange, "GET", "https://api.github.com/repos/acme/widget/issues/1", {}, None, sleep=waits.append
+        )
+        self.assertEqual(response.status, 200)
+        self.assertEqual(waits, [2.0])
+        self.assertEqual(response.json()["body"], "kept")
+
+    def test_default_concurrency_is_twelve(self):
+        import os
+
+        prior = os.environ.pop("GITHUB_PULL_CONCURRENCY", None)
+        try:
+            self.assertEqual(pull_test.DEFAULT_CONCURRENCY, 12)
+            self.assertEqual(pull_test.resolve_concurrency(None), 12)
+            self.assertEqual(pull_test.resolve_concurrency(8), 8)
+        finally:
+            if prior is not None:
+                os.environ["GITHUB_PULL_CONCURRENCY"] = prior
+
+
 if __name__ == "__main__":
     unittest.main()
