@@ -45,27 +45,52 @@ class JwtTest(unittest.TestCase):
 
 
 class ReadableOutputTest(unittest.TestCase):
-    def test_label_then_indented_envelope(self):
+    def test_jsonl_stays_one_object_per_line(self):
+        import io
+
         envelopes = [
-            {"type": "github", "body": {"number": 12, "title": "Login redirect drops the query string"}},
-            {"type": "github", "body": {"number": 3, "title": "Add parser", "pull_request": {"url": "x"}}},
+            {"type": "github", "body": {"number": 12, "title": "Login redirect", "state": "open"}},
+        ]
+        buffer = io.StringIO()
+        self.assertEqual(pull_test.emit_jsonl(envelopes, buffer), 1)
+        line = buffer.getvalue()
+        self.assertEqual(line.count("\n"), 1)
+        self.assertEqual(json.loads(line), envelopes[0])
+        assert_valid(envelopes[0])
+
+    def test_summary_groups_issue_pull_and_commit(self):
+        envelopes = [
+            {"type": "github", "body": {"number": 12, "title": "Login redirect", "state": "open"}},
+            {
+                "type": "github",
+                "body": {"number": 3, "title": "Add parser", "state": "open", "pull_request": {"url": "x"}},
+            },
+            {
+                "type": "github",
+                "body": {"number": 3, "title": "Add parser", "state": "closed", "merged_at": "2026-09-01T00:00:00Z"},
+            },
             {
                 "type": "github",
                 "body": {"sha": "abcdef1234567890", "commit": {"message": "init\n\nmore"}},
             },
         ]
-        import io
+        text = pull_test.render_summary("acme/widget", envelopes)
+        self.assertIn("# acme/widget", text)
+        issues = text.split("## Issues", 1)[1].split("## Pull requests", 1)[0]
+        pulls = text.split("## Pull requests", 1)[1].split("## Commits", 1)[0]
+        commits = text.split("## Commits", 1)[1]
+        self.assertIn("- #12 open — Login redirect", issues)
+        self.assertNotIn("#3", issues)
+        self.assertIn("- #3 merged — Add parser", pulls)
+        self.assertEqual(pulls.count("#3"), 1)
+        self.assertIn("- `abcdef1` init", commits)
+        self.assertNotIn("more", commits)
 
-        buffer = io.StringIO()
-        count = pull_test.emit_readable(iter(envelopes), buffer)
-        text = buffer.getvalue()
-        self.assertEqual(count, 3)
-        self.assertIn("--- 1. issue #12  Login redirect drops the query string ---", text)
-        self.assertIn("--- 2. pull #3  Add parser ---", text)
-        self.assertIn("--- 3. commit abcdef1  init ---", text)
-        self.assertIn('\n  "type": "github"', text)
-        for envelope in envelopes:
-            assert_valid(envelope)
+    def test_sidecar_path_sits_beside_jsonl(self):
+        self.assertEqual(
+            pull_test.readable_sidecar(Path("/tmp/intake.jsonl")),
+            Path("/tmp/intake.jsonl.readable.md"),
+        )
 
 
 class LinkTest(unittest.TestCase):

@@ -2,7 +2,15 @@
 
 Mints an App JWT (RS256 via the openssl CLI — not a Python dependency),
 exchanges it for an installation token, and writes one EMBER-39 envelope
-per issue, pull request, and commit. Stdout is JSONL. Progress goes to stderr.
+per issue, pull request, and commit.
+
+Machine intake is JSONL, one object per line:
+  {"type":"github","body":<opaque raw GitHub API object>}
+Stdout is that JSONL. --output FILE writes the same JSONL and, by default,
+a glance summary at FILE.readable.md (issues, pull requests, commits).
+--readable PATH chooses the summary file. --no-readable skips it.
+--readable - prints the summary on stdout and requires --output so the
+JSONL stays a file. Progress goes to stderr.
 
 The webhook receiver does not use this script. GITHUB_TEST_REPO is the
 test target only; nothing here filters live deliveries.
@@ -199,34 +207,69 @@ def emit_jsonl(envelopes: Iterator[dict], stream) -> int:
     return count
 
 
-def describe_item(body: dict) -> str:
-    """One scan line. The envelope body is still written in full below it."""
-    commit = body.get("commit")
-    sha = body.get("sha")
-    if isinstance(commit, dict) and isinstance(sha, str):
-        message = str(commit.get("message") or "").splitlines()
-        summary = message[0] if message else ""
-        return f"commit {sha[:7]}  {summary}".rstrip()
+def readable_sidecar(output: Path) -> Path:
+    """Glance file written next to an --output JSONL path."""
+    return Path(str(output) + ".readable.md")
+
+
+def _kind(body: dict) -> str | None:
+    if isinstance(body.get("commit"), dict) and isinstance(body.get("sha"), str):
+        return "commit"
     number = body.get("number")
-    title = body.get("title")
-    if isinstance(number, int) and not isinstance(number, bool) and isinstance(title, str):
-        kind = "pull" if "pull_request" in body or "merged_at" in body else "issue"
-        return f"{kind} #{number}  {title}"
-    return "item"
+    if not isinstance(number, int) or isinstance(number, bool):
+        return None
+    if "pull_request" in body or "merged_at" in body:
+        return "pull"
+    return "issue"
 
 
-def emit_readable(envelopes: Iterator[dict], stream) -> int:
-    """Labels plus indented envelopes, so a person can see each ingested object."""
-    count = 0
+def _state_label(body: dict) -> str:
+    if body.get("merged_at"):
+        return "merged"
+    state = body.get("state")
+    if isinstance(state, str) and state:
+        return state
+    return "unknown"
+
+
+def _summary_line(kind: str, body: dict) -> str:
+    if kind == "commit":
+        message = str(body["commit"].get("message") or "").splitlines()
+        subject = message[0] if message else ""
+        return f"- `{body['sha'][:7]}` {subject}".rstrip()
+    title = body.get("title") if isinstance(body.get("title"), str) else ""
+    return f"- #{body['number']} {_state_label(body)} — {title}".rstrip()
+
+
+def render_summary(repo: str, envelopes: list[dict]) -> str:
+    """Grouped glance list. Does not replace the JSONL intake.
+
+    A pull request listed by both the Issues API and the Pulls API is shown
+    once. The later object wins so the Pulls API state is the one you see.
+    """
+    order = ("issue", "pull", "commit")
+    seen: dict[str, dict] = {kind: {} for kind in order}
+    keys: dict[str, list] = {kind: [] for kind in order}
     for envelope in envelopes:
-        count += 1
         body = envelope.get("body")
-        label = describe_item(body) if isinstance(body, dict) else "item"
-        stream.write(f"--- {count}. {label} ---\n")
-        stream.write(json.dumps(envelope, indent=2, ensure_ascii=False))
-        stream.write("\n\n")
-    stream.flush()
-    return count
+        if not isinstance(body, dict):
+            continue
+        kind = _kind(body)
+        if kind is None:
+            continue
+        key = body.get("sha") if kind == "commit" else body.get("number")
+        if key not in seen[kind]:
+            keys[kind].append(key)
+        seen[kind][key] = _summary_line(kind, body)
+    headings = {"issue": "Issues", "pull": "Pull requests", "commit": "Commits"}
+    parts = [f"# {repo}", ""]
+    for kind in order:
+        parts.append(f"## {headings[kind]}")
+        parts.append("")
+        lines = [seen[kind][key] for key in keys[kind]]
+        parts.append("\n".join(lines) if lines else "- (none)")
+        parts.append("")
+    return "\n".join(parts).rstrip() + "\n"
 
 
 def pull(
@@ -247,22 +290,35 @@ def pull(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Pull one test repo into EMBER-39 envelopes.")
-    parser.add_argument("--output", help="Write a file instead of stdout.")
-    parser.add_argument(
-        "--pretty",
-        action="store_true",
-        help="Indent each envelope and add a one-line label (issue, pull, or commit).",
+    parser = argparse.ArgumentParser(
+        description=(
+            "Pull one test repo into EMBER-39 JSONL. "
+            "With --output, also write a glance summary at <output>.readable.md."
+        )
     )
     parser.add_argument(
-        "--compact",
+        "--output",
+        help="Write one-line EMBER-39 JSONL here instead of stdout. "
+        "Also writes <output>.readable.md unless --no-readable.",
+    )
+    parser.add_argument(
+        "--readable",
+        metavar="PATH",
+        help="Write the glance summary to PATH. Use - to print it on stdout "
+        "(requires --output, so JSONL stays in the file).",
+    )
+    parser.add_argument(
+        "--no-readable",
         action="store_true",
-        help="Force one-line JSONL even when writing --output.",
+        help="Skip the glance summary. JSONL only.",
     )
     parser.add_argument("--repo", help="owner/name. Defaults to GITHUB_TEST_REPO.")
     args = parser.parse_args(argv)
-    if args.pretty and args.compact:
-        print("Use only one of --pretty or --compact.", file=sys.stderr)
+    if args.no_readable and args.readable:
+        print("Use only one of --readable or --no-readable.", file=sys.stderr)
+        return 2
+    if args.readable == "-" and not args.output:
+        print("--readable - needs --output so JSONL is not mixed into stdout.", file=sys.stderr)
         return 2
 
     repo = (args.repo or os.environ.get("GITHUB_TEST_REPO", "")).strip()
@@ -276,18 +332,26 @@ def main(argv: list[str] | None = None) -> int:
 
     pem_path, cleanup = _private_key_file()
     try:
-        envelopes = pull(repo, app_id, pem_path, urllib_exchange)
-        # A file is for a person to open. Stdout stays machine JSONL unless --pretty.
-        readable = args.pretty or (args.output is not None and not args.compact)
-        emit = emit_readable if readable else emit_jsonl
+        envelopes = list(pull(repo, app_id, pem_path, urllib_exchange))
         if args.output:
             output = Path(args.output)
             with output.open("w", encoding="utf-8") as handle:
-                count = emit(envelopes, handle)
+                count = emit_jsonl(envelopes, handle)
             print(f"wrote {count} envelopes to {output}", file=sys.stderr)
         else:
-            count = emit(envelopes, sys.stdout)
+            count = emit_jsonl(envelopes, sys.stdout)
             print(f"wrote {count} envelopes", file=sys.stderr)
+        if not args.no_readable:
+            summary = render_summary(repo, envelopes)
+            if args.readable == "-":
+                sys.stdout.write(summary)
+            else:
+                summary_path = Path(args.readable) if args.readable else None
+                if summary_path is None and args.output:
+                    summary_path = readable_sidecar(Path(args.output))
+                if summary_path is not None:
+                    summary_path.write_text(summary, encoding="utf-8")
+                    print(f"wrote glance summary to {summary_path}", file=sys.stderr)
     except PullError as exc:
         print(str(exc), file=sys.stderr)
         return 1
