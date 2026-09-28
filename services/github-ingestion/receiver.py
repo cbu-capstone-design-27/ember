@@ -4,7 +4,12 @@ Repo- and account-agnostic. Stdlib HTTP server. Verifies X-Hub-Signature-256
 when GITHUB_WEBHOOK_SECRET is set, wraps the raw JSON body as
 {"type":"github","body":...}, and logs it. When the payload includes them,
 logs installation id and repository full_name for later routing. Does not
-filter on a configured repository.
+filter on a configured repository or on X-GitHub-Event.
+
+RECOMMENDED_WEBHOOK_EVENTS is the App subscription list that lets a live
+delivery carry the same entity types as the REST backfill, plus a few that
+REST cannot list (discussions) or that this pull does not walk (checks,
+Actions, deployments). The receiver does not read that tuple.
 """
 
 from __future__ import annotations
@@ -25,6 +30,34 @@ from envelope import (
 
 LOG = logging.getLogger("github-ingestion")
 WEBHOOK_PATH = "/webhook/github"
+
+# Configure these on the GitHub App. Delivery intake does not filter on them.
+RECOMMENDED_WEBHOOK_EVENTS = (
+    "installation",
+    "installation_repositories",
+    "repository",
+    "push",
+    "create",
+    "delete",
+    "issues",
+    "issue_comment",
+    "pull_request",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "commit_comment",
+    "release",
+    "milestone",
+    "label",
+    "status",
+    "check_run",
+    "check_suite",
+    "workflow_run",
+    "workflow_job",
+    "deployment",
+    "deployment_status",
+    "discussion",
+    "discussion_comment",
+)
 
 
 def _route(path: str) -> str:

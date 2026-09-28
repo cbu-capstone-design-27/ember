@@ -1,8 +1,9 @@
 """Local webhook smoke. No public URL and no GitHub call.
 
-Starts the receiver, POSTs HMAC-signed issues and pull_request deliveries,
-and checks each response is 202 with one {"type":"github","body":...} line
-on the receiver stdout. Set GITHUB_WEBHOOK_SECRET to any throwaway value.
+Starts the receiver, POSTs HMAC-signed deliveries for the event names in
+EVENTS, and checks each response is 202 with one {"type":"github","body":...}
+line on the receiver stdout. The event name is not a filter. Set
+GITHUB_WEBHOOK_SECRET to any throwaway value.
 """
 
 from __future__ import annotations
@@ -47,6 +48,54 @@ EVENTS = (
                 "state": "open",
                 "body": "What this changes.",
             },
+            "repository": {"full_name": "acme/widget"},
+            "installation": {"id": 1},
+        },
+    ),
+    (
+        "issue_comment",
+        {
+            "action": "created",
+            "issue": {"number": 12},
+            "comment": {"id": 9, "body": "thanks", "user": {"login": "octocat"}},
+            "repository": {"full_name": "acme/widget"},
+            "installation": {"id": 1},
+        },
+    ),
+    (
+        "pull_request_review",
+        {
+            "action": "submitted",
+            "review": {"id": 4, "body": "LGTM", "state": "approved"},
+            "pull_request": {"number": 3},
+            "repository": {"full_name": "acme/widget"},
+            "installation": {"id": 1},
+        },
+    ),
+    (
+        "pull_request_review_comment",
+        {
+            "action": "created",
+            "comment": {"id": 8, "body": "nit"},
+            "pull_request": {"number": 3},
+            "repository": {"full_name": "acme/widget"},
+            "installation": {"id": 1},
+        },
+    ),
+    (
+        "release",
+        {
+            "action": "published",
+            "release": {"tag_name": "v1.0.0", "name": "v1", "body": "notes"},
+            "repository": {"full_name": "acme/widget"},
+            "installation": {"id": 1},
+        },
+    ),
+    (
+        "create",
+        {
+            "ref": "feature",
+            "ref_type": "branch",
             "repository": {"full_name": "acme/widget"},
             "installation": {"id": 1},
         },
