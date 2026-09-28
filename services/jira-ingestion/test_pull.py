@@ -61,13 +61,36 @@ CHANGELOG = {
     "self": f"{ORIGIN}/rest/api/3/issue/EMBER-1/changelog?startAt=0",
     "histories": [{"id": "1", "items": [{"field": "summary", "toString": "Login redirect"}]}],
 }
+# GET /issue/{key}/changelog is a page bean. Entries are in `values`, not `histories`.
 CHANGELOG_2 = {
     "startAt": 0,
     "maxResults": 100,
-    "total": 0,
+    "total": 1,
     "isLast": True,
+    "self": f"{ORIGIN}/rest/api/3/issue/EMBER-2/changelog?startAt=0&maxResults=100",
+    "values": [
+        {
+            "id": "10002",
+            "created": "2026-09-01T00:00:00.000+0000",
+            "items": [{"field": "summary", "fieldtype": "jira", "fromString": "A", "toString": "B"}],
+        }
+    ],
+}
+CHANGELOG_2_PAGE_0 = {
+    "startAt": 0,
+    "maxResults": 1,
+    "total": 2,
+    "isLast": False,
     "self": f"{ORIGIN}/rest/api/3/issue/EMBER-2/changelog?startAt=0",
-    "histories": [],
+    "values": [{"id": "1", "items": [{"field": "summary"}]}],
+}
+CHANGELOG_2_PAGE_1 = {
+    "startAt": 1,
+    "maxResults": 1,
+    "total": 2,
+    "isLast": True,
+    "self": f"{ORIGIN}/rest/api/3/issue/EMBER-2/changelog?startAt=1",
+    "values": [{"id": "2", "items": [{"field": "status"}]}],
 }
 ATTACHMENT = {
     "id": "55",
@@ -320,6 +343,15 @@ class PullFlowTest(unittest.TestCase):
         if path.endswith("/issue/EMBER-1/changelog"):
             return _json(CHANGELOG)
         if path.endswith("/issue/EMBER-2/changelog"):
+            mode = getattr(self, "changelog_2_mode", "values")
+            if mode == "forbidden":
+                return pull_test.Response(403, {}, b'{"errorMessages":["forbidden"]}')
+            if mode == "no-list":
+                return _json({"startAt": 0, "maxResults": 100, "total": 0, "isLast": True})
+            if mode == "values-paged":
+                if "startAt=1" in query:
+                    return _json(CHANGELOG_2_PAGE_1)
+                return _json(CHANGELOG_2_PAGE_0)
             return _json(CHANGELOG_2)
         if path.endswith("/issue/EMBER-1/worklog"):
             return _json(
@@ -388,6 +420,8 @@ class PullFlowTest(unittest.TestCase):
         self.assertEqual(bodies[5]["fields"]["description"], ADF)
         self.assertIsNone(bodies[16]["fields"]["description"])
         self.assertEqual(bodies[8]["body"], ADF)
+        self.assertNotIn("histories", bodies[17])
+        self.assertEqual(bodies[17]["values"][0]["items"][0]["toString"], "B")
         urls = [url for _method, url, _auth, _body in self.calls]
         self.assertEqual(urls[0], f"{ORIGIN}/rest/api/3/search/jql")
         self.assertTrue(any("startAt=1" in url and "/comment" in url for url in urls))
@@ -407,6 +441,59 @@ class PullFlowTest(unittest.TestCase):
         self.assertNotIn("First note", text)
         self.assertNotIn("Repro:", text)
         self.assertNotIn("Did the work", text)
+
+    def _bodies(self):
+        self.calls = []
+        return [item["body"] for item in pull_test.pull(ORIGIN, EMAIL, TOKEN, "EMBER", self.exchange)]
+
+    def test_changelog_values_page_is_a_regression_for_the_live_shape(self):
+        self.assertTrue(pull_test.changelog_ready(CHANGELOG_2))
+        self.assertTrue(pull_test.changelog_ready({"histories": []}))
+        self.assertFalse(
+            pull_test.changelog_ready({"startAt": 0, "maxResults": 100, "total": 0, "isLast": True})
+        )
+        self.assertEqual(pull_test.classify(CHANGELOG_2), "changelog")
+
+    def test_changelog_forbidden_on_one_issue_does_not_abort(self):
+        import io
+        from contextlib import redirect_stderr
+
+        self.changelog_2_mode = "forbidden"
+        notes = io.StringIO()
+        with redirect_stderr(notes):
+            bodies = self._bodies()
+        self.assertIn("skipped optional 403", notes.getvalue())
+        self.assertIn("EMBER-2/changelog", notes.getvalue())
+        selves = [body.get("self") for body in bodies if isinstance(body, dict)]
+        self.assertTrue(any(isinstance(item, str) and "EMBER-1/changelog" in item for item in selves))
+        self.assertFalse(any(isinstance(item, str) and "EMBER-2/changelog" in item for item in selves))
+        self.assertTrue(any(body.get("key") == "EMBER-2" and "fields" in body for body in bodies))
+
+    def test_changelog_without_values_or_histories_skips_that_issue(self):
+        import io
+        from contextlib import redirect_stderr
+
+        self.changelog_2_mode = "no-list"
+        notes = io.StringIO()
+        with redirect_stderr(notes):
+            bodies = self._bodies()
+        self.assertIn("no values or histories", notes.getvalue())
+        self.assertIn("EMBER-2", notes.getvalue())
+        selves = [body.get("self") for body in bodies if isinstance(body, dict)]
+        self.assertTrue(any(isinstance(item, str) and "EMBER-1/changelog" in item for item in selves))
+        self.assertFalse(any(body.get("startAt") == 0 and "values" not in body and "histories" not in body and "fields" not in body for body in bodies))
+
+    def test_changelog_values_pages_stay_in_start_order(self):
+        self.changelog_2_mode = "values-paged"
+        bodies = self._bodies()
+        pages = [
+            body
+            for body in bodies
+            if isinstance(body.get("values"), list) and "EMBER-2/changelog" in str(body.get("self"))
+        ]
+        self.assertEqual(pages, [CHANGELOG_2_PAGE_0, CHANGELOG_2_PAGE_1])
+        self.assertNotIn("histories", pages[0])
+        self.assertNotIn("histories", pages[1])
 
     def test_detail_waves_use_the_worker_cap(self):
         seen = []

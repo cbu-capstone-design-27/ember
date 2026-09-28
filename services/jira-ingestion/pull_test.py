@@ -359,6 +359,16 @@ def _attachment_ids(issue: dict) -> list[str]:
     return found
 
 
+def changelog_ready(page: dict) -> bool:
+    """True when a changelog page has an entry list.
+
+    GET /rest/api/3/issue/{key}/changelog is a page bean. The entries are
+    in `values`. `histories` is the older expand=changelog shape on the
+    issue resource. The page is stored as returned; this does not rename keys.
+    """
+    return isinstance(page.get("values"), list) or isinstance(page.get("histories"), list)
+
+
 def _fetch_page(url: str, email: str, api_token: str, exchange) -> dict:
     return _as_dict(fetch_json(url, email, api_token, exchange), url)
 
@@ -489,12 +499,19 @@ def _load_children(
         for att_id in _attachment_ids(issue):
             jobs.append(("attachment", key, att_id, f"{origin}/rest/api/3/attachment/{att_id}"))
 
-    optional = {"watchers", "votes"}
-    fetched = map_ordered(
-        lambda job: fetch_json(job[3], email, api_token, exchange, optional=job[0] in optional),
-        jobs,
-        workers,
-    )
+    optional = {"watchers", "votes", "changelog"}
+
+    def _fetch_job(job: tuple):
+        kind, key, _marker, url = job
+        try:
+            return fetch_json(url, email, api_token, exchange, optional=kind in optional)
+        except PullError as exc:
+            if kind != "changelog":
+                raise
+            print(f"skipped changelog for {key}: {exc}", file=sys.stderr)
+            return None
+
+    fetched = map_ordered(_fetch_job, jobs, workers)
 
     comment_pages: dict[str, dict[int, dict]] = {}
     changelog_pages: dict[str, dict[int, dict]] = {}
@@ -513,10 +530,18 @@ def _load_children(
         if kind == "comments":
             _queue_rest(kind, key, _as_dict(payload, url), f"/rest/api/3/issue/{key}/comment", comment_pages)
         elif kind == "changelog":
-            page = _as_dict(payload, url)
-            if not isinstance(page.get("histories"), list):
-                raise PullError(f"expected histories from {url}")
-            _queue_rest(kind, key, page, f"/rest/api/3/issue/{key}/changelog", changelog_pages)
+            if payload is None:
+                continue
+            if not isinstance(payload, dict) or not changelog_ready(payload):
+                print(
+                    f"skipped changelog for {key}: response has no values or histories list {url}",
+                    file=sys.stderr,
+                )
+                continue
+            try:
+                _queue_rest(kind, key, payload, f"/rest/api/3/issue/{key}/changelog", changelog_pages)
+            except PullError as exc:
+                print(f"skipped further changelog pages for {key}: {exc}", file=sys.stderr)
         elif kind == "worklog":
             _queue_rest(kind, key, _as_dict(payload, url), f"/rest/api/3/issue/{key}/worklog", worklog_pages)
         elif kind == "remotelink":
@@ -534,18 +559,33 @@ def _load_children(
             raise PullError(f"unknown pull job {kind}")
 
     follow_ups = [("page", item) for item in more_pages] + [("prop", item) for item in property_jobs]
+
+    def _fetch_follow(item: tuple):
+        if item[0] == "page":
+            kind, key, _start, url = item[1]
+            try:
+                return fetch_json(url, email, api_token, exchange, optional=kind == "changelog")
+            except PullError as exc:
+                if kind != "changelog":
+                    raise
+                print(f"skipped changelog for {key}: {exc}", file=sys.stderr)
+                return None
+        return fetch_json(item[1][1], email, api_token, exchange)
+
     if follow_ups:
-        follow_bodies = map_ordered(
-            lambda item: fetch_json(item[1][3] if item[0] == "page" else item[1][1], email, api_token, exchange),
-            follow_ups,
-            workers,
-        )
+        follow_bodies = map_ordered(_fetch_follow, follow_ups, workers)
         for item, payload in zip(follow_ups, follow_bodies):
             if item[0] == "page":
                 kind, key, start, url = item[1]
+                if kind == "changelog" and payload is None:
+                    continue
+                if kind == "changelog" and (not isinstance(payload, dict) or not changelog_ready(payload)):
+                    print(
+                        f"skipped changelog for {key}: response has no values or histories list {url}",
+                        file=sys.stderr,
+                    )
+                    continue
                 page = _as_dict(payload, url)
-                if kind == "changelog" and not isinstance(page.get("histories"), list):
-                    raise PullError(f"expected histories from {url}")
                 sink = {"comments": comment_pages, "changelog": changelog_pages, "worklog": worklog_pages}[kind]
                 sink[key][start] = page
             else:
@@ -575,7 +615,8 @@ def collect(
     workers: int = DEFAULT_CONCURRENCY,
 ) -> list[dict]:
     """Raw JSON objects in sidecar order. Nothing here is cleaned or dropped
-    except attachment bytes and optional watchers/votes that Jira refused.
+    except attachment bytes, watchers/votes Jira refused, and a changelog
+    page for one issue that was forbidden or had no values/histories list.
     """
     keys = list(iter_issue_keys(origin, project, email, api_token, exchange))
     project_body, components, versions, statuses, properties, issues = _load_roots(
@@ -673,6 +714,14 @@ def classify(body: dict) -> str:
         return "attachment"
     if "/changelog" in self_url or (
         isinstance(body.get("histories"), list) and "startAt" in body and "total" in body
+    ) or (
+        isinstance(body.get("values"), list)
+        and "startAt" in body
+        and "total" in body
+        and (
+            not body["values"]
+            or (isinstance(body["values"][0], dict) and "items" in body["values"][0])
+        )
     ):
         return "changelog"
     if "/issueLink/" in self_url or "outwardIssue" in body or "inwardIssue" in body:
