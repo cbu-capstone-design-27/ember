@@ -7,6 +7,7 @@ Jira: EMBER-39. Shape is `{type, body}`: a source name and opaque raw connector 
 ## Consumers
 
 - `services/pipeline` and each source connector (GitHub, Jira, Slack, Teams, GitLab) emit this shape.
+- `services/github-ingestion` is the first emitter (EMBER-35). It wraps a GitHub webhook as `{"type":"github","body":<raw object>}`.
 - Downstream graph mapping (EMBER-3) reads it. It does not own the fields.
 
 The package lands before those consumers have code because the connectors are separate spikes and need one contract to aim at.

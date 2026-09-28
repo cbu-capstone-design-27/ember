@@ -15,7 +15,8 @@
 /apps/mcp/              @RyanStoffel
 
 # Services
-/services/pipeline/     @RyanStoffel
+/services/pipeline/          @RyanStoffel
+/services/github-ingestion/  @RyanStoffel
 
 # Shared packages
 /packages/              @RyanStoffel

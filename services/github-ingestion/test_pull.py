@@ -1,0 +1,246 @@
+"""Local pull emits {type, body} envelopes. No live GitHub calls."""
+
+from __future__ import annotations
+
+import json
+import sys
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "packages" / "ingestion-envelope"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import pull_test  # noqa: E402
+from validate import assert_valid  # noqa: E402
+
+SOURCE = Path(__file__).resolve().parent / "pull_test.py"
+
+
+def fake_sign(_pem_path: str, _data: bytes) -> bytes:
+    return b"signature-bytes"
+
+
+class JwtTest(unittest.TestCase):
+    def test_claims_and_three_segments(self):
+        token = pull_test.build_app_jwt("5075660", "unused.pem", now=1_700_000_000, sign=fake_sign)
+        header_b64, payload_b64, signature_b64 = token.split(".")
+        self.assertEqual(signature_b64, pull_test.b64url(b"signature-bytes"))
+
+        def decode(segment: str):
+            padded = segment + "=" * (-len(segment) % 4)
+            return json.loads(pull_test.base64.urlsafe_b64decode(padded))
+
+        header = decode(header_b64)
+        payload = decode(payload_b64)
+        self.assertEqual(header, {"alg": "RS256", "typ": "JWT"})
+        self.assertEqual(payload["iss"], "5075660")
+        self.assertEqual(payload["iat"], 1_700_000_000 - 60)
+        self.assertEqual(payload["exp"], 1_700_000_000 + 9 * 60)
+
+    def test_script_does_not_hard_code_a_repository(self):
+        text = SOURCE.read_text(encoding="utf-8")
+        self.assertNotIn("ryan-stoffel/photon", text)
+        self.assertNotIn("GITHUB_REPO", text)
+
+
+class ReadableOutputTest(unittest.TestCase):
+    def test_jsonl_stays_one_object_per_line(self):
+        import io
+
+        envelopes = [
+            {"type": "github", "body": {"number": 12, "title": "Login redirect", "state": "open"}},
+        ]
+        buffer = io.StringIO()
+        self.assertEqual(pull_test.emit_jsonl(envelopes, buffer), 1)
+        line = buffer.getvalue()
+        self.assertEqual(line.count("\n"), 1)
+        self.assertEqual(json.loads(line), envelopes[0])
+        assert_valid(envelopes[0])
+
+    def test_summary_groups_issue_pull_and_commit(self):
+        envelopes = [
+            {"type": "github", "body": {"number": 12, "title": "Login redirect", "state": "open"}},
+            {
+                "type": "github",
+                "body": {"number": 3, "title": "Add parser", "state": "open", "pull_request": {"url": "x"}},
+            },
+            {
+                "type": "github",
+                "body": {"number": 3, "title": "Add parser", "state": "closed", "merged_at": "2026-09-01T00:00:00Z"},
+            },
+            {
+                "type": "github",
+                "body": {"sha": "abcdef1234567890", "commit": {"message": "init\n\nmore"}},
+            },
+        ]
+        text = pull_test.render_summary("acme/widget", envelopes)
+        self.assertIn("# acme/widget", text)
+        issues = text.split("## Issues", 1)[1].split("## Pull requests", 1)[0]
+        pulls = text.split("## Pull requests", 1)[1].split("## Commits", 1)[0]
+        commits = text.split("## Commits", 1)[1]
+        self.assertIn("- #12 open — Login redirect", issues)
+        self.assertNotIn("#3", issues)
+        self.assertIn("- #3 merged — Add parser", pulls)
+        self.assertEqual(pulls.count("#3"), 1)
+        self.assertIn("- `abcdef1` init", commits)
+        self.assertNotIn("more", commits)
+
+    def test_summary_excerpt_uses_description_body(self):
+        envelopes = [
+            {
+                "type": "github",
+                "body": {
+                    "number": 12,
+                    "title": "Login redirect",
+                    "state": "open",
+                    "body": "Repro: sign in with ?next=/settings\n\nand land on /.",
+                },
+            }
+        ]
+        text = pull_test.render_summary("acme/widget", envelopes)
+        self.assertIn("- #12 open — Login redirect — Repro: sign in with ?next=/settings and land on /.", text)
+
+    def test_sidecar_path_sits_beside_jsonl(self):
+        self.assertEqual(
+            pull_test.readable_sidecar(Path("/tmp/intake.jsonl")),
+            Path("/tmp/intake.jsonl.readable.md"),
+        )
+
+
+class LinkTest(unittest.TestCase):
+    def test_next_rel(self):
+        header = (
+            '<https://api.github.com/repos/acme/widget/commits?page=2>; rel="next", '
+            '<https://api.github.com/repos/acme/widget/commits?page=5>; rel="last"'
+        )
+        self.assertEqual(
+            pull_test.parse_next_link(header),
+            "https://api.github.com/repos/acme/widget/commits?page=2",
+        )
+
+    def test_missing_next(self):
+        self.assertIsNone(pull_test.parse_next_link(None))
+        self.assertIsNone(pull_test.parse_next_link('<https://example.test>; rel="last"'))
+
+
+class PullFlowTest(unittest.TestCase):
+    def exchange(self, method, url, headers, body):
+        self.calls.append((method, url, headers.get("Authorization")))
+        if url.endswith("/installation"):
+            self.assertTrue(headers["Authorization"].startswith("Bearer ey"))
+            return pull_test.Response(200, {}, json.dumps({"id": 9}).encode())
+        if url.endswith("/access_tokens"):
+            self.assertEqual(body, b"{}")
+            return pull_test.Response(200, {}, json.dumps({"token": "ghs_test"}).encode())
+        if "/issues?" in url:
+            self.assertEqual(headers["Authorization"], "Bearer ghs_test")
+            return pull_test.Response(200, {}, json.dumps([{"number": 1, "title": "bug"}]).encode())
+        if url.endswith("/issues/1"):
+            return pull_test.Response(
+                200,
+                {},
+                json.dumps(
+                    {"number": 1, "title": "bug", "state": "open", "body": "Steps to reproduce."}
+                ).encode(),
+            )
+        if "/pulls?" in url:
+            return pull_test.Response(200, {}, json.dumps([{"number": 2, "title": "pr"}]).encode())
+        if url.endswith("/pulls/2"):
+            return pull_test.Response(
+                200,
+                {},
+                json.dumps(
+                    {"number": 2, "title": "pr", "state": "open", "body": "What this changes."}
+                ).encode(),
+            )
+        if "/commits?" in url and "page=2" not in url:
+            link = '<https://api.github.com/repos/acme/widget/commits?per_page=100&page=2>; rel="next"'
+            return pull_test.Response(200, {"Link": link}, json.dumps([{"sha": "aaa"}]).encode())
+        if "page=2" in url:
+            return pull_test.Response(200, {}, json.dumps([{"sha": "bbb"}]).encode())
+        raise AssertionError(url)
+
+    def test_issues_pulls_and_commits_become_envelopes(self):
+        self.calls = []
+        envelopes = list(
+            pull_test.pull(
+                "acme/widget",
+                "5075660",
+                "unused.pem",
+                self.exchange,
+                now=1_700_000_000,
+                sign=fake_sign,
+            )
+        )
+        self.assertEqual(len(envelopes), 4)
+        bodies = [item["body"] for item in envelopes]
+        self.assertEqual(bodies[0]["body"], "Steps to reproduce.")
+        self.assertEqual(bodies[1]["body"], "What this changes.")
+        self.assertEqual(bodies[2:], [{"sha": "aaa"}, {"sha": "bbb"}])
+        detail_urls = [url for _, url, _ in self.calls]
+        self.assertIn("https://api.github.com/repos/acme/widget/issues/1", detail_urls)
+        self.assertIn("https://api.github.com/repos/acme/widget/pulls/2", detail_urls)
+        self.assertFalse(any("/commits/aaa" in url or "/commits/bbb" in url for url in detail_urls))
+        for envelope in envelopes:
+            self.assertEqual(set(envelope), {"type", "body"})
+            self.assertEqual(envelope["type"], "github")
+            assert_valid(envelope)
+        self.assertTrue(any("/repos/acme/widget/installation" in url for _, url, _ in self.calls))
+
+    def test_rejects_repo_without_owner(self):
+        with self.assertRaises(pull_test.PullError):
+            list(
+                pull_test.pull(
+                    "photon",
+                    "1",
+                    "unused.pem",
+                    self.exchange,
+                    now=1,
+                    sign=fake_sign,
+                )
+            )
+
+
+class ConcurrencyTest(unittest.TestCase):
+    def test_parallel_results_stay_in_list_order(self):
+        import time
+
+        def work(number: int) -> int:
+            time.sleep(0.02 if number == 1 else 0)
+            return number
+
+        self.assertEqual(pull_test.map_ordered(work, [1, 2, 3, 4], 4), [1, 2, 3, 4])
+
+    def test_retry_after_is_waited_then_the_body_is_kept(self):
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return pull_test.Response(429, {"Retry-After": "2"}, b"slow down")
+            return pull_test.Response(200, {}, b'{"body":"kept"}')
+
+        waits: list[float] = []
+        response = pull_test.exchange_with_retry(
+            exchange, "GET", "https://api.github.com/repos/acme/widget/issues/1", {}, None, sleep=waits.append
+        )
+        self.assertEqual(response.status, 200)
+        self.assertEqual(waits, [2.0])
+        self.assertEqual(response.json()["body"], "kept")
+
+    def test_default_concurrency_is_twelve(self):
+        import os
+
+        prior = os.environ.pop("GITHUB_PULL_CONCURRENCY", None)
+        try:
+            self.assertEqual(pull_test.DEFAULT_CONCURRENCY, 12)
+            self.assertEqual(pull_test.resolve_concurrency(None), 12)
+            self.assertEqual(pull_test.resolve_concurrency(8), 8)
+        finally:
+            if prior is not None:
+                os.environ["GITHUB_PULL_CONCURRENCY"] = prior
+
+
+if __name__ == "__main__":
+    unittest.main()
