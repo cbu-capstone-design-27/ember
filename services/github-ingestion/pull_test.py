@@ -186,16 +186,42 @@ def iter_pages(url: str, token: str, exchange) -> Iterator[dict]:
         url = parse_next_link(response.headers.get("Link") or response.headers.get("link"))
 
 
+def fetch_object(url: str, token: str, exchange) -> dict:
+    response = exchange("GET", url, _headers(token), None)
+    payload = _read_json(response, f"GET {url}")
+    if not isinstance(payload, dict):
+        raise PullError(f"expected a JSON object from {url}")
+    return payload
+
+
+def full_issue_or_pull(repo: str, number: int, collection: str, token: str, exchange) -> dict:
+    """GET one issue or pull request so the raw object includes description `body`.
+
+    collection is "issues" or "pulls". List payloads are not what we emit.
+    An empty description is GitHub's JSON null, and the key is still present.
+    """
+    url = f"{API}/repos/{repo}/{collection}/{number}"
+    payload = fetch_object(url, token, exchange)
+    if "body" not in payload:
+        payload["body"] = None
+    return payload
+
+
 def iter_envelopes(repo: str, token: str, exchange) -> Iterator[dict]:
-    """Raw list objects from Issues, Pulls, and Commits. No cleaning."""
-    resources = (
-        f"{API}/repos/{repo}/issues?state=all&per_page=100",
-        f"{API}/repos/{repo}/pulls?state=all&per_page=100",
-        f"{API}/repos/{repo}/commits?per_page=100",
-    )
-    for url in resources:
-        for item in iter_pages(url, token, exchange):
-            yield wrap_github(item)
+    """Issues and pull requests are the full GET payload. Commits stay list objects."""
+    for item in iter_pages(f"{API}/repos/{repo}/issues?state=all&per_page=100", token, exchange):
+        number = item.get("number")
+        if not isinstance(number, int) or isinstance(number, bool):
+            raise PullError("issue list item had no number")
+        collection = "pulls" if "pull_request" in item else "issues"
+        yield wrap_github(full_issue_or_pull(repo, number, collection, token, exchange))
+    for item in iter_pages(f"{API}/repos/{repo}/pulls?state=all&per_page=100", token, exchange):
+        number = item.get("number")
+        if not isinstance(number, int) or isinstance(number, bool):
+            raise PullError("pull list item had no number")
+        yield wrap_github(full_issue_or_pull(repo, number, "pulls", token, exchange))
+    for item in iter_pages(f"{API}/repos/{repo}/commits?per_page=100", token, exchange):
+        yield wrap_github(item)
 
 
 def emit_jsonl(envelopes: Iterator[dict], stream) -> int:
@@ -232,13 +258,29 @@ def _state_label(body: dict) -> str:
     return "unknown"
 
 
+def _body_excerpt(body: dict, limit: int = 80) -> str:
+    text = body.get("body")
+    if not isinstance(text, str):
+        return ""
+    flat = " ".join(text.split())
+    if not flat:
+        return ""
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 1].rstrip() + "…"
+
+
 def _summary_line(kind: str, body: dict) -> str:
     if kind == "commit":
         message = str(body["commit"].get("message") or "").splitlines()
         subject = message[0] if message else ""
         return f"- `{body['sha'][:7]}` {subject}".rstrip()
     title = body.get("title") if isinstance(body.get("title"), str) else ""
-    return f"- #{body['number']} {_state_label(body)} — {title}".rstrip()
+    line = f"- #{body['number']} {_state_label(body)} — {title}".rstrip()
+    excerpt = _body_excerpt(body)
+    if excerpt:
+        line = f"{line} — {excerpt}"
+    return line
 
 
 def render_summary(repo: str, envelopes: list[dict]) -> str:

@@ -86,6 +86,21 @@ class ReadableOutputTest(unittest.TestCase):
         self.assertIn("- `abcdef1` init", commits)
         self.assertNotIn("more", commits)
 
+    def test_summary_excerpt_uses_description_body(self):
+        envelopes = [
+            {
+                "type": "github",
+                "body": {
+                    "number": 12,
+                    "title": "Login redirect",
+                    "state": "open",
+                    "body": "Repro: sign in with ?next=/settings\n\nand land on /.",
+                },
+            }
+        ]
+        text = pull_test.render_summary("acme/widget", envelopes)
+        self.assertIn("- #12 open — Login redirect — Repro: sign in with ?next=/settings and land on /.", text)
+
     def test_sidecar_path_sits_beside_jsonl(self):
         self.assertEqual(
             pull_test.readable_sidecar(Path("/tmp/intake.jsonl")),
@@ -121,8 +136,24 @@ class PullFlowTest(unittest.TestCase):
         if "/issues?" in url:
             self.assertEqual(headers["Authorization"], "Bearer ghs_test")
             return pull_test.Response(200, {}, json.dumps([{"number": 1, "title": "bug"}]).encode())
+        if url.endswith("/issues/1"):
+            return pull_test.Response(
+                200,
+                {},
+                json.dumps(
+                    {"number": 1, "title": "bug", "state": "open", "body": "Steps to reproduce."}
+                ).encode(),
+            )
         if "/pulls?" in url:
             return pull_test.Response(200, {}, json.dumps([{"number": 2, "title": "pr"}]).encode())
+        if url.endswith("/pulls/2"):
+            return pull_test.Response(
+                200,
+                {},
+                json.dumps(
+                    {"number": 2, "title": "pr", "state": "open", "body": "What this changes."}
+                ).encode(),
+            )
         if "/commits?" in url and "page=2" not in url:
             link = '<https://api.github.com/repos/acme/widget/commits?per_page=100&page=2>; rel="next"'
             return pull_test.Response(200, {"Link": link}, json.dumps([{"sha": "aaa"}]).encode())
@@ -144,15 +175,13 @@ class PullFlowTest(unittest.TestCase):
         )
         self.assertEqual(len(envelopes), 4)
         bodies = [item["body"] for item in envelopes]
-        self.assertEqual(
-            bodies,
-            [
-                {"number": 1, "title": "bug"},
-                {"number": 2, "title": "pr"},
-                {"sha": "aaa"},
-                {"sha": "bbb"},
-            ],
-        )
+        self.assertEqual(bodies[0]["body"], "Steps to reproduce.")
+        self.assertEqual(bodies[1]["body"], "What this changes.")
+        self.assertEqual(bodies[2:], [{"sha": "aaa"}, {"sha": "bbb"}])
+        detail_urls = [url for _, url, _ in self.calls]
+        self.assertIn("https://api.github.com/repos/acme/widget/issues/1", detail_urls)
+        self.assertIn("https://api.github.com/repos/acme/widget/pulls/2", detail_urls)
+        self.assertFalse(any("/commits/aaa" in url or "/commits/bbb" in url for url in detail_urls))
         for envelope in envelopes:
             self.assertEqual(set(envelope), {"type", "body"})
             self.assertEqual(envelope["type"], "github")
