@@ -143,7 +143,7 @@ Then, one envelope each:
 - `GET /rest/api/3/issue/{key}?fields=*all` (description and every other field Jira returns, including custom fields)
 - each object in `fields.issuelinks`
 - each comment from `GET /rest/api/3/issue/{key}/comment`
-- each changelog page from `GET /rest/api/3/issue/{key}/changelog` (the page object, histories left inside it)
+- each changelog page from `GET /rest/api/3/issue/{key}/changelog`. That response is a page bean: entries are in `values`. `histories` (the expand=changelog shape) is accepted too. The page is stored unchanged. A forbidden response, or a page with neither list, is logged and skipped for that issue. The rest of the pull continues.
 - each worklog from `GET /rest/api/3/issue/{key}/worklog`
 - each attachment's metadata from `GET /rest/api/3/attachment/{id}`
 - each remote link from `GET /rest/api/3/issue/{key}/remotelink`
@@ -154,7 +154,7 @@ The issue object still contains Jira's own comment and worklog previews. Those p
 
 Search pages stay one-after-another. Detail GETs run 32 at a time, across issues and across comments, changelog pages, worklogs, and the other resources. Later pages are requested together, then written back in `startAt` order. Tune with `--concurrency N` or `JIRA_PULL_CONCURRENCY` (1–64). If Jira returns `Retry-After`, the script waits that long and retries. A `429` / `502` / `503` without `Retry-After` waits 1s, then 2s, then 4s, and so on.
 
-A `403` or `404` on watchers or votes is skipped for that issue (the feature can be turned off). Every other GET failure stops the pull.
+A `403` or `404` on watchers, votes, or one issue's changelog is skipped for that issue. A changelog body with neither `values` nor `histories` is skipped the same way. Every other GET failure stops the pull.
 
 ### What this cut does not pull
 
