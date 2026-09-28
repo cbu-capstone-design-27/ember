@@ -152,6 +152,32 @@ List pages and commit pages stay one-after-another. Issue and pull-request detai
 
 Issue comments, pull request reviews, review comments, check runs, statuses, releases, file contents, diffs, or any repository other than `GITHUB_TEST_REPO`. It does not replay webhooks.
 
+## Local webhook smoke
+
+This checks a signed delivery against the receiver on your machine. It does not call GitHub and it does not need a public URL. `pull_test.py` is a separate backfill.
+
+```sh
+git fetch && git checkout feature/EMBER-35-github-ingestion-worker
+
+export GITHUB_WEBHOOK_SECRET="throwaway-local-secret"
+
+scripts/smoke_webhook.sh
+```
+
+Any throwaway string is fine. The script starts the receiver, POSTs an `issues` `opened` payload and a `pull_request` `opened` payload with `X-Hub-Signature-256`, and expects HTTP 202 plus two stdout lines:
+
+```json
+{"type":"github","body":{"action":"opened","issue":{"number":12,"title":"Login redirect drops the query string","state":"open","body":"Repro: sign in with ?next=/settings and land on /."},"repository":{"full_name":"acme/widget"},"installation":{"id":1}}}
+```
+
+```json
+{"type":"github","body":{"action":"opened","pull_request":{"number":3,"title":"Add parser","state":"open","body":"What this changes."},"repository":{"full_name":"acme/widget"},"installation":{"id":1}}}
+```
+
+Success ends with `smoke ok: 2 envelopes` on stderr.
+
+To receive a real App delivery later, point a tunnel at `GITHUB_INGESTION_PORT` (default `8080`) and set the App webhook URL to `https://<tunnel-host>/webhook/github` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8080` or `ngrok http 8080`. The tunnel is not part of this smoke and CI does not start one.
+
 ## Test
 
 ```sh
