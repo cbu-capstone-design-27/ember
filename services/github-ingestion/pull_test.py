@@ -10,7 +10,8 @@ Stdout is that JSONL. --output FILE writes the same JSONL and, by default,
 a glance summary at FILE.readable.md (issues, pull requests, commits).
 Issue and pull-request detail GETs run DEFAULT_CONCURRENCY at a time
 (--concurrency or GITHUB_PULL_CONCURRENCY). List pages and commits stay
-serial. A Retry-After or primary rate-limit reset is waited out.
+serial. One shared gate waits out Retry-After, a primary rate-limit
+reset, or a secondary rate-limit response so workers back off together.
 --readable PATH chooses the summary file. --no-readable skips it.
 --readable - prints the summary on stdout and requires --output so the
 JSONL stays a file. Progress goes to stderr.
@@ -28,6 +29,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -40,10 +42,41 @@ from envelope import wrap_github
 API = "https://api.github.com"
 USER_AGENT = "ember-github-ingestion"
 MAX_PAGES = 50
-DEFAULT_CONCURRENCY = 12
-MAX_CONCURRENCY = 32
+DEFAULT_CONCURRENCY = 32
+MAX_CONCURRENCY = 80
 MAX_RETRY_WAIT = 120.0
+SECONDARY_RATE_LIMIT_WAIT = 60.0
 Signer = Callable[[str, bytes], bytes]
+
+
+class RateLimitGate:
+    """Holds every worker until a shared throttle window has passed."""
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._clock = clock
+        self._sleep = sleep
+        self._lock = threading.Lock()
+        self._until = 0.0
+
+    def wait(self) -> None:
+        while True:
+            with self._lock:
+                delay = self._until - self._clock()
+            if delay <= 0:
+                return
+            self._sleep(delay)
+
+    def extend(self, seconds: float) -> None:
+        if seconds <= 0:
+            return
+        with self._lock:
+            target = self._clock() + seconds
+            if target > self._until:
+                self._until = target
 
 
 class PullError(Exception):
@@ -139,22 +172,44 @@ def retry_after_seconds(response: Response, *, now: float | None = None) -> floa
                 return max(0.0, float(reset) - clock)
             except ValueError:
                 return None
+    if response.status in (403, 429):
+        text = response.body.decode("utf-8", "replace").lower()
+        if "secondary rate limit" in text or "abuse detection" in text:
+            return SECONDARY_RATE_LIMIT_WAIT
     if response.status in (429, 502, 503):
         return 1.0
     return None
 
 
-def exchange_with_retry(exchange, method: str, url: str, headers: dict[str, str], body: bytes | None, *, attempts: int = 5, sleep: Callable[[float], None] = time.sleep) -> Response:
-    """Repeat when GitHub sends Retry-After or a primary rate-limit reset."""
-    response = exchange(method, url, headers, body)
-    for _ in range(attempts - 1):
+def exchange_with_retry(
+    exchange,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: bytes | None,
+    *,
+    attempts: int = 5,
+    sleep: Callable[[float], None] = time.sleep,
+    gate: RateLimitGate | None = None,
+) -> Response:
+    """Repeat when GitHub sends Retry-After, a primary reset, or a secondary limit.
+
+    ``gate`` is shared by every worker in one pull. A throttle extends it so
+    the next request from any worker waits out the same window.
+    """
+    response: Response | None = None
+    for attempt in range(attempts):
+        if gate is not None:
+            gate.wait()
+        response = exchange(method, url, headers, body)
         wait = retry_after_seconds(response)
-        if wait is None:
+        if wait is None or attempt == attempts - 1:
             return response
         wait = min(wait, MAX_RETRY_WAIT)
+        if gate is not None:
+            gate.extend(wait)
         print(f"GitHub asked to wait {wait:.0f}s ({response.status}) {url}", file=sys.stderr)
         sleep(wait)
-        response = exchange(method, url, headers, body)
     return response
 
 
@@ -215,22 +270,26 @@ def _read_json(response: Response, what: str):
     return response.json()
 
 
-def installation_token(app_jwt: str, repo: str, exchange) -> str:
-    found = exchange(
+def installation_token(app_jwt: str, repo: str, exchange, gate: RateLimitGate | None = None) -> str:
+    found = exchange_with_retry(
+        exchange,
         "GET",
         f"{API}/repos/{repo}/installation",
         _headers(app_jwt),
         None,
+        gate=gate,
     )
     installation = _read_json(found, f"installation lookup for {repo}")
     installation_id = installation.get("id")
     if not isinstance(installation_id, int):
         raise PullError(f"installation lookup for {repo} did not return an id")
-    minted = exchange(
+    minted = exchange_with_retry(
+        exchange,
         "POST",
         f"{API}/app/installations/{installation_id}/access_tokens",
         _headers(app_jwt, json_body=True),
         b"{}",
+        gate=gate,
     )
     token = _read_json(minted, "installation token").get("token")
     if not isinstance(token, str) or not token:
@@ -238,13 +297,13 @@ def installation_token(app_jwt: str, repo: str, exchange) -> str:
     return token
 
 
-def iter_pages(url: str, token: str, exchange) -> Iterator[dict]:
+def iter_pages(url: str, token: str, exchange, gate: RateLimitGate | None = None) -> Iterator[dict]:
     pages = 0
     while url:
         pages += 1
         if pages > MAX_PAGES:
             raise PullError(f"stopped after {MAX_PAGES} pages for {url}")
-        response = exchange_with_retry(exchange, "GET", url, _headers(token), None)
+        response = exchange_with_retry(exchange, "GET", url, _headers(token), None, gate=gate)
         payload = _read_json(response, f"GET {url}")
         if not isinstance(payload, list):
             raise PullError(f"expected a JSON list from {url}")
@@ -255,22 +314,24 @@ def iter_pages(url: str, token: str, exchange) -> Iterator[dict]:
         url = parse_next_link(response.headers.get("Link") or response.headers.get("link"))
 
 
-def fetch_object(url: str, token: str, exchange) -> dict:
-    response = exchange_with_retry(exchange, "GET", url, _headers(token), None)
+def fetch_object(url: str, token: str, exchange, gate: RateLimitGate | None = None) -> dict:
+    response = exchange_with_retry(exchange, "GET", url, _headers(token), None, gate=gate)
     payload = _read_json(response, f"GET {url}")
     if not isinstance(payload, dict):
         raise PullError(f"expected a JSON object from {url}")
     return payload
 
 
-def full_issue_or_pull(repo: str, number: int, collection: str, token: str, exchange) -> dict:
+def full_issue_or_pull(
+    repo: str, number: int, collection: str, token: str, exchange, gate: RateLimitGate | None = None
+) -> dict:
     """GET one issue or pull request so the raw object includes description `body`.
 
     collection is "issues" or "pulls". List payloads are not what we emit.
     An empty description is GitHub's JSON null, and the key is still present.
     """
     url = f"{API}/repos/{repo}/{collection}/{number}"
-    payload = fetch_object(url, token, exchange)
+    payload = fetch_object(url, token, exchange, gate)
     if "body" not in payload:
         payload["body"] = None
     return payload
@@ -287,29 +348,38 @@ def _numbered(items: list[dict], label: str) -> list[tuple[int, str]]:
     return jobs
 
 
-def iter_envelopes(repo: str, token: str, exchange, *, workers: int = DEFAULT_CONCURRENCY) -> Iterator[dict]:
+def iter_envelopes(
+    repo: str,
+    token: str,
+    exchange,
+    *,
+    workers: int = DEFAULT_CONCURRENCY,
+    gate: RateLimitGate | None = None,
+) -> Iterator[dict]:
     """Issues and pull requests are the full GET payload. Commits stay list objects.
 
     List pages stay in order. Detail GETs run workers-at-a-time, then the
     envelopes are yielded in the same list order as a serial pull.
     """
-    issue_items = list(iter_pages(f"{API}/repos/{repo}/issues?state=all&per_page=100", token, exchange))
+    issue_items = list(
+        iter_pages(f"{API}/repos/{repo}/issues?state=all&per_page=100", token, exchange, gate)
+    )
     issue_jobs = _numbered(issue_items, "issue")
     for payload in map_ordered(
-        lambda job: full_issue_or_pull(repo, job[0], job[1], token, exchange),
+        lambda job: full_issue_or_pull(repo, job[0], job[1], token, exchange, gate),
         issue_jobs,
         workers,
     ):
         yield wrap_github(payload)
-    pull_items = list(iter_pages(f"{API}/repos/{repo}/pulls?state=all&per_page=100", token, exchange))
+    pull_items = list(iter_pages(f"{API}/repos/{repo}/pulls?state=all&per_page=100", token, exchange, gate))
     pull_jobs = _numbered(pull_items, "pull")
     for payload in map_ordered(
-        lambda job: full_issue_or_pull(repo, job[0], job[1], token, exchange),
+        lambda job: full_issue_or_pull(repo, job[0], job[1], token, exchange, gate),
         pull_jobs,
         workers,
     ):
         yield wrap_github(payload)
-    for item in iter_pages(f"{API}/repos/{repo}/commits?per_page=100", token, exchange):
+    for item in iter_pages(f"{API}/repos/{repo}/commits?per_page=100", token, exchange, gate):
         yield wrap_github(item)
 
 
@@ -417,8 +487,9 @@ def pull(
         raise PullError("GITHUB_TEST_REPO must look like owner/name")
     now = int(time.time()) if now is None else now
     app_jwt = build_app_jwt(app_id, pem_path, now=now, sign=sign)
-    token = installation_token(app_jwt, repo, exchange)
-    return iter_envelopes(repo, token, exchange, workers=workers)
+    gate = RateLimitGate()
+    token = installation_token(app_jwt, repo, exchange, gate)
+    return iter_envelopes(repo, token, exchange, workers=workers, gate=gate)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -450,7 +521,8 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=None,
         help=f"Parallel issue/PR detail GETs (default {DEFAULT_CONCURRENCY}, "
-        "or GITHUB_PULL_CONCURRENCY). Lists and commits stay serial.",
+        f"or GITHUB_PULL_CONCURRENCY, max {MAX_CONCURRENCY}). "
+        "Lists and commits stay serial. A shared gate waits out rate limits.",
     )
     args = parser.parse_args(argv)
     if args.no_readable and args.readable:

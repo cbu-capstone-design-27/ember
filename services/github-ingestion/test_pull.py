@@ -212,6 +212,31 @@ class ConcurrencyTest(unittest.TestCase):
 
         self.assertEqual(pull_test.map_ordered(work, [1, 2, 3, 4], 4), [1, 2, 3, 4])
 
+    def test_secondary_rate_limit_without_retry_after_still_waits(self):
+        body = b'{"message":"You have exceeded a secondary rate limit. Please wait a few minutes."}'
+        response = pull_test.Response(403, {}, body)
+        self.assertEqual(pull_test.retry_after_seconds(response), pull_test.SECONDARY_RATE_LIMIT_WAIT)
+
+    def test_permission_403_is_not_a_rate_limit(self):
+        body = b'{"message":"Resource not accessible by integration"}'
+        response = pull_test.Response(403, {}, body)
+        self.assertIsNone(pull_test.retry_after_seconds(response))
+
+    def test_shared_gate_holds_a_later_caller(self):
+        clock = {"now": 0.0}
+        sleeps: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock["now"] += seconds
+
+        gate = pull_test.RateLimitGate(clock=lambda: clock["now"], sleep=sleep)
+        gate.extend(5)
+        gate.wait()
+        self.assertEqual(sleeps, [5.0])
+        gate.wait()
+        self.assertEqual(sleeps, [5.0])
+
     def test_retry_after_is_waited_then_the_body_is_kept(self):
         calls = {"n": 0}
 
@@ -229,14 +254,19 @@ class ConcurrencyTest(unittest.TestCase):
         self.assertEqual(waits, [2.0])
         self.assertEqual(response.json()["body"], "kept")
 
-    def test_default_concurrency_is_twelve(self):
+    def test_default_concurrency_is_thirty_two(self):
         import os
 
         prior = os.environ.pop("GITHUB_PULL_CONCURRENCY", None)
         try:
-            self.assertEqual(pull_test.DEFAULT_CONCURRENCY, 12)
-            self.assertEqual(pull_test.resolve_concurrency(None), 12)
+            self.assertEqual(pull_test.DEFAULT_CONCURRENCY, 32)
+            self.assertEqual(pull_test.MAX_CONCURRENCY, 80)
+            self.assertEqual(pull_test.resolve_concurrency(None), 32)
             self.assertEqual(pull_test.resolve_concurrency(8), 8)
+            with self.assertRaises(pull_test.PullError):
+                pull_test.resolve_concurrency(0)
+            with self.assertRaises(pull_test.PullError):
+                pull_test.resolve_concurrency(81)
         finally:
             if prior is not None:
                 os.environ["GITHUB_PULL_CONCURRENCY"] = prior

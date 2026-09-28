@@ -146,7 +146,7 @@ For the one test repo:
 - Pulls API list (`state=all`), then `GET /repos/{owner}/{repo}/pulls/{number}` for each one.
 - Commits API list on the default branch (100 per page). Those list objects are emitted as returned.
 
-List pages and commit pages stay one-after-another. Issue and pull-request detail GETs run 12 at a time, then the JSONL is written in the same order as a serial pull. The envelopes are the same objects as before. Tune with `--concurrency N` or `GITHUB_PULL_CONCURRENCY` (1–32). If GitHub returns `Retry-After`, or a primary rate limit with `x-ratelimit-remaining: 0`, the script waits and retries that request.
+List pages and commit pages stay one-after-another. Issue and pull-request detail GETs run 32 at a time, then the JSONL is written in the same order as a serial pull. The envelopes are the same objects as before. Tune with `--concurrency N` or `GITHUB_PULL_CONCURRENCY` (1–80). If GitHub returns `Retry-After`, a primary rate limit with `x-ratelimit-remaining: 0`, or a secondary rate-limit response, every worker shares one gate, waits, and retries that request.
 
 ### What this cut does not pull
 
