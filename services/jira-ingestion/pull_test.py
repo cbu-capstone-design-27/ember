@@ -7,8 +7,9 @@ in Jira. Attachment file bytes are not downloaded.
 Machine intake is JSONL, one object per line:
   {"type":"jira","body":<opaque raw Jira object>}
 Stdout is that JSONL. --output FILE writes the same JSONL and, by default,
-a glance summary at FILE.readable.md (counts and keys, not description
-text). Search pages stay serial. Detail GETs run DEFAULT_CONCURRENCY at
+a glance summary at FILE.readable.md (issue key, summary, and a short
+description; comment author and a short body). The JSONL line stays the
+full raw object. Search pages stay serial. Detail GETs run DEFAULT_CONCURRENCY at
 a time (--concurrency or JIRA_PULL_CONCURRENCY). A Retry-After header is
 waited out. A 429/502/503 without one backs off 1s, 2s, 4s, ...
 --readable PATH chooses the summary file. --no-readable skips it.
@@ -763,24 +764,200 @@ def classify(body: dict) -> str:
     return "other"
 
 
+GLANCE_LIMIT = 120
+_ADF_BLOCKS = {
+    "paragraph",
+    "heading",
+    "blockquote",
+    "codeBlock",
+    "listItem",
+    "bulletList",
+    "orderedList",
+    "panel",
+    "tableCell",
+    "tableHeader",
+    "tableRow",
+    "rule",
+}
+
+
+def _adf_text(node, depth: int = 0) -> str:
+    """Flatten an Atlassian document to plain text. Presentation only."""
+    if depth > 32:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        return "".join(_adf_text(item, depth + 1) for item in node)
+    if not isinstance(node, dict):
+        return ""
+    node_type = node.get("type")
+    if node_type == "text":
+        return node.get("text") if isinstance(node.get("text"), str) else ""
+    if node_type == "hardBreak":
+        return " "
+    attrs = node.get("attrs")
+    own = ""
+    if isinstance(attrs, dict) and isinstance(attrs.get("text"), str):
+        own = attrs["text"]
+    content = node.get("content")
+    inner = _adf_text(content, depth + 1) if isinstance(content, list) else ""
+    if node_type in _ADF_BLOCKS:
+        return f"{own}{inner} "
+    return f"{own}{inner}"
+
+
+def plain_text(value) -> str:
+    """String, ADF document, or empty. Does not rewrite the stored value."""
+    if isinstance(value, str):
+        raw = value
+    elif isinstance(value, (dict, list)):
+        raw = _adf_text(value)
+    else:
+        return ""
+    return " ".join(raw.split())
+
+
+def excerpt(value, limit: int = GLANCE_LIMIT) -> str:
+    flat = plain_text(value)
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 1].rstrip() + "…"
+
+
+def _person_name(body: dict) -> str:
+    for field in ("author", "updateAuthor"):
+        person = body.get(field)
+        if isinstance(person, dict):
+            name = person.get("displayName")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+    return ""
+
+
+def _join_glance(*parts: str) -> str:
+    kept = [part for part in parts if part]
+    if not kept:
+        return "?"
+    line = kept[0]
+    for part in kept[1:]:
+        line = f"{line} — {part}"
+    return line
+
+
+def _issue_glance(body: dict) -> str:
+    fields = body.get("fields") if isinstance(body.get("fields"), dict) else {}
+    status = ""
+    status_obj = fields.get("status")
+    if isinstance(status_obj, dict) and isinstance(status_obj.get("name"), str):
+        status = status_obj["name"].strip()
+    key = str(body.get("key") or "?")
+    head = f"{key} {status}".rstrip()
+    return _join_glance(head, excerpt(fields.get("summary")), excerpt(fields.get("description")))
+
+
+def _comment_glance(body: dict) -> str:
+    who = " ".join(part for part in (str(body.get("id") or ""), _person_name(body)) if part)
+    return _join_glance(who or "?", excerpt(body.get("body")))
+
+
+def _worklog_glance(body: dict) -> str:
+    spent = body.get("timeSpent") if isinstance(body.get("timeSpent"), str) else ""
+    who = " ".join(part for part in (str(body.get("id") or ""), _person_name(body), spent) if part)
+    return _join_glance(who or "?", excerpt(body.get("comment")))
+
+
+def _changelog_glance(body: dict) -> str:
+    entries = body.get("values") if isinstance(body.get("values"), list) else None
+    if entries is None and isinstance(body.get("histories"), list):
+        entries = body["histories"]
+    bits: list[str] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("items"), list):
+            continue
+        for item in entry["items"]:
+            if not isinstance(item, dict):
+                continue
+            field = item.get("field") if isinstance(item.get("field"), str) else "field"
+            before = item.get("fromString") if isinstance(item.get("fromString"), str) else ""
+            after = item.get("toString") if isinstance(item.get("toString"), str) else ""
+            if before and after:
+                bits.append(f"{field}: {before} → {after}")
+            elif after or before:
+                bits.append(f"{field}: {after or before}")
+            else:
+                bits.append(field)
+    return _join_glance(f"startAt {body.get('startAt')}", excerpt("; ".join(bits)))
+
+
+def _issuelink_glance(body: dict) -> str:
+    link_type = body.get("type")
+    kind = ""
+    if isinstance(link_type, dict) and isinstance(link_type.get("name"), str):
+        kind = link_type["name"]
+    target = ""
+    for field, arrow in (("outwardIssue", "→"), ("inwardIssue", "←")):
+        issue = body.get(field)
+        if isinstance(issue, dict) and isinstance(issue.get("key"), str):
+            target = f"{arrow} {issue['key']}"
+            break
+    ident = str(body.get("id") or "")
+    return " ".join(part for part in (ident, kind, target) if part) or "?"
+
+
+def _names(people) -> str:
+    if not isinstance(people, list):
+        return ""
+    names = [
+        person["displayName"].strip()
+        for person in people
+        if isinstance(person, dict)
+        and isinstance(person.get("displayName"), str)
+        and person["displayName"].strip()
+    ]
+    return excerpt(", ".join(names))
+
+
+def _property_glance(body: dict) -> str:
+    key = str(body.get("key") or "?")
+    value = body.get("value")
+    if isinstance(value, str):
+        shown = excerpt(value)
+    elif value is None:
+        shown = ""
+    else:
+        shown = excerpt(json.dumps(value, separators=(",", ":"), default=str))
+    return _join_glance(key, shown)
+
+
 def _summary_label(kind: str, body: dict) -> str:
     if kind == "issue":
-        return str(body.get("key") or "?")
+        return _issue_glance(body)
+    if kind == "comment":
+        return _comment_glance(body)
+    if kind == "worklog":
+        return _worklog_glance(body)
     if kind == "changelog":
-        return f"startAt {body.get('startAt')}"
+        return _changelog_glance(body)
+    if kind == "issuelink":
+        return _issuelink_glance(body)
     if kind == "attachment":
-        return str(body.get("filename") or body.get("id") or "?")
-    if kind in ("comment", "worklog", "issuelink"):
-        return str(body.get("id") or "?")
+        filename = str(body.get("filename") or body.get("id") or "?")
+        mime = body.get("mimeType") if isinstance(body.get("mimeType"), str) else ""
+        return f"{filename} ({mime})" if mime else filename
     if kind == "remote_link":
         obj = body.get("object") if isinstance(body.get("object"), dict) else {}
-        return str(obj.get("title") or body.get("id") or "?")
+        title = obj.get("title") if isinstance(obj.get("title"), str) else ""
+        ident = str(body.get("id") or "")
+        if title:
+            return _join_glance(ident, title)
+        return ident or "?"
     if kind == "watchers":
-        return f"watchCount {body.get('watchCount')}"
+        return _join_glance(f"watchCount {body.get('watchCount')}", _names(body.get("watchers")))
     if kind == "votes":
-        return f"votes {body.get('votes')}"
+        return _join_glance(f"votes {body.get('votes')}", _names(body.get("voters")))
     if kind in ("project_property", "issue_property"):
-        return str(body.get("key") or "?")
+        return _property_glance(body)
     if kind in ("component", "version", "statuses", "project"):
         return str(body.get("name") or body.get("key") or body.get("id") or "?")
     self_url = _self_url(body)
@@ -788,7 +965,7 @@ def _summary_label(kind: str, body: dict) -> str:
 
 
 def render_summary(project: str, envelopes: list[dict]) -> str:
-    """Counts and keys. Does not replace the JSONL intake or copy descriptions."""
+    """Glance lines for a human. Does not replace or rewrite the JSONL intake."""
     groups: dict[str, list[str]] = {kind: [] for kind, _heading in SUMMARY_SECTIONS}
     for envelope in envelopes:
         body = envelope.get("body")

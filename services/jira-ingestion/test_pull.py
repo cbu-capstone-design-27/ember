@@ -244,25 +244,59 @@ class ReadableOutputTest(unittest.TestCase):
         self.assertEqual(json.loads(line), envelopes[0])
         assert_valid(envelopes[0])
 
-    def test_summary_counts_keys_and_skips_description_text(self):
+    def test_summary_shows_issue_and_comment_text(self):
         envelopes = [
             {"type": "jira", "body": ISSUE_1},
             {"type": "jira", "body": ISSUE_2},
             {"type": "jira", "body": COMMENT_A},
+            {"type": "jira", "body": COMMENT_B},
             {"type": "jira", "body": ATTACHMENT},
         ]
+        before = json.dumps(envelopes)
         text = pull_test.render_summary("EMBER", envelopes)
+        self.assertEqual(json.dumps(envelopes), before)
         self.assertIn("# EMBER", text)
         self.assertIn("## Issues (2)", text)
-        self.assertIn("- EMBER-1", text)
-        self.assertIn("- EMBER-2", text)
-        self.assertIn("## Comments (1)", text)
-        self.assertIn("- 100", text)
+        self.assertIn(
+            "- EMBER-1 In Progress — Login redirect — Repro: sign in with ?next=/settings",
+            text,
+        )
+        self.assertIn("- EMBER-2 To Do — Empty notes", text)
+        self.assertNotIn("— \n", text)
+        self.assertIn("## Comments (2)", text)
+        self.assertIn("- 100 Ada — First note", text)
+        self.assertIn("- 101 Ada — Repro: sign in with ?next=/settings", text)
         self.assertIn("## Attachments (1)", text)
-        self.assertIn("- shot.png", text)
-        self.assertNotIn("First note", text)
-        self.assertNotIn("Repro:", text)
+        self.assertIn("- shot.png (image/png)", text)
+        self.assertNotIn('"type": "doc"', text)
         self.assertNotIn("attachment/content", text)
+
+    def test_summary_truncates_long_text_and_leaves_the_body_intact(self):
+        description = "word " * 80
+        comment_body = "note " * 80
+        issue = {
+            "key": "EMBER-9",
+            "fields": {"summary": "Long one", "description": description},
+        }
+        comment = {
+            "id": "900",
+            "self": f"{ORIGIN}/rest/api/3/issue/10009/comment/900",
+            "body": comment_body,
+            "author": {"displayName": "Ada"},
+        }
+        envelopes = [
+            {"type": "jira", "body": issue},
+            {"type": "jira", "body": comment},
+        ]
+        text = pull_test.render_summary("EMBER", envelopes)
+        self.assertIn("- EMBER-9 — Long one — ", text)
+        self.assertIn("…", text)
+        self.assertNotIn(description, text)
+        self.assertNotIn(comment_body, text)
+        self.assertIn("- 900 Ada — ", text)
+        self.assertEqual(issue["fields"]["description"], description)
+        self.assertEqual(comment["body"], comment_body)
+        self.assertLess(len(text.split("Long one — ", 1)[1].split("\n", 1)[0]), len(description))
 
     def test_sidecar_path_sits_beside_jsonl(self):
         self.assertEqual(
@@ -432,15 +466,27 @@ class PullFlowTest(unittest.TestCase):
             self.assertEqual(envelope["type"], "jira")
             assert_valid(envelope)
         text = pull_test.render_summary("EMBER", envelopes)
+        self.assertEqual(bodies[5]["fields"]["description"], ADF)
+        self.assertEqual(bodies[8]["body"], ADF)
         self.assertIn("## Issues (2)", text)
+        self.assertIn(
+            "- EMBER-1 In Progress — Login redirect — Repro: sign in with ?next=/settings",
+            text,
+        )
+        self.assertIn("- EMBER-2 To Do — Empty notes", text)
         self.assertIn("## Comments (2)", text)
+        self.assertIn("- 100 Ada — First note", text)
+        self.assertIn("- 101 Ada — Repro: sign in with ?next=/settings", text)
         self.assertIn("## Changelog pages (2)", text)
+        self.assertIn("- startAt 0 — summary: Login redirect", text)
+        self.assertIn("- startAt 0 — summary: A → B", text)
         self.assertIn("## Worklogs (1)", text)
+        self.assertIn("- 200 1h — Did the work", text)
         self.assertIn("## Attachments (1)", text)
-        self.assertIn("- shot.png", text)
-        self.assertNotIn("First note", text)
-        self.assertNotIn("Repro:", text)
-        self.assertNotIn("Did the work", text)
+        self.assertIn("- shot.png (image/png)", text)
+        self.assertIn("- 77 Relates → EMBER-2", text)
+        self.assertIn("- watchCount 1 — Ada", text)
+        self.assertNotIn('"type": "doc"', text)
 
     def _bodies(self):
         self.calls = []
