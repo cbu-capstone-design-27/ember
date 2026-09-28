@@ -75,6 +75,10 @@ jobs:
         run: python3 services/github-ingestion/test_webhook.py
       - name: GitHub ingestion local pull contract
         run: python3 services/github-ingestion/test_pull.py
+      - name: GitHub ingestion webhook smoke
+        env:
+          GITHUB_WEBHOOK_SECRET: ci-local-smoke
+        run: python3 services/github-ingestion/smoke_webhook.py
 
   # Placeholder for future per-area jobs. Gate each on the matching `changes`
   # output, e.g.:
