@@ -117,13 +117,20 @@ That writes JSONL to stdout, one envelope per item:
 {"type":"github","body":{}}
 ```
 
-`body` is the raw list object from the GitHub API. To write a file a person can scan, use `--output`. That file puts a label on each record (`issue`, `pull`, or `commit`, plus number or sha and title) and then the full envelope indented. The label is only a reading aid. The JSON object under it is still `{"type":"github","body":...}`.
+`body` is the raw list object from the GitHub API. To keep that JSONL in a file and also get a glance summary:
 
 ```sh
-python3 services/github-ingestion/pull_test.py --output "$HOME/ember-github-intake.txt"
+python3 services/github-ingestion/pull_test.py --output "$HOME/ember-github-intake.jsonl"
 ```
 
-`--compact` keeps that file as one-line JSONL. `--pretty` does the labeled form on stdout too.
+That writes:
+
+- `$HOME/ember-github-intake.jsonl` — one EMBER-39 object per line, same as stdout
+- `$HOME/ember-github-intake.jsonl.readable.md` — issues (`#`, title, state), pull requests (`#`, title, state), and commits (short sha, subject), grouped under headings
+
+`--readable PATH` chooses a different summary file. `--readable -` prints the summary on stdout and requires `--output` so the JSONL stays in the file. `--no-readable` writes JSONL only.
+
+The summary lists each issue, pull request, and commit once. The JSONL still contains every raw API object, so a pull request can appear twice there (Issues API and Pulls API). A merged pull request is labeled `merged` in the summary.
 
 `--repo owner/name` overrides `GITHUB_TEST_REPO` for that run.
 
