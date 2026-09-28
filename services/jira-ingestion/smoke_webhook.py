@@ -1,8 +1,9 @@
 """Local webhook smoke. No public URL and no Jira call.
 
-Starts the receiver, POSTs HMAC-signed issue deliveries, and checks each
-response is 202 with one {"type":"jira","body":...} line on the receiver
-stdout. Set JIRA_WEBHOOK_SECRET to any throwaway value.
+Starts the receiver, POSTs HMAC-signed issue, comment, worklog, and
+attachment deliveries, and checks each response is 202 with one
+{"type":"jira","body":...} line on the receiver stdout. Set
+JIRA_WEBHOOK_SECRET to any throwaway value.
 
 The signature header is X-Hub-Signature (sha256=<hex>), which is what Jira
 admin webhooks send when a secret is set. A query-string secret is not used.
@@ -69,6 +70,48 @@ EVENTS = (
                     "project": {"id": "20000", "key": "OTHER"},
                     "status": {"name": "To Do"},
                 },
+            },
+        },
+    ),
+    (
+        "comment_created",
+        {
+            "timestamp": 1758669100000,
+            "webhookEvent": "comment_created",
+            "cloudId": "site-a",
+            "issue": {"id": "10231", "key": "EMBER-31", "fields": {"project": {"key": "EMBER"}}},
+            "comment": {
+                "id": "10001",
+                "body": "Comment text stays on the delivery.",
+                "created": "2026-09-28T00:00:00.000+0000",
+            },
+        },
+    ),
+    (
+        "worklog_created",
+        {
+            "timestamp": 1758669200000,
+            "webhookEvent": "worklog_created",
+            "cloudId": "site-a",
+            "worklog": {
+                "id": "10002",
+                "timeSpent": "1h",
+                "timeSpentSeconds": 3600,
+                "comment": "Work note stays on the delivery.",
+            },
+        },
+    ),
+    (
+        "attachment_created",
+        {
+            "timestamp": 1758669300000,
+            "webhookEvent": "attachment_created",
+            "cloudId": "site-a",
+            "attachment": {
+                "id": "55",
+                "filename": "notes.txt",
+                "mimeType": "text/plain",
+                "size": 12,
             },
         },
     ),

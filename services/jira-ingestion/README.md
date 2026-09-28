@@ -45,7 +45,18 @@ Registration later, once a public URL exists:
 1. Jira Administration → System → Webhooks → Create a webhook. The same record can be created with `POST /rest/webhooks/1.0/webhook`.
 2. URL: `https://<public-host>/webhook/jira`. Jira only delivers admin webhooks to an allow-listed port (`443`, `8080`, `8443`, and the rest of the list in the Atlassian doc). The local listener defaults to `8081` so it can sit beside `github-ingestion` on `8080`. A tunnel should terminate TLS on `443` and forward to `8081`. This PR does not start a tunnel.
 3. Leave "Exclude body" off so the issue object is in the POST.
-4. Events for this cut: `jira:issue_created`, `jira:issue_updated`, `jira:issue_deleted`. The receiver accepts any JSON object and does not filter on `webhookEvent`.
+4. Events so a live delivery can carry the same entities the backfill stores. The receiver accepts any JSON object and does not filter on `webhookEvent`.
+
+   Subscribe to:
+
+   - `jira:issue_created`, `jira:issue_updated`, `jira:issue_deleted`
+   - `comment_created`, `comment_updated`, `comment_deleted`
+   - `worklog_created`, `worklog_updated`, `worklog_deleted`
+   - `attachment_created`, `attachment_deleted`
+   - `issuelink_created`, `issuelink_deleted`
+   - `issue_property_set`, `issue_property_deleted`
+
+   `jira:issue_updated` is also where Jira puts the changelog for that edit. There is no separate changelog webhook. Watchers, votes, and remote links have no admin webhook event; those JSON objects are backfill-only. Version events (`jira:version_created` and the other `jira:version_*` names) exist if you also want version records live. Component records do not have their own webhook.
 5. JQL: empty receives every project on that site. A JQL filter is optional and is Jira-side. Do not hard-code a project into this service.
 6. Generate a secret, store it only in `JIRA_WEBHOOK_SECRET`, and save it on the webhook. Jira will not show the secret again. `isSigned` on the webhook record is true when a secret is set.
 
@@ -61,7 +72,7 @@ Forge apps, Atlassian Connect (JWT `sharedSecret`), and OAuth 2.0 dynamic webhoo
 | `JIRA_WEBHOOK_SECRET` | HMAC key for `X-Hub-Signature`. Empty skips verification. Not used by `pull_test.py`. |
 | `JIRA_INGESTION_PORT` | Receiver port. Default `8081`. |
 | `JIRA_TEST_PROJECT` | Project key for `pull_test.py` only. When unset, the script uses `EMBER`. Not a filter on the webhook path. |
-| `JIRA_PULL_CONCURRENCY` | Parallel issue GETs for `pull_test.py`. Default `12`. Range 1–32. |
+| `JIRA_PULL_CONCURRENCY` | Parallel REST GETs for `pull_test.py`. Default `32`. Range 1–64. |
 
 Create an API token at [Atlassian account security](https://id.atlassian.com/manage-profile/security/api-tokens). The token is a password for basic auth (`email:token`). It is not the webhook secret.
 
@@ -97,13 +108,13 @@ python3 services/jira-ingestion/pull_test.py
 
 `JIRA_TEST_PROJECT` may be omitted. The default is `EMBER`. `--project WIDGET` overrides it for that run.
 
-That writes JSONL to stdout, one envelope per issue:
+That writes JSONL to stdout, one envelope per object:
 
 ```json
 {"type":"jira","body":{}}
 ```
 
-`body` is the full issue from `GET /rest/api/3/issue/{key}`. On Jira Cloud API v3, `body.fields.description` is an Atlassian document (ADF), a string, or JSON `null` when the description is empty. The script does not rewrite that field.
+`body` is the raw JSON from that GET. On an issue, Jira Cloud API v3 stores `body.fields.description` as an Atlassian document (ADF), a string, or JSON `null`. The script does not rewrite it. A comment or worklog is its own line, not a field stripped off the issue.
 
 To keep that JSONL in a file and also get a glance summary:
 
@@ -114,24 +125,47 @@ python3 services/jira-ingestion/pull_test.py --output "$HOME/ember-jira-intake.j
 That writes:
 
 - `$HOME/ember-jira-intake.jsonl` — one EMBER-39 object per line, same as stdout
-- `$HOME/ember-jira-intake.jsonl.readable.md` — issues (key, status, summary, short description) under one heading
+- `$HOME/ember-jira-intake.jsonl.readable.md` — counts and keys (issue keys, comment ids, filenames). Description text stays in the JSONL.
 
 `--readable PATH` chooses a different summary file. `--readable -` prints the summary on stdout and requires `--output` so the JSONL stays in the file. `--no-readable` writes JSONL only.
 
-The summary is a glance list. ADF is flattened there only. The JSONL body stays the raw issue object.
-
 ### What this cut pulls
 
-For the one test project:
+For the one test project, JQL `project = <KEY> ORDER BY key ASC` via `POST /rest/api/3/search/jql` (`fields` is `key` only, pages of 100). The legacy `/rest/api/3/search` endpoint is not called. Subtasks in that project are issues and are included.
 
-- `POST /rest/api/3/search/jql` with `project = <KEY> ORDER BY key ASC`, `fields` set to `key` only, pages of 100. The legacy `/rest/api/3/search` endpoint is not called.
-- `GET /rest/api/3/issue/{key}` for each key. That response is the envelope body, including `fields.description`.
+Then, one envelope each:
 
-Search pages stay one-after-another. Issue GETs run 12 at a time, then the JSONL is written in the same order as the search. Tune with `--concurrency N` or `JIRA_PULL_CONCURRENCY` (1–32). If Jira returns `Retry-After`, or `429` / `502` / `503` without one, the script waits and retries that request.
+- `GET /rest/api/3/project/{key}`
+- each component from `GET /rest/api/3/project/{key}/components`
+- each version from `GET /rest/api/3/project/{key}/version`
+- each issue-type status set from `GET /rest/api/3/project/{key}/statuses`
+- each project property from `GET /rest/api/3/project/{key}/properties/{propertyKey}`
+- `GET /rest/api/3/issue/{key}?fields=*all` (description and every other field Jira returns, including custom fields)
+- each object in `fields.issuelinks`
+- each comment from `GET /rest/api/3/issue/{key}/comment`
+- each changelog page from `GET /rest/api/3/issue/{key}/changelog` (the page object, histories left inside it)
+- each worklog from `GET /rest/api/3/issue/{key}/worklog`
+- each attachment's metadata from `GET /rest/api/3/attachment/{id}`
+- each remote link from `GET /rest/api/3/issue/{key}/remotelink`
+- `GET /rest/api/3/issue/{key}/watchers` and `GET /rest/api/3/issue/{key}/votes` when Jira returns them
+- each issue property from `GET /rest/api/3/issue/{key}/properties/{propertyKey}`
+
+The issue object still contains Jira's own comment and worklog previews. Those previews are not removed. The complete comment and worklog lists are additional envelopes. A comment or worklog total of 0 skips that list GET.
+
+Search pages stay one-after-another. Detail GETs run 32 at a time, across issues and across comments, changelog pages, worklogs, and the other resources. Later pages are requested together, then written back in `startAt` order. Tune with `--concurrency N` or `JIRA_PULL_CONCURRENCY` (1–64). If Jira returns `Retry-After`, the script waits that long and retries. A `429` / `502` / `503` without `Retry-After` waits 1s, then 2s, then 4s, and so on.
+
+A `403` or `404` on watchers or votes is skipped for that issue (the feature can be turned off). Every other GET failure stops the pull.
 
 ### What this cut does not pull
 
-Comments, worklogs, changelogs, attachments, sprints, boards, or any project other than the one selected for that run. It does not replay webhooks. Jira has no pull requests.
+- Attachment file bytes and thumbnails (`/attachment/content/`, `/attachment/thumbnail/`). Metadata only.
+- `renderedFields` HTML. The stored description on the issue is the ADF (or string) Jira returned.
+- Agile board and sprint APIs. A sprint value is included only when it is already on the issue under `fields=*all`.
+- The development panel (`/rest/dev-status/...`). That is a separate product API, not the issue REST resource.
+- Transitions, editmeta, permission schemes, notification schemes, workflows, and avatars.
+- Any project other than the one selected for that run. It does not replay webhooks. Jira has no pull requests.
+
+Search and each child resource stop after 50 pages.
 
 ## Local webhook smoke
 
@@ -145,9 +179,9 @@ export JIRA_WEBHOOK_SECRET="throwaway-local-secret"
 scripts/smoke_jira_webhook.sh
 ```
 
-Any throwaway string is fine. The script starts the receiver, POSTs a `jira:issue_created` payload and a `jira:issue_updated` payload with `X-Hub-Signature`, and expects HTTP 202 plus two stdout lines. The two samples use different `cloudId` and project key values, and both keep `fields.description` in the body (a string, then an ADF object).
+Any throwaway string is fine. The script starts the receiver and POSTs signed deliveries for `jira:issue_created`, `jira:issue_updated`, `comment_created`, `worklog_created`, and `attachment_created`. It expects HTTP 202 plus one stdout line per delivery. The issue samples use different `cloudId` and project key values. Description, comment body, and worklog note stay inside `body`.
 
-Success ends with `smoke ok: 2 envelopes` on stderr.
+Success ends with `smoke ok: 5 envelopes` on stderr.
 
 To receive a real admin delivery later, point a tunnel at `JIRA_INGESTION_PORT` (default `8081`) and set the webhook URL to `https://<tunnel-host>/webhook/jira` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8081` or `ngrok http 8081`. The tunnel is not part of this smoke and CI does not start one. Jira will not POST to port `8081` directly. Terminate TLS on port `443`.
 
