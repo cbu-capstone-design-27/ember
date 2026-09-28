@@ -165,7 +165,7 @@ python3 services/github-ingestion/pull_test.py --output "$HOME/ember-github-inta
 That writes:
 
 - `$HOME/ember-github-intake.jsonl` — one EMBER-39 object per line, same as stdout
-- `$HOME/ember-github-intake.jsonl.readable.md` — envelope counts per entity, then a key line for each object (issue `#` / title / state / short description, comment id, short commit sha, branch tip, and the rest). It also records how many duplicate commit SHA hits were left out of the JSONL.
+- `$HOME/ember-github-intake.jsonl.readable.md` — envelope counts, then a glance line per object. Issues and pull requests show `#`, title, state, and a short description. Comments and review comments show the author and a short comment, not the comment id. Commits show the short sha and subject (the author, when the subject is empty). It also records how many duplicate commit SHA hits were left out of the JSONL. The JSONL objects stay the full raw payloads.
 
 `--readable PATH` chooses a different summary file. `--readable -` prints the summary on stdout and requires `--output` so the JSONL stays in the file. `--no-readable` writes JSONL only.
 

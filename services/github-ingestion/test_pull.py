@@ -102,6 +102,61 @@ class ReadableOutputTest(unittest.TestCase):
         text = pull_test.render_summary("acme/widget", records)
         self.assertIn("- #12 open — Login redirect — Repro: sign in with ?next=/settings and land on /.", text)
 
+    def test_comment_lines_lead_with_author_and_body(self):
+        long_body = "Please keep the query string when the session is created. " * 4
+        comment = {
+            "id": 9,
+            "body": long_body,
+            "user": {"login": "octocat"},
+            "issue_url": "https://api.github.com/repos/acme/widget/issues/12",
+        }
+        review_comment = {
+            "id": 8,
+            "body": "nit on the parser",
+            "user": {"login": "hubot"},
+            "pull_request_url": "https://api.github.com/repos/acme/widget/pulls/3",
+        }
+        review = {
+            "id": 4,
+            "body": "LGTM",
+            "state": "APPROVED",
+            "user": {"login": "octocat"},
+            "pull_request_url": "https://api.github.com/repos/acme/widget/pulls/3",
+        }
+        records = [
+            ("issue", {"id": 100, "number": 12, "title": "Login redirect", "state": "open", "body": long_body}),
+            ("pull_request", {"id": 200, "number": 3, "title": "Add parser", "state": "open", "body": "What this changes."}),
+            ("issue_comment", comment),
+            ("pull_request_review_comment", review_comment),
+            ("pull_request_review", review),
+            ("commit", {"sha": "abcdef1234567890", "commit": {"message": ""}, "author": {"login": "octocat"}}),
+        ]
+        text = pull_test.render_summary("acme/widget", records)
+        issues = text.split("## Issues", 1)[1].split("## ", 1)[0]
+        pulls = text.split("## Pull requests", 1)[1].split("## ", 1)[0]
+        comments = text.split("## Issue comments", 1)[1].split("## ", 1)[0]
+        review_comments = text.split("## Pull request review comments", 1)[1].split("## ", 1)[0]
+        reviews = text.split("## Pull request reviews", 1)[1].split("## ", 1)[0]
+        commits = text.split("## Commits", 1)[1].split("## ", 1)[0]
+        self.assertIn("- #12 open — Login redirect — Please keep the query string", issues)
+        self.assertIn("…", issues)
+        self.assertNotIn(long_body, issues)
+        self.assertIn("- #3 open — Add parser — What this changes.", pulls)
+        self.assertIn("- octocat on #12 — Please keep the query string", comments)
+        self.assertIn("…", comments)
+        self.assertNotIn("comment 9", comments)
+        self.assertNotIn(long_body, comments)
+        self.assertIn("- hubot on #3 — nit on the parser", review_comments)
+        self.assertNotIn("comment 8", review_comments)
+        self.assertIn("- octocat on #3 APPROVED — LGTM", reviews)
+        self.assertNotIn("review 4", reviews)
+        self.assertIn("- `abcdef1` octocat", commits)
+        self.assertEqual(comment["id"], 9)
+        self.assertEqual(comment["body"], long_body)
+        envelope = pull_test.wrap_github(comment)
+        self.assertEqual(set(envelope), {"type", "body"})
+        self.assertEqual(envelope["body"], comment)
+
     def test_sidecar_path_sits_beside_jsonl(self):
         self.assertEqual(
             pull_test.readable_sidecar(Path("/tmp/intake.jsonl")),
@@ -343,9 +398,13 @@ class PullFlowTest(unittest.TestCase):
             assert_valid(envelope)
         text = pull_test.render_summary("acme/widget", capture.records, duplicate_commits=capture.duplicate_commits)
         self.assertIn("Unique commits: 4. Duplicate SHA hits omitted: 2.", text)
-        self.assertIn("- issue #1 comment 9 by octocat — thanks", text)
-        self.assertIn("- pull #2 review 4 APPROVED by octocat — LGTM", text)
-        self.assertIn("- pull #2 comment 8 by octocat — nit", text)
+        self.assertIn("- octocat on #1 — thanks", text)
+        self.assertIn("- octocat on #2 APPROVED — LGTM", text)
+        self.assertIn("- octocat on #2 — nit", text)
+        comment = by_kind["issue_comment"][0]
+        self.assertEqual(comment["id"], 9)
+        self.assertEqual(comment["body"], "thanks")
+        self.assertEqual(pull_test.wrap_github(comment)["body"], comment)
         self.assertIn("- octocat (3)", text)
         self.assertIn("- v1.0.0 `ttt` — annotated", text)
         commits = text.split("## Commits", 1)[1].split("## ", 1)[0]

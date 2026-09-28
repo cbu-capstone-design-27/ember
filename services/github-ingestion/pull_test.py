@@ -16,7 +16,9 @@ annotated tag objects, labels, milestones, issue events, commit comments,
 contributors, and the repository object are included.
 
 Stdout is JSONL. --output FILE also writes FILE.readable.md with counts
-and keys, including how many duplicate commit hits were omitted.
+and a short line per object (issue and pull request number, title, state,
+and description; comment author and text; commit subject), including how
+many duplicate commit hits were omitted. The JSONL bodies are not rewritten.
 --concurrency or GITHUB_PULL_CONCURRENCY bounds in-flight GETs (default
 DEFAULT_CONCURRENCY, max MAX_CONCURRENCY). Pages inside one collection
 stay in order. Independent collections, detail GETs, reviews, and
@@ -666,11 +668,34 @@ def _commit_subject(body: dict) -> str:
     return message.splitlines()[0]
 
 
+def _commit_author(body: dict) -> str:
+    author = body.get("author")
+    if isinstance(author, dict):
+        login = author.get("login")
+        if isinstance(login, str) and login:
+            return login
+    commit = body.get("commit")
+    if isinstance(commit, dict):
+        nested = commit.get("author")
+        if isinstance(nested, dict):
+            name = nested.get("name")
+            if isinstance(name, str) and name:
+                return name
+    return ""
+
+
 def _with_excerpt(line: str, body: dict) -> str:
     excerpt = _body_excerpt(body)
     if excerpt:
         return f"{line} — {excerpt}"
     return line
+
+
+def _on_number(url: object) -> str:
+    number = _trailing_number(url)
+    if number == "?":
+        return ""
+    return f" on #{number}"
 
 
 def _summary_line(kind: str, body: dict) -> str:
@@ -689,30 +714,29 @@ def _summary_line(kind: str, body: dict) -> str:
         line = f"- #{body.get('number')} {_state_label(body)} — {title}".rstrip()
         return _with_excerpt(line, body)
     if kind == "issue_comment":
-        line = f"- issue #{_trailing_number(body.get('issue_url'))} comment {body.get('id')} by {_login(body)}"
-        return _with_excerpt(line, body)
+        return _with_excerpt(f"- {_login(body)}{_on_number(body.get('issue_url'))}", body)
     if kind == "pull_request_review":
         state = body.get("state") if isinstance(body.get("state"), str) else ""
-        line = (
-            f"- pull #{_trailing_number(body.get('pull_request_url'))} "
-            f"review {body.get('id')} {state} by {_login(body)}"
-        ).rstrip()
+        state_bit = f" {state}" if state else ""
+        line = f"- {_login(body)}{_on_number(body.get('pull_request_url'))}{state_bit}".rstrip()
         return _with_excerpt(line, body)
     if kind == "pull_request_review_comment":
-        line = (
-            f"- pull #{_trailing_number(body.get('pull_request_url'))} "
-            f"comment {body.get('id')} by {_login(body)}"
-        )
-        return _with_excerpt(line, body)
+        return _with_excerpt(f"- {_login(body)}{_on_number(body.get('pull_request_url'))}", body)
     if kind == "branch":
         commit = body.get("commit")
         sha = commit.get("sha") if isinstance(commit, dict) else None
         return f"- `{_branch_name(body)}` at `{_short_sha(sha)}`"
     if kind == "commit":
-        return f"- `{_short_sha(body.get('sha'))}` {_commit_subject(body)}".rstrip()
+        subject = _commit_subject(body)
+        sha = _short_sha(body.get("sha"))
+        if subject:
+            return f"- `{sha}` {subject}"
+        author = _commit_author(body)
+        if author:
+            return f"- `{sha}` {author}"
+        return f"- `{sha}`"
     if kind == "commit_comment":
-        line = f"- `{_short_sha(body.get('commit_id'))}` comment {body.get('id')} by {_login(body)}"
-        return _with_excerpt(line, body)
+        return _with_excerpt(f"- {_login(body)} on `{_short_sha(body.get('commit_id'))}`", body)
     if kind == "release":
         tag = body.get("tag_name") if isinstance(body.get("tag_name"), str) else ""
         name = body.get("name") if isinstance(body.get("name"), str) else ""
