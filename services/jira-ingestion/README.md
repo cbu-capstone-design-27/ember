@@ -125,7 +125,7 @@ python3 services/jira-ingestion/pull_test.py --output "$HOME/ember-jira-intake.j
 That writes:
 
 - `$HOME/ember-jira-intake.jsonl` — one EMBER-39 object per line, same as stdout
-- `$HOME/ember-jira-intake.jsonl.readable.md` — counts and keys (issue keys, comment ids, filenames). Description text stays in the JSONL.
+- `$HOME/ember-jira-intake.jsonl.readable.md` — glance lines with human text. An issue line is the key, status, summary, and a short description. A comment line is the id, author, and a short body. Long text is cut off. The JSONL line is still the full raw object, including the ADF description.
 
 `--readable PATH` chooses a different summary file. `--readable -` prints the summary on stdout and requires `--output` so the JSONL stays in the file. `--no-readable` writes JSONL only.
 
