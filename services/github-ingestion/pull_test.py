@@ -2,19 +2,31 @@
 
 Mints an App JWT (RS256 via the openssl CLI — not a Python dependency),
 exchanges it for an installation token, and writes one EMBER-39 envelope
-per issue, pull request, and commit.
+per discrete REST object:
 
-Machine intake is JSONL, one object per line:
   {"type":"github","body":<opaque raw GitHub API object>}
-Stdout is that JSONL. --output FILE writes the same JSONL and, by default,
-a glance summary at FILE.readable.md (issues, pull requests, commits).
-Issue and pull-request detail GETs run DEFAULT_CONCURRENCY at a time
-(--concurrency or GITHUB_PULL_CONCURRENCY). List pages and commits stay
-serial. One shared gate waits out Retry-After, a primary rate-limit
-reset, or a secondary rate-limit response so workers back off together.
---readable PATH chooses the summary file. --no-readable skips it.
---readable - prints the summary on stdout and requires --output so the
-JSONL stays a file. Progress goes to stderr.
+
+Issues and pull requests are full GETs (the description is `body` on that
+object, JSON null when empty). Issue comments, including conversation
+comments on pull requests, and review comments are the list objects (they
+already contain `body`). Reviews are listed per pull request. Commits are
+listed from every branch, then from each pull request, and each SHA is
+written once. Branch list objects are the tip refs. Releases, tags,
+annotated tag objects, labels, milestones, issue events, commit comments,
+contributors, and the repository object are included.
+
+Stdout is JSONL. --output FILE also writes FILE.readable.md with counts
+and keys, including how many duplicate commit hits were omitted.
+--concurrency or GITHUB_PULL_CONCURRENCY bounds in-flight GETs (default
+DEFAULT_CONCURRENCY, max MAX_CONCURRENCY). Pages inside one collection
+stay in order. Independent collections, detail GETs, reviews, and
+per-branch commit lists run together. One shared gate waits out
+Retry-After, a primary rate-limit reset, or a secondary rate limit.
+--readable PATH chooses the summary. --no-readable skips it. --readable -
+prints the summary on stdout and requires --output. Progress goes to stderr.
+
+Intentional omissions are documented in the service README. Discussions
+and Projects v2 have no REST collection.
 
 The webhook receiver does not use this script. GITHUB_TEST_REPO is the
 test target only; nothing here filters live deliveries.
@@ -32,6 +44,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -41,7 +54,8 @@ from envelope import wrap_github
 
 API = "https://api.github.com"
 USER_AGENT = "ember-github-ingestion"
-MAX_PAGES = 50
+MAX_PAGES = 200
+PER_PAGE = 100
 DEFAULT_CONCURRENCY = 32
 MAX_CONCURRENCY = 80
 MAX_RETRY_WAIT = 120.0
@@ -297,90 +311,287 @@ def installation_token(app_jwt: str, repo: str, exchange, gate: RateLimitGate | 
     return token
 
 
-def iter_pages(url: str, token: str, exchange, gate: RateLimitGate | None = None) -> Iterator[dict]:
-    pages = 0
-    while url:
-        pages += 1
-        if pages > MAX_PAGES:
-            raise PullError(f"stopped after {MAX_PAGES} pages for {url}")
-        response = exchange_with_retry(exchange, "GET", url, _headers(token), None, gate=gate)
-        payload = _read_json(response, f"GET {url}")
-        if not isinstance(payload, list):
-            raise PullError(f"expected a JSON list from {url}")
-        for item in payload:
-            if not isinstance(item, dict):
-                raise PullError(f"expected objects in {url}")
-            yield item
-        url = parse_next_link(response.headers.get("Link") or response.headers.get("link"))
+# JSONL order. The readable summary uses the same sequence.
+ENTITY_KINDS = (
+    "repository",
+    "label",
+    "milestone",
+    "issue",
+    "issue_comment",
+    "pull_request",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "branch",
+    "commit",
+    "commit_comment",
+    "release",
+    "tag",
+    "annotated_tag",
+    "issue_event",
+    "contributor",
+)
+
+HEADINGS = {
+    "repository": "Repository",
+    "label": "Labels",
+    "milestone": "Milestones",
+    "issue": "Issues",
+    "issue_comment": "Issue comments",
+    "pull_request": "Pull requests",
+    "pull_request_review": "Pull request reviews",
+    "pull_request_review_comment": "Pull request review comments",
+    "branch": "Branches",
+    "commit": "Commits",
+    "commit_comment": "Commit comments",
+    "release": "Releases",
+    "tag": "Tags",
+    "annotated_tag": "Annotated tags",
+    "issue_event": "Issue events",
+    "contributor": "Contributors",
+}
 
 
-def fetch_object(url: str, token: str, exchange, gate: RateLimitGate | None = None) -> dict:
-    response = exchange_with_retry(exchange, "GET", url, _headers(token), None, gate=gate)
-    payload = _read_json(response, f"GET {url}")
-    if not isinstance(payload, dict):
-        raise PullError(f"expected a JSON object from {url}")
-    return payload
+class Capture:
+    """Records kept beside the JSONL so the summary can name each object."""
+
+    def __init__(self, records: list[tuple[str, dict]], duplicate_commits: int) -> None:
+        self.records = records
+        self.duplicate_commits = duplicate_commits
+
+    def envelopes(self) -> list[dict]:
+        return [wrap_github(body) for _kind, body in self.records]
 
 
-def full_issue_or_pull(
-    repo: str, number: int, collection: str, token: str, exchange, gate: RateLimitGate | None = None
-) -> dict:
-    """GET one issue or pull request so the raw object includes description `body`.
-
-    collection is "issues" or "pulls". List payloads are not what we emit.
-    An empty description is GitHub's JSON null, and the key is still present.
-    """
-    url = f"{API}/repos/{repo}/{collection}/{number}"
-    payload = fetch_object(url, token, exchange, gate)
-    if "body" not in payload:
-        payload["body"] = None
-    return payload
-
-
-def _numbered(items: list[dict], label: str) -> list[tuple[int, str]]:
-    jobs: list[tuple[int, str]] = []
+def _numbers(items: list[dict], label: str) -> list[int]:
+    numbers: list[int] = []
     for item in items:
         number = item.get("number")
         if not isinstance(number, int) or isinstance(number, bool):
             raise PullError(f"{label} list item had no number")
-        collection = "pulls" if label == "pull" or "pull_request" in item else "issues"
-        jobs.append((number, collection))
-    return jobs
+        numbers.append(number)
+    return numbers
 
 
-def iter_envelopes(
-    repo: str,
-    token: str,
-    exchange,
-    *,
-    workers: int = DEFAULT_CONCURRENCY,
-    gate: RateLimitGate | None = None,
-) -> Iterator[dict]:
-    """Issues and pull requests are the full GET payload. Commits stay list objects.
+def _branch_name(branch: dict) -> str:
+    name = branch.get("name")
+    if not isinstance(name, str) or not name:
+        raise PullError("branch had no name")
+    return name
 
-    List pages stay in order. Detail GETs run workers-at-a-time, then the
-    envelopes are yielded in the same list order as a serial pull.
-    """
-    issue_items = list(
-        iter_pages(f"{API}/repos/{repo}/issues?state=all&per_page=100", token, exchange, gate)
-    )
-    issue_jobs = _numbered(issue_items, "issue")
-    for payload in map_ordered(
-        lambda job: full_issue_or_pull(repo, job[0], job[1], token, exchange, gate),
-        issue_jobs,
-        workers,
-    ):
-        yield wrap_github(payload)
-    pull_items = list(iter_pages(f"{API}/repos/{repo}/pulls?state=all&per_page=100", token, exchange, gate))
-    pull_jobs = _numbered(pull_items, "pull")
-    for payload in map_ordered(
-        lambda job: full_issue_or_pull(repo, job[0], job[1], token, exchange, gate),
-        pull_jobs,
-        workers,
-    ):
-        yield wrap_github(payload)
-    for item in iter_pages(f"{API}/repos/{repo}/commits?per_page=100", token, exchange, gate):
-        yield wrap_github(item)
+
+def order_branches(branches: list[dict], default_branch: str) -> list[dict]:
+    """Default branch first, then the rest by name. Tip refs stay in this order."""
+    return sorted(branches, key=lambda branch: (_branch_name(branch) != default_branch, _branch_name(branch)))
+
+
+def _annotated_shas(refs: list[dict]) -> list[str]:
+    shas: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        obj = ref.get("object")
+        if not isinstance(obj, dict) or obj.get("type") != "tag":
+            continue
+        sha = obj.get("sha")
+        if isinstance(sha, str) and sha and sha not in seen:
+            seen.add(sha)
+            shas.append(sha)
+    return shas
+
+
+def unique_commits(groups: list[list[dict]]) -> tuple[list[dict], int]:
+    """First SHA wins. Later branch and pull-request hits count as duplicates."""
+    seen: set[str] = set()
+    unique: list[dict] = []
+    duplicates = 0
+    for group in groups:
+        for commit in group:
+            sha = commit.get("sha")
+            if not isinstance(sha, str) or not sha:
+                raise PullError("commit had no sha")
+            if sha in seen:
+                duplicates += 1
+                continue
+            seen.add(sha)
+            unique.append(commit)
+    return unique, duplicates
+
+
+class GithubPull:
+    """REST backfill for one repo. HTTP stays inside ``workers`` at a time."""
+
+    def __init__(self, repo: str, token: str, exchange, workers: int, gate: RateLimitGate | None = None) -> None:
+        self.repo = repo
+        self.token = token
+        self.exchange = exchange
+        self.workers = workers
+        self.gate = gate or RateLimitGate()
+
+    def _request(self, url: str) -> Response:
+        return exchange_with_retry(self.exchange, "GET", url, _headers(self.token), None, gate=self.gate)
+
+    def get_object(self, url: str) -> dict:
+        payload = _read_json(self._request(url), f"GET {url}")
+        if not isinstance(payload, dict):
+            raise PullError(f"expected a JSON object from {url}")
+        return payload
+
+    def get_list(self, url: str, *, allow_404: bool = False) -> list[dict]:
+        found: list[dict] = []
+        pages = 0
+        while url:
+            pages += 1
+            if pages > MAX_PAGES:
+                raise PullError(f"stopped after {MAX_PAGES} pages for {url}")
+            response = self._request(url)
+            if allow_404 and pages == 1 and response.status == 404:
+                return []
+            if response.status == 204 or not response.body.strip():
+                return found
+            payload = _read_json(response, f"GET {url}")
+            if not isinstance(payload, list):
+                raise PullError(f"expected a JSON list from {url}")
+            for item in payload:
+                if not isinstance(item, dict):
+                    raise PullError(f"expected objects in {url}")
+                found.append(item)
+            url = parse_next_link(response.headers.get("Link") or response.headers.get("link"))
+        return found
+
+    def _full(self, collection: str, number: int) -> dict:
+        """GET one issue or pull request. List rows are not what we emit."""
+        payload = self.get_object(f"{API}/repos/{self.repo}/{collection}/{number}")
+        if "body" not in payload:
+            payload["body"] = None
+        return payload
+
+    def commits_for(self, branch: dict) -> list[dict]:
+        name = urllib.parse.quote(_branch_name(branch), safe="")
+        return self.get_list(f"{API}/repos/{self.repo}/commits?sha={name}&per_page={PER_PAGE}")
+
+    def _list_urls(self) -> dict[str, str]:
+        repo = f"{API}/repos/{self.repo}"
+        page = f"per_page={PER_PAGE}"
+        return {
+            "labels": f"{repo}/labels?{page}",
+            "milestones": f"{repo}/milestones?state=all&{page}",
+            "issues": f"{repo}/issues?state=all&{page}",
+            "issue_comments": f"{repo}/issues/comments?{page}",
+            "pulls": f"{repo}/pulls?state=all&{page}",
+            "review_comments": f"{repo}/pulls/comments?{page}",
+            "branches": f"{repo}/branches?{page}",
+            "commit_comments": f"{repo}/comments?{page}",
+            "releases": f"{repo}/releases?{page}",
+            "tags": f"{repo}/tags?{page}",
+            "issue_events": f"{repo}/issues/events?{page}",
+            "contributors": f"{repo}/contributors?{page}",
+        }
+
+    def _fetch_named(self, names: list[str]) -> dict[str, object]:
+        urls = self._list_urls()
+
+        def fetch(name: str):
+            if name == "repository":
+                return self.get_object(f"{API}/repos/{self.repo}")
+            if name == "tag_refs":
+                return self.get_list(
+                    f"{API}/repos/{self.repo}/git/matching-refs/tags?per_page={PER_PAGE}",
+                    allow_404=True,
+                )
+            return self.get_list(urls[name])
+
+        values = map_ordered(fetch, names, self.workers)
+        return dict(zip(names, values))
+
+    def capture(self, progress: Callable[[str], None] | None = None) -> Capture:
+        """Fetch every collection, then detail GETs, and return records in JSONL order."""
+        if progress is None:
+            progress = lambda _message: None
+        progress("listing repository, issues, pull requests, refs, and comments")
+        names = ["repository", *self._list_urls().keys(), "tag_refs"]
+        fetched = self._fetch_named(names)
+        repo = fetched["repository"]
+        if not isinstance(repo, dict):
+            raise PullError("repository payload was not an object")
+        default_branch = repo.get("default_branch")
+        if not isinstance(default_branch, str):
+            default_branch = ""
+
+        def listed(name: str) -> list[dict]:
+            value = fetched[name]
+            if not isinstance(value, list):
+                raise PullError(f"{name} payload was not a list")
+            return value
+
+        issue_numbers = _numbers(listed("issues"), "issue")
+        pull_numbers = _numbers(listed("pulls"), "pull")
+        branches = order_branches(listed("branches"), default_branch)
+        annotated = _annotated_shas(listed("tag_refs"))
+        progress("fetching details, reviews, and commits")
+
+        jobs: list[tuple[str, Callable[[], object]]] = []
+        for number in issue_numbers:
+            jobs.append(("issue", lambda number=number: self._full("issues", number)))
+        for number in pull_numbers:
+            jobs.append(("pull", lambda number=number: self._full("pulls", number)))
+        for number in pull_numbers:
+            jobs.append(
+                (
+                    "reviews",
+                    lambda number=number: self.get_list(
+                        f"{API}/repos/{self.repo}/pulls/{number}/reviews?per_page={PER_PAGE}"
+                    ),
+                )
+            )
+        for branch in branches:
+            jobs.append(("commits", lambda branch=branch: self.commits_for(branch)))
+        for number in pull_numbers:
+            jobs.append(
+                (
+                    "pr_commits",
+                    lambda number=number: self.get_list(
+                        f"{API}/repos/{self.repo}/pulls/{number}/commits?per_page={PER_PAGE}"
+                    ),
+                )
+            )
+        for sha in annotated:
+            jobs.append(("annotated", lambda sha=sha: self.get_object(f"{API}/repos/{self.repo}/git/tags/{sha}")))
+
+        results = map_ordered(lambda job: job[1](), jobs, self.workers)
+        cursor = 0
+
+        def take(count: int) -> list:
+            nonlocal cursor
+            chunk = results[cursor : cursor + count]
+            cursor += count
+            return chunk
+
+        issues = take(len(issue_numbers))
+        pulls = take(len(pull_numbers))
+        review_lists = take(len(pull_numbers))
+        commit_groups = take(len(branches))
+        pr_commit_groups = take(len(pull_numbers))
+        annotated_objects = take(len(annotated))
+        commits, duplicates = unique_commits([*commit_groups, *pr_commit_groups])
+
+        records: list[tuple[str, dict]] = [("repository", repo)]
+        records += [("label", item) for item in listed("labels")]
+        records += [("milestone", item) for item in listed("milestones")]
+        records += [("issue", item) for item in issues]
+        records += [("issue_comment", item) for item in listed("issue_comments")]
+        records += [("pull_request", item) for item in pulls]
+        for reviews in review_lists:
+            records += [("pull_request_review", item) for item in reviews]
+        records += [("pull_request_review_comment", item) for item in listed("review_comments")]
+        records += [("branch", item) for item in branches]
+        records += [("commit", item) for item in commits]
+        records += [("commit_comment", item) for item in listed("commit_comments")]
+        records += [("release", item) for item in listed("releases")]
+        records += [("tag", item) for item in listed("tags")]
+        records += [("annotated_tag", item) for item in annotated_objects]
+        records += [("issue_event", item) for item in listed("issue_events")]
+        records += [("contributor", item) for item in listed("contributors")]
+        progress(f"captured {len(records)} envelopes; duplicate commit hits omitted: {duplicates}")
+        return Capture(records, duplicates)
 
 
 def emit_jsonl(envelopes: Iterator[dict], stream) -> int:
@@ -397,17 +608,6 @@ def readable_sidecar(output: Path) -> Path:
     return Path(str(output) + ".readable.md")
 
 
-def _kind(body: dict) -> str | None:
-    if isinstance(body.get("commit"), dict) and isinstance(body.get("sha"), str):
-        return "commit"
-    number = body.get("number")
-    if not isinstance(number, int) or isinstance(number, bool):
-        return None
-    if "pull_request" in body or "merged_at" in body:
-        return "pull"
-    return "issue"
-
-
 def _state_label(body: dict) -> str:
     if body.get("merged_at"):
         return "merged"
@@ -419,6 +619,8 @@ def _state_label(body: dict) -> str:
 
 def _body_excerpt(body: dict, limit: int = 80) -> str:
     text = body.get("body")
+    if text is None:
+        text = body.get("message")
     if not isinstance(text, str):
         return ""
     flat = " ".join(text.split())
@@ -429,46 +631,155 @@ def _body_excerpt(body: dict, limit: int = 80) -> str:
     return flat[: limit - 1].rstrip() + "…"
 
 
-def _summary_line(kind: str, body: dict) -> str:
-    if kind == "commit":
-        message = str(body["commit"].get("message") or "").splitlines()
-        subject = message[0] if message else ""
-        return f"- `{body['sha'][:7]}` {subject}".rstrip()
-    title = body.get("title") if isinstance(body.get("title"), str) else ""
-    line = f"- #{body['number']} {_state_label(body)} — {title}".rstrip()
+def _login(body: dict) -> str:
+    login = body.get("login")
+    if isinstance(login, str) and login:
+        return login
+    user = body.get("user")
+    if isinstance(user, dict):
+        nested = user.get("login")
+        if isinstance(nested, str) and nested:
+            return nested
+    return "unknown"
+
+
+def _trailing_number(url: object) -> str:
+    if not isinstance(url, str) or not url:
+        return "?"
+    tail = url.rstrip("/").rsplit("/", 1)[-1]
+    return tail if tail.isdigit() else "?"
+
+
+def _short_sha(sha: object) -> str:
+    if not isinstance(sha, str) or not sha:
+        return "?"
+    return sha[:7]
+
+
+def _commit_subject(body: dict) -> str:
+    commit = body.get("commit")
+    if not isinstance(commit, dict):
+        return ""
+    message = commit.get("message")
+    if not isinstance(message, str) or not message:
+        return ""
+    return message.splitlines()[0]
+
+
+def _with_excerpt(line: str, body: dict) -> str:
     excerpt = _body_excerpt(body)
     if excerpt:
-        line = f"{line} — {excerpt}"
+        return f"{line} — {excerpt}"
     return line
 
 
-def render_summary(repo: str, envelopes: list[dict]) -> str:
-    """Grouped glance list. Does not replace the JSONL intake.
+def _summary_line(kind: str, body: dict) -> str:
+    if kind == "repository":
+        name = body.get("full_name") if isinstance(body.get("full_name"), str) else ""
+        branch = body.get("default_branch") if isinstance(body.get("default_branch"), str) else ""
+        return f"- {name} default `{branch}`".rstrip()
+    if kind == "label":
+        name = body.get("name") if isinstance(body.get("name"), str) else ""
+        return f"- {name}".rstrip()
+    if kind == "milestone":
+        title = body.get("title") if isinstance(body.get("title"), str) else ""
+        return f"- #{body.get('number')} {_state_label(body)} — {title}".rstrip()
+    if kind in ("issue", "pull_request"):
+        title = body.get("title") if isinstance(body.get("title"), str) else ""
+        line = f"- #{body.get('number')} {_state_label(body)} — {title}".rstrip()
+        return _with_excerpt(line, body)
+    if kind == "issue_comment":
+        line = f"- issue #{_trailing_number(body.get('issue_url'))} comment {body.get('id')} by {_login(body)}"
+        return _with_excerpt(line, body)
+    if kind == "pull_request_review":
+        state = body.get("state") if isinstance(body.get("state"), str) else ""
+        line = (
+            f"- pull #{_trailing_number(body.get('pull_request_url'))} "
+            f"review {body.get('id')} {state} by {_login(body)}"
+        ).rstrip()
+        return _with_excerpt(line, body)
+    if kind == "pull_request_review_comment":
+        line = (
+            f"- pull #{_trailing_number(body.get('pull_request_url'))} "
+            f"comment {body.get('id')} by {_login(body)}"
+        )
+        return _with_excerpt(line, body)
+    if kind == "branch":
+        commit = body.get("commit")
+        sha = commit.get("sha") if isinstance(commit, dict) else None
+        return f"- `{_branch_name(body)}` at `{_short_sha(sha)}`"
+    if kind == "commit":
+        return f"- `{_short_sha(body.get('sha'))}` {_commit_subject(body)}".rstrip()
+    if kind == "commit_comment":
+        line = f"- `{_short_sha(body.get('commit_id'))}` comment {body.get('id')} by {_login(body)}"
+        return _with_excerpt(line, body)
+    if kind == "release":
+        tag = body.get("tag_name") if isinstance(body.get("tag_name"), str) else ""
+        name = body.get("name") if isinstance(body.get("name"), str) else ""
+        line = f"- {tag} — {name}" if name else f"- {tag}"
+        return _with_excerpt(line, body)
+    if kind == "tag":
+        commit = body.get("commit")
+        sha = commit.get("sha") if isinstance(commit, dict) else None
+        name = body.get("name") if isinstance(body.get("name"), str) else ""
+        return f"- {name} at `{_short_sha(sha)}`"
+    if kind == "annotated_tag":
+        name = body.get("tag") if isinstance(body.get("tag"), str) else ""
+        line = f"- {name} `{_short_sha(body.get('sha'))}`".rstrip()
+        return _with_excerpt(line, body)
+    if kind == "issue_event":
+        event = body.get("event") if isinstance(body.get("event"), str) else ""
+        return f"- {body.get('id')} {event}".rstrip()
+    if kind == "contributor":
+        contributions = body.get("contributions")
+        return f"- {_login(body)} ({contributions})"
+    return f"- {kind}"
 
-    A pull request listed by both the Issues API and the Pulls API is shown
-    once. The later object wins so the Pulls API state is the one you see.
+
+def render_summary(repo: str, records: list[tuple[str, dict]], *, duplicate_commits: int = 0) -> str:
+    """Counts and keys for humans. Does not replace the JSONL intake.
+
+    ``records`` are ``(kind, raw object)`` pairs in JSONL order. Commit rows
+    are the unique objects. ``duplicate_commits`` is the number of later
+    branch or pull-request hits that were not written.
     """
-    order = ("issue", "pull", "commit")
-    seen: dict[str, dict] = {kind: {} for kind in order}
-    keys: dict[str, list] = {kind: [] for kind in order}
-    for envelope in envelopes:
-        body = envelope.get("body")
-        if not isinstance(body, dict):
-            continue
-        kind = _kind(body)
-        if kind is None:
-            continue
-        key = body.get("sha") if kind == "commit" else body.get("number")
-        if key not in seen[kind]:
-            keys[kind].append(key)
-        seen[kind][key] = _summary_line(kind, body)
-    headings = {"issue": "Issues", "pull": "Pull requests", "commit": "Commits"}
-    parts = [f"# {repo}", ""]
-    for kind in order:
-        parts.append(f"## {headings[kind]}")
+    grouped: dict[str, list[str]] = {kind: [] for kind in ENTITY_KINDS}
+    extra: list[str] = []
+    for kind, body in records:
+        line = _summary_line(kind, body)
+        if kind in grouped:
+            grouped[kind].append(line)
+        else:
+            extra.append(line)
+    commit_count = len(grouped["commit"])
+    parts = [
+        f"# {repo}",
+        "",
+        f"Envelopes: {len(records)}.",
+        f"Unique commits: {commit_count}. Duplicate SHA hits omitted: {duplicate_commits}.",
+        "Issue comments include conversation comments on pull requests.",
+        "Review comments are diff line comments. Branch rows are tip refs.",
+        "A pull request is stored twice: the issue resource and the pull resource.",
+        "",
+        "## Counts",
+        "",
+        "| Entity | Envelopes |",
+        "| --- | ---: |",
+    ]
+    for kind in ENTITY_KINDS:
+        parts.append(f"| {HEADINGS[kind]} | {len(grouped[kind])} |")
+    if extra:
+        parts.append(f"| Other | {len(extra)} |")
+    parts.append("")
+    for kind in ENTITY_KINDS:
+        parts.append(f"## {HEADINGS[kind]}")
         parts.append("")
-        lines = [seen[kind][key] for key in keys[kind]]
-        parts.append("\n".join(lines) if lines else "- (none)")
+        parts.append("\n".join(grouped[kind]) if grouped[kind] else "- (none)")
+        parts.append("")
+    if extra:
+        parts.append("## Other")
+        parts.append("")
+        parts.append("\n".join(extra))
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"
 
@@ -482,21 +793,22 @@ def pull(
     now: int | None = None,
     sign: Signer = openssl_sign,
     workers: int = DEFAULT_CONCURRENCY,
-) -> Iterator[dict]:
+    progress: Callable[[str], None] | None = None,
+) -> Capture:
     if "/" not in repo or repo.startswith("/") or repo.endswith("/"):
         raise PullError("GITHUB_TEST_REPO must look like owner/name")
     now = int(time.time()) if now is None else now
     app_jwt = build_app_jwt(app_id, pem_path, now=now, sign=sign)
     gate = RateLimitGate()
     token = installation_token(app_jwt, repo, exchange, gate)
-    return iter_envelopes(repo, token, exchange, workers=workers, gate=gate)
+    return GithubPull(repo, token, exchange, workers, gate).capture(progress)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Pull one test repo into EMBER-39 JSONL. "
-            "With --output, also write a glance summary at <output>.readable.md."
+            "Full REST backfill of one test repo into EMBER-39 JSONL. "
+            "With --output, also write counts and keys at <output>.readable.md."
         )
     )
     parser.add_argument(
@@ -520,9 +832,9 @@ def main(argv: list[str] | None = None) -> int:
         "--concurrency",
         type=int,
         default=None,
-        help=f"Parallel issue/PR detail GETs (default {DEFAULT_CONCURRENCY}, "
+        help=f"In-flight GitHub requests (default {DEFAULT_CONCURRENCY}, "
         f"or GITHUB_PULL_CONCURRENCY, max {MAX_CONCURRENCY}). "
-        "Lists and commits stay serial. A shared gate waits out rate limits.",
+        "Pages inside one collection stay in order. A shared gate waits out rate limits.",
     )
     args = parser.parse_args(argv)
     if args.no_readable and args.readable:
@@ -544,7 +856,12 @@ def main(argv: list[str] | None = None) -> int:
     pem_path, cleanup = _private_key_file()
     try:
         workers = resolve_concurrency(args.concurrency)
-        envelopes = list(pull(repo, app_id, pem_path, urllib_exchange, workers=workers))
+
+        def log(message: str) -> None:
+            print(message, file=sys.stderr)
+
+        capture = pull(repo, app_id, pem_path, urllib_exchange, workers=workers, progress=log)
+        envelopes = capture.envelopes()
         if args.output:
             output = Path(args.output)
             with output.open("w", encoding="utf-8") as handle:
@@ -554,7 +871,7 @@ def main(argv: list[str] | None = None) -> int:
             count = emit_jsonl(envelopes, sys.stdout)
             print(f"wrote {count} envelopes", file=sys.stderr)
         if not args.no_readable:
-            summary = render_summary(repo, envelopes)
+            summary = render_summary(repo, capture.records, duplicate_commits=capture.duplicate_commits)
             if args.readable == "-":
                 sys.stdout.write(summary)
             else:
