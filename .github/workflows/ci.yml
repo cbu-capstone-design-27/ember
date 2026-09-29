@@ -67,6 +67,8 @@ jobs:
             test -e "$p" || { echo "missing: $p"; exit 1; }
           done
           echo "layout ok"
+      - name: docker-compose is valid YAML
+        run: docker compose -f infra/docker-compose.yml config --quiet
       - name: Ingestion envelope contract
         run: python3 packages/ingestion-envelope/test_contract.py
       - name: GitHub ingestion webhook contract

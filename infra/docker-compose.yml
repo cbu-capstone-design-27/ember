@@ -1,0 +1,52 @@
+# Local development infrastructure for Ember.
+#
+# Usage (from repo root):
+#   cp .env.example .env          # first time only; fill in values
+#   docker compose -f infra/docker-compose.yml --env-file .env up -d
+#
+# Neo4j starts by default. github-ingestion is an optional profile so a
+# plain `up` stays Neo4j-only:
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile github-ingestion up --build github-ingestion
+
+name: ember
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: ember-neo4j
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"   # Browser UI
+      - "${NEO4J_BOLT_PORT:-7687}:7687"   # Bolt driver
+    environment:
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-change-me-locally}"
+      NEO4J_PLUGINS: '["apoc"]'
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USER:-neo4j}", "-p", "${NEO4J_PASSWORD:-change-me-locally}", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # EMBER-35. Not part of the default `up` (see profiles).
+  github-ingestion:
+    profiles: ["github-ingestion"]
+    build:
+      context: ..
+      dockerfile: services/github-ingestion/Dockerfile
+    container_name: ember-github-ingestion
+    ports:
+      - "${GITHUB_INGESTION_PORT:-8080}:${GITHUB_INGESTION_PORT:-8080}"
+    environment:
+      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+      GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
+      GITHUB_APP_PRIVATE_KEY: "${GITHUB_APP_PRIVATE_KEY:-}"
+      GITHUB_APP_PRIVATE_KEY_PATH: "${GITHUB_APP_PRIVATE_KEY_PATH:-}"
+      GITHUB_TEST_REPO: "${GITHUB_TEST_REPO:-}"
+      GITHUB_INGESTION_PORT: "${GITHUB_INGESTION_PORT:-8080}"
+
+volumes:
+  neo4j-data:
+  neo4j-logs:
