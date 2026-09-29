@@ -4,10 +4,12 @@
 #   cp .env.example .env          # first time only; fill in values
 #   docker compose -f infra/docker-compose.yml --env-file .env up -d
 #
-# Neo4j starts by default. github-ingestion is an optional profile so a
-# plain `up` stays Neo4j-only:
+# Neo4j starts by default. github-ingestion and slack-ingestion are optional
+# profiles so a plain `up` stays Neo4j-only:
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile github-ingestion up --build github-ingestion
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile slack-ingestion up --build slack-ingestion
 
 name: ember
 
@@ -46,6 +48,19 @@ services:
       GITHUB_APP_PRIVATE_KEY_PATH: "${GITHUB_APP_PRIVATE_KEY_PATH:-}"
       GITHUB_TEST_REPO: "${GITHUB_TEST_REPO:-}"
       GITHUB_INGESTION_PORT: "${GITHUB_INGESTION_PORT:-8080}"
+
+  # EMBER-36. Not part of the default `up` (see profiles).
+  slack-ingestion:
+    profiles: ["slack-ingestion"]
+    build:
+      context: ..
+      dockerfile: services/slack-ingestion/Dockerfile
+    container_name: ember-slack-ingestion
+    ports:
+      - "${SLACK_INGESTION_PORT:-8082}:${SLACK_INGESTION_PORT:-8082}"
+    environment:
+      SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET:-}"
+      SLACK_INGESTION_PORT: "${SLACK_INGESTION_PORT:-8082}"
 
 volumes:
   neo4j-data:

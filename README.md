@@ -29,8 +29,9 @@ apps/
 services/
   pipeline/          Ingestion pipeline and job queue (GitHub, Jira, Slack -> Neo4j)
   github-ingestion/  GitHub App webhook receiver; emits {type, body} (EMBER-35)
+  slack-ingestion/   Slack Events API receiver; emits {type, body} (EMBER-36)
 packages/            Shared libraries - add one only when there is a second consumer
-infra/               Local infrastructure (docker-compose: Neo4j; optional github-ingestion profile)
+infra/               Local infrastructure (docker-compose: Neo4j; optional github-ingestion and slack-ingestion profiles)
 docs/
   adr/          Architecture Decision Records (see 0000-use-adrs.md)
   working-agreement.md

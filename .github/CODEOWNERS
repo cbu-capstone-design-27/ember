@@ -17,6 +17,7 @@
 # Services
 /services/pipeline/          @RyanStoffel
 /services/github-ingestion/  @RyanStoffel
+/services/slack-ingestion/   @RyanStoffel
 
 # Shared packages
 /packages/              @RyanStoffel

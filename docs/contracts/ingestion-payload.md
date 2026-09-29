@@ -26,7 +26,7 @@ One sample each, under `packages/ingestion-envelope/fixtures/`:
 
 - `github.json` — GitHub `issues` `opened` webhook. `services/github-ingestion` emits this shape from `POST /webhook/github` (EMBER-35).
 - `jira.json` — Jira `jira:issue_updated` webhook
-- `slack.json` — Slack `event_callback` message
+- `slack.json` — Slack `event_callback` message. `services/slack-ingestion` emits this shape from `POST /webhook/slack` (EMBER-36). Requirements and architecture: `docs/ingestion/slack.md`.
 - `teams.json` — Microsoft Graph change notification
 - `gitlab.json` — GitLab merge request hook
 
