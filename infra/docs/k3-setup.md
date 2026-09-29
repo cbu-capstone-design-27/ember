@@ -283,12 +283,14 @@ make deps          # .venv with ansible-core + netaddr, pinned collections, kube
 
 ### Step 7.3: Record the nodes
 
-`inventory.yml` lists hosts by name. Each node gets `host_vars/<name>.yml` with its IP from Parts 4 and 6:
+`inventory.yml` lists hosts by name, with `pi-cp` under `server` and both workers under `agent`. Each node gets `host_vars/<name>.yml` with its IP from Parts 4 and 6:
 
 ```yaml
 # host_vars/hv-worker-2.yml
-ts_ip: 100.x.x.3
+ts_ip: 100.120.213.7
 ```
+
+A host listed in `inventory.yml` without its `host_vars` file has no `ts_ip`, and every play fails on it.
 
 Tailscale IPs are stable for the life of the device, so these replace DHCP reservations.
 

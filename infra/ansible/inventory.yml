@@ -8,4 +8,4 @@ k3s_cluster:
     agent:
       hosts:
         hv-worker-1:
-        # hv-worker-2: add once it has joined the tailnet (and create host_vars/hv-worker-2.yml)
+        hv-worker-2:
