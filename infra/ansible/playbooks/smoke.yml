@@ -1,0 +1,146 @@
+---
+# Post-install checks, run from the controller against the "homelab" kubeconfig context.
+- name: Smoke test the cluster
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubectl: "kubectl --context {{ cluster_context }}"
+    ns: smoke-test
+  tasks:
+    - name: Wait for every node to be Ready
+      ansible.builtin.command: "{{ kubectl }} wait --for=condition=Ready node/{{ item }} --timeout=180s"
+      loop: "{{ groups['k3s_cluster'] }}"
+      changed_when: false
+
+    - name: Read each node's InternalIP
+      ansible.builtin.command: >-
+        {{ kubectl }} get node {{ item }}
+        -o 'jsonpath={.status.addresses[?(@.type=="InternalIP")].address}'
+      loop: "{{ groups['k3s_cluster'] }}"
+      register: internal_ips
+      changed_when: false
+
+    - name: Require each node to advertise its Tailscale IP
+      ansible.builtin.assert:
+        that: item.stdout == hostvars[item.item].ts_ip
+        fail_msg: "{{ item.item }} advertises {{ item.stdout }}, expected {{ hostvars[item.item].ts_ip }}"
+        quiet: true
+      loop: "{{ internal_ips.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Read the server taints
+      ansible.builtin.command: "{{ kubectl }} get node {{ groups['server'][0] }} -o jsonpath={.spec.taints[*].key}"
+      register: server_taints
+      changed_when: false
+
+    - name: Require workloads to be kept off the control plane
+      ansible.builtin.assert:
+        that: "'CriticalAddonsOnly' in server_taints.stdout"
+        fail_msg: "{{ groups['server'][0] }} is missing the CriticalAddonsOnly taint"
+        quiet: true
+
+    - name: Wait for the local-path-retain StorageClass (applied from manifests/ by k3s)
+      ansible.builtin.command: "{{ kubectl }} get storageclass local-path-retain"
+      register: sc
+      until: sc.rc == 0
+      retries: 12
+      delay: 5
+      changed_when: false
+
+    - name: Run the workload checks in a throwaway namespace
+      block:
+        - name: Create the namespace
+          ansible.builtin.command: "{{ kubectl }} create namespace {{ ns }}"
+          changed_when: true
+
+        - name: Resolve cluster DNS from a pod
+          ansible.builtin.command: >-
+            {{ kubectl }} -n {{ ns }} run dns --image=busybox:1.36 --restart=Never --rm -i
+            --pod-running-timeout=3m -- nslookup kubernetes.default.svc.cluster.local
+          changed_when: false
+
+        - name: Create a PVC and write a file to it
+          ansible.builtin.command:
+            cmd: "{{ kubectl }} -n {{ ns }} apply -f -"
+            stdin: "{{ lookup('ansible.builtin.template', 'templates/pvc-pod.yml.j2', template_vars={'pod': 'writer', 'script': 'echo ok > /data/probe'}) }}"
+          changed_when: true
+
+        - name: Wait for the writer to finish
+          ansible.builtin.command: >-
+            {{ kubectl }} -n {{ ns }} wait pod/writer
+            --for=jsonpath={.status.phase}=Succeeded --timeout=180s
+          changed_when: false
+
+        - name: Record where the volume landed
+          ansible.builtin.command: >-
+            {{ kubectl }} -n {{ ns }} get pod writer -o jsonpath={.spec.nodeName}
+          register: volume_node
+          changed_when: false
+
+        - name: Delete the writer pod (the PVC stays)
+          ansible.builtin.command: "{{ kubectl }} -n {{ ns }} delete pod writer --wait"
+          changed_when: true
+
+        - name: Read the file back from a new pod
+          ansible.builtin.command:
+            cmd: "{{ kubectl }} -n {{ ns }} apply -f -"
+            stdin: "{{ lookup('ansible.builtin.template', 'templates/pvc-pod.yml.j2', template_vars={'pod': 'reader', 'script': 'cat /data/probe'}) }}"
+          changed_when: true
+
+        - name: Wait for the reader to finish
+          ansible.builtin.command: >-
+            {{ kubectl }} -n {{ ns }} wait pod/reader
+            --for=jsonpath={.status.phase}=Succeeded --timeout=180s
+          changed_when: false
+
+        - name: Get the reader's output
+          ansible.builtin.command: "{{ kubectl }} -n {{ ns }} logs reader"
+          register: reader_log
+          changed_when: false
+
+        - name: Require the data to survive a pod restart
+          ansible.builtin.assert:
+            that: reader_log.stdout == 'ok'
+            fail_msg: "PVC data did not persist (read '{{ reader_log.stdout }}')"
+            quiet: true
+
+        - name: Require the volume on a storage worker, not the control plane
+          ansible.builtin.assert:
+            that: volume_node.stdout in groups['agent']
+            fail_msg: "Volume landed on {{ volume_node.stdout }}"
+            quiet: true
+
+      always:
+        - name: Find the smoke-test volume
+          ansible.builtin.command: "{{ kubectl }} -n {{ ns }} get pvc data -o jsonpath={.spec.volumeName}"
+          register: pv_name
+          failed_when: false
+          changed_when: false
+
+        - name: Find the volume's directory on the node
+          when: pv_name.stdout | length > 0
+          ansible.builtin.command: "{{ kubectl }} get pv {{ pv_name.stdout }} -o jsonpath={.spec.hostPath.path}{.spec.local.path}"
+          register: pv_path
+          failed_when: false
+          changed_when: false
+
+        - name: Delete the namespace
+          ansible.builtin.command: "{{ kubectl }} delete namespace {{ ns }} --ignore-not-found --wait"
+          changed_when: true
+
+        # Retain means k3s leaves the PV and its directory behind; remove both
+        - name: Delete the retained PV
+          when: pv_name.stdout | length > 0
+          ansible.builtin.command: "{{ kubectl }} delete pv {{ pv_name.stdout }} --ignore-not-found"
+          changed_when: true
+
+        - name: Delete the retained data directory
+          when:
+            - volume_node.stdout is defined and volume_node.stdout in groups['agent']
+            - pv_path.stdout is defined and pv_path.stdout is match('/var/lib/rancher/k3s/storage/pvc-')
+          ansible.builtin.file:
+            path: "{{ pv_path.stdout }}"
+            state: absent
+          delegate_to: "{{ volume_node.stdout }}"
+          become: true

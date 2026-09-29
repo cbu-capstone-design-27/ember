@@ -1,0 +1,19 @@
+[Unit]
+Description=Join the tailnet with the auth key baked into the disk
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+ConditionPathExists=/etc/tailscale/authkey
+# Keep retrying until the network is up
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# Hostname comes from cloud-init (meta-data local-hostname), which runs before this
+ExecStart=/usr/bin/tailscale up --auth-key=file:/etc/tailscale/authkey --timeout=2m
+# Only runs if the join succeeded; also stops this unit from running again
+ExecStartPost=/usr/bin/rm -f /etc/tailscale/authkey
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

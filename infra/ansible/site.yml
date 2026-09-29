@@ -1,0 +1,14 @@
+---
+# Full bring-up: node prep, k3s (upstream k3s-ansible), then smoke tests.
+# Safe to re-run; k3s-ansible restarts k3s on every run so config changes apply.
+- name: Prep nodes
+  ansible.builtin.import_playbook: playbooks/prep.yml
+
+- name: Install k3s
+  ansible.builtin.import_playbook: k3s.orchestration.site
+
+- name: Post-install fixups
+  ansible.builtin.import_playbook: playbooks/post.yml
+
+- name: Smoke test
+  ansible.builtin.import_playbook: playbooks/smoke.yml

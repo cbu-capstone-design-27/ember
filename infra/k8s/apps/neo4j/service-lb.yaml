@@ -1,0 +1,26 @@
+# Publishes Neo4j on every node's IP via k3s ServiceLB, e.g. bolt://hv-worker-1.tail470a31.ts.net:7687.
+# Owned here rather than by the chart: the chart's LoadBalancer is annotated helm.sh/resource-policy: keep
+# and relies on a kubectl cleanup Job at uninstall.
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j-lb
+  namespace: ember
+spec:
+  type: LoadBalancer
+  # Tailnet only. ServiceLB binds every interface, so without this the LAN could reach it too.
+  loadBalancerSourceRanges:
+    - 100.64.0.0/10
+  # ServiceLB forwards to the ClusterIP, so NodePorts are unused, and source ranges don't
+  # apply to them: they would reopen both ports to the LAN on 30000-32767.
+  allocateLoadBalancerNodePorts: false
+  selector:
+    app: neo4j
+    helm.neo4j.com/instance: neo4j
+  ports:
+    - name: http
+      port: 7474
+      targetPort: 7474
+    - name: tcp-bolt
+      port: 7687
+      targetPort: 7687

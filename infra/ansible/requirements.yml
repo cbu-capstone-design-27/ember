@@ -1,0 +1,13 @@
+---
+collections:
+  # k3s.orchestration; pinned to a commit so a rebuild installs the same roles
+  - name: https://github.com/k3s-io/k3s-ansible.git
+    type: git
+    version: 1a600b60d37e0f8a6e2e79b0e474147b5b108ae5
+  # Used by k3s-ansible but not declared in its galaxy.yml
+  - name: ansible.utils
+    version: 6.1.1
+  - name: community.general
+    version: 13.4.0
+  - name: ansible.posix
+    version: 2.2.2

@@ -1,0 +1,16 @@
+#cloud-config
+# Baked into each worker VHDX by build.sh (seed dir). Hostname comes from meta-data, not here.
+manage_resolv_conf: false
+
+manage_etc_hosts: true
+timezone: America/Los_Angeles
+user:
+  name: control
+  shell: /bin/bash
+  lock_passwd: false
+  passwd: "<yescrypt hash from: mkpasswd -m yescrypt>"
+  groups: [sudo, adm]
+  sudo: "ALL=(ALL) NOPASSWD:ALL"
+  ssh_authorized_keys:
+    - "<contents of ~/.ssh/id_ed25519.pub>"
+ssh_pwauth: false

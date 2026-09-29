@@ -1,0 +1,162 @@
+---
+# Neo4j on the cluster: the Helm release from k8s/apps/neo4j/values.yaml plus the Service that
+# publishes it on every node's IP. Run from the controller against the "homelab" kubeconfig context.
+# Use the make targets: neo4j-prep, neo4j-up (prep, up, health), neo4j-health, neo4j-down.
+- name: Neo4j
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubectl: "kubectl --context {{ cluster_context }}"
+    helm: "helm --kube-context {{ cluster_context }}"
+    k8s_dir: "{{ playbook_dir }}/../../k8s"
+    neo4j_dir: "{{ k8s_dir }}/apps/neo4j"
+    neo4j_ns: ember
+    neo4j_release: neo4j
+    neo4j_chart_version: 2026.9.0
+    # Node and password come from values.yaml so there is one place to change them
+    neo4j_values: "{{ lookup('ansible.builtin.file', neo4j_dir ~ '/values.yaml') | from_yaml }}"
+    neo4j_node: "{{ neo4j_values.nodeSelector['kubernetes.io/hostname'] }}"
+    neo4j_password: "{{ neo4j_values.neo4j.password }}"
+  tasks:
+    - name: Prep
+      tags: [prep]
+      block:
+        - name: Require helm (make deps installs it)
+          ansible.builtin.command: helm version --short
+          changed_when: false
+
+        - name: Require the Neo4j node to be in the inventory
+          ansible.builtin.assert:
+            that: neo4j_node in groups['agent']
+            fail_msg: "values.yaml pins Neo4j to {{ neo4j_node }}, which is not an agent in inventory.yml"
+            quiet: true
+
+        - name: Wait for the Neo4j node to be Ready
+          ansible.builtin.command: "{{ kubectl }} wait --for=condition=Ready node/{{ neo4j_node }} --timeout=60s"
+          changed_when: false
+
+        - name: Require the local-path-retain StorageClass
+          ansible.builtin.command: "{{ kubectl }} get storageclass local-path-retain"
+          changed_when: false
+
+        - name: Apply the namespaces
+          ansible.builtin.command: "{{ kubectl }} apply -f {{ k8s_dir }}/infrastructure/namespaces.yaml"
+          register: ns_apply
+          changed_when: ns_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+
+        - name: Add the Neo4j chart repo
+          ansible.builtin.command: helm repo add neo4j https://helm.neo4j.com/neo4j
+          register: repo_add
+          changed_when: "'already exists' not in repo_add.stdout"
+
+        - name: Refresh the chart repo index
+          ansible.builtin.command: helm repo update neo4j
+          changed_when: false
+
+    - name: Up
+      tags: [up]
+      block:
+        - name: Install or upgrade the release
+          ansible.builtin.command: >-
+            {{ helm }} upgrade --install {{ neo4j_release }} neo4j/neo4j
+            --version {{ neo4j_chart_version }} -n {{ neo4j_ns }}
+            -f {{ neo4j_dir }}/values.yaml --wait --timeout 10m
+          changed_when: true
+
+        - name: Publish Neo4j on the node IPs
+          ansible.builtin.command: "{{ kubectl }} apply -k {{ neo4j_dir }}"
+          register: svc_apply
+          changed_when: svc_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+
+    - name: Health
+      tags: [health]
+      block:
+        - name: Wait for the StatefulSet to be ready
+          ansible.builtin.command: "{{ kubectl }} -n {{ neo4j_ns }} rollout status statefulset/{{ neo4j_release }} --timeout=5m"
+          changed_when: false
+
+        - name: Read which node the pod runs on
+          ansible.builtin.command: "{{ kubectl }} -n {{ neo4j_ns }} get pod {{ neo4j_release }}-0 -o jsonpath={.spec.nodeName}"
+          register: pod_node
+          changed_when: false
+
+        - name: Require the pod on the pinned node
+          ansible.builtin.assert:
+            that: pod_node.stdout == neo4j_node
+            fail_msg: "neo4j-0 is on {{ pod_node.stdout }}, expected {{ neo4j_node }}"
+            quiet: true
+
+        - name: Query from inside the pod
+          ansible.builtin.command: >-
+            {{ kubectl }} -n {{ neo4j_ns }} exec {{ neo4j_release }}-0 -c neo4j --
+            cypher-shell -u neo4j -p {{ neo4j_password }} --format plain 'RETURN 1 AS ok'
+          register: in_pod
+          changed_when: false
+          failed_when: in_pod.rc != 0 or in_pod.stdout_lines[-1] != '1'
+
+        # These are the names the team connects with, so check they point at the right node
+        - name: Resolve each node's tailnet name
+          ansible.builtin.command: "getent hosts {{ item }}.{{ tailnet_domain }}"
+          loop: "{{ groups['k3s_cluster'] }}"
+          register: fqdn
+          changed_when: false
+          failed_when: fqdn.rc != 0 or fqdn.stdout.split()[0] != hostvars[item].ts_ip
+
+        # ServiceLB takes a few seconds to start its proxy pods after the Service is created
+        - name: Wait for Bolt on each node's IP
+          ansible.builtin.wait_for:
+            host: "{{ hostvars[item].ts_ip }}"
+            port: 7687
+            timeout: 60
+          loop: "{{ groups['k3s_cluster'] }}"
+
+        - name: Query over HTTP on each node's IP
+          ansible.builtin.uri:
+            url: "http://{{ hostvars[item].ts_ip }}:7474/db/neo4j/query/v2"
+            method: POST
+            body_format: json
+            body:
+              statement: RETURN 1 AS ok
+            url_username: neo4j
+            url_password: "{{ neo4j_password }}"
+            force_basic_auth: true
+            status_code: [200, 202]
+          loop: "{{ groups['k3s_cluster'] }}"
+          register: over_http
+
+        - name: Require each node to return the query result
+          ansible.builtin.assert:
+            that: item.json.data['values'][0][0] == 1
+            fail_msg: "{{ item.item }} answered {{ item.json }}"
+            quiet: true
+          loop: "{{ over_http.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: Show the endpoints
+          ansible.builtin.debug:
+            msg:
+              - "Bolt:    bolt://{{ neo4j_node }}.{{ tailnet_domain }}:7687"
+              - "Browser: http://{{ neo4j_node }}.{{ tailnet_domain }}:7474"
+              - "In-cluster: bolt://{{ neo4j_release }}.{{ neo4j_ns }}.svc.cluster.local:7687"
+
+
+    # "never" keeps this out of untagged runs; only --tags down selects it
+    - name: Down
+      tags: [never, down]
+      block:
+        - name: Remove the node-IP Service
+          ansible.builtin.command: "{{ kubectl }} delete -k {{ neo4j_dir }} --ignore-not-found"
+          register: svc_delete
+          changed_when: svc_delete.stdout | length > 0
+
+        - name: Uninstall the release
+          ansible.builtin.command: "{{ helm }} uninstall {{ neo4j_release }} -n {{ neo4j_ns }} --wait --ignore-not-found"
+          register: uninstall
+          changed_when: "'uninstalled' in uninstall.stdout"
+
+        - name: Note the kept volume
+          ansible.builtin.debug:
+            msg: >-
+              PVC data-{{ neo4j_release }}-0 in {{ neo4j_ns }} is kept, so neo4j-up reattaches the same data.
+              To wipe it: delete that PVC, its PV, and the PV's directory under /var/lib/rancher/k3s/storage on {{ neo4j_node }}.
