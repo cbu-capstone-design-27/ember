@@ -8,9 +8,11 @@ Installing the App on an account or org defaults to all repositories. Choosing w
 
 ## Status
 
-Stub HTTP receiver for live deliveries, plus a local pull command for one test repository. The receiver checks an optional HMAC, wraps the raw body, and writes the envelope to stdout. No queue yet. The receiver does not call the GitHub API and does not filter on a repository.
+HTTP receiver for live deliveries, plus a local full REST backfill for one test repository. The receiver checks an optional HMAC, wraps the raw body, and writes one envelope per delivery to stdout. It does not filter on event name or repository. No queue yet. The receiver does not call the GitHub API.
 
-Live App webhooks still need a public URL. This change does not open a tunnel or register a webhook.
+`pull_test.py` is the backfill. It is a follow-on to the slim issues / pull requests / default-branch commits cut: one envelope per discrete REST object, not a second copy of the same pull request.
+
+Live App webhooks still need a public URL. This change does not open a tunnel or register a webhook. Subscribe the events below on the App when you want those deliveries.
 
 ## Contract
 
@@ -34,7 +36,7 @@ When the payload includes them, the process log also records `installation.id` a
 
 This is a GitHub App webhook endpoint, not a classic OAuth app and not a single-repo webhook. `ember-ingest` is an example App. The worker does not hard-code its slug, id, or install target.
 
-Permissions below are what `pull_test.py` needs on the installation. Event subscriptions are for live webhooks later; the receiver does not filter on them, and this PR does not register them.
+Permissions below are what `pull_test.py` needs on the installation. Event subscriptions are for live webhooks; the receiver does not filter on them, and this PR does not register them. The list lives in `RECOMMENDED_WEBHOOK_EVENTS` in `receiver.py`.
 
 ### Credentials
 
@@ -57,19 +59,54 @@ Repository permissions this cut uses:
 
 No organization permissions in this scaffold.
 
-### Events (placeholder)
+### Events
+
+Subscribe to these on the App. Each delivery is still one raw envelope, whatever the event name is.
 
 - `installation`
 - `installation_repositories`
 - `repository`
 - `push`
+- `create`
+- `delete`
 - `issues`
 - `issue_comment`
 - `pull_request`
 - `pull_request_review`
 - `pull_request_review_comment`
+- `commit_comment`
+- `release`
+- `milestone`
+- `label`
+- `status`
+- `check_run`
+- `check_suite`
+- `workflow_run`
+- `workflow_job`
+- `deployment`
+- `deployment_status`
+- `discussion`
+- `discussion_comment`
 
-The stub accepts any JSON object. It does not filter on event name.
+| Live event | What the REST backfill stores for the same idea |
+| --- | --- |
+| `issues` | Issue resource, full GET, open and closed |
+| `issue_comment` | Issue comments, including conversation comments on pull requests |
+| `pull_request` | Pull request resource, full GET |
+| `pull_request_review` | Reviews |
+| `pull_request_review_comment` | Review comments (diff line comments) |
+| `push` | Unique commits from every branch and from pull requests |
+| `create`, `delete` | Branch tip refs and tags |
+| `release` | Releases |
+| `commit_comment` | Commit comments |
+| `milestone` | Milestones |
+| `label` | Labels |
+| `discussion`, `discussion_comment` | Not in the REST backfill (no REST collection) |
+| `check_run`, `check_suite`, `status` | Not in the REST backfill (per commit, extra permission) |
+| `workflow_run`, `workflow_job` | Not in the REST backfill (Actions permission) |
+| `deployment`, `deployment_status` | Not in the REST backfill (Deployments permission) |
+
+The receiver accepts any JSON object. It does not filter on event name.
 
 ## Run
 
@@ -101,7 +138,7 @@ The private key and webhook secret stay on your machine.
 After checkout:
 
 ```sh
-git fetch && git checkout feature/EMBER-35-github-ingestion-worker
+git fetch && git checkout feature/EMBER-35-github-full-backfill
 
 export GITHUB_APP_ID=5075660
 export GITHUB_APP_PRIVATE_KEY_PATH="/absolute/path/to/ember-ingest.private-key.pem"
@@ -117,7 +154,7 @@ That writes JSONL to stdout, one envelope per item:
 {"type":"github","body":{}}
 ```
 
-For issues and pull requests, `body` inside that object is the full GitHub payload from `GET /repos/{owner}/{repo}/issues/{number}` or `GET /repos/{owner}/{repo}/pulls/{number}`. That payload's `body` field is the description text (JSON `null` when the description is empty). Commits stay the Commits API list object, including `commit.message` when GitHub sent it.
+Each line is one discrete REST object. For issues and pull requests, the envelope `body` is the full GitHub payload from `GET /repos/{owner}/{repo}/issues/{number}` or `GET /repos/{owner}/{repo}/pulls/{number}`. That payload's `body` field is the description text (JSON `null` when the description is empty). A pull request is two envelopes: the issue resource and the pull resource. Comments, reviews, commits, releases, and tags are the list objects for those routes (those objects already include the comment, review, or message). Commits include `commit.message` when GitHub sent it. Each commit SHA appears once.
 
 To keep that JSONL in a file and also get a glance summary:
 
@@ -128,11 +165,11 @@ python3 services/github-ingestion/pull_test.py --output "$HOME/ember-github-inta
 That writes:
 
 - `$HOME/ember-github-intake.jsonl` — one EMBER-39 object per line, same as stdout
-- `$HOME/ember-github-intake.jsonl.readable.md` — issues (`#`, title, state, short description), pull requests (`#`, title, state, short description), and commits (short sha, subject), grouped under headings
+- `$HOME/ember-github-intake.jsonl.readable.md` — envelope counts, then a glance line per object. Issues and pull requests show `#`, title, state, and a short description. Comments and review comments show the author and a short comment, not the comment id. Commits show the short sha and subject (the author, when the subject is empty). It also records how many duplicate commit SHA hits were left out of the JSONL. The JSONL objects stay the full raw payloads.
 
 `--readable PATH` chooses a different summary file. `--readable -` prints the summary on stdout and requires `--output` so the JSONL stays in the file. `--no-readable` writes JSONL only.
 
-The summary lists each issue, pull request, and commit once. The JSONL still contains every raw API object, so a pull request can appear twice there (Issues API and Pulls API). A merged pull request is labeled `merged` in the summary.
+The summary lists every stored object once, under the entity it was fetched as. A pull request therefore shows under Issues (issue resource) and under Pull requests (pull resource). A merged pull request is labeled `merged` on the pull resource. Commit lines are the unique objects. The duplicate-SHA count is the branch and pull-request hits that were not written again.
 
 `--repo owner/name` overrides `GITHUB_TEST_REPO` for that run.
 
@@ -140,31 +177,60 @@ RS256 is not in the Python standard library. The script signs the App JWT with `
 
 ### What this cut pulls
 
-For the one test repo:
+For the one test repo, in JSONL order:
 
-- Issues API list (`state=all`) to find numbers, then `GET /repos/{owner}/{repo}/issues/{number}` for each issue. A list row that is a pull request is fetched with the pull request URL instead.
-- Pulls API list (`state=all`), then `GET /repos/{owner}/{repo}/pulls/{number}` for each one.
-- Commits API list on the default branch (100 per page). Those list objects are emitted as returned.
+1. Repository (`GET /repos/{owner}/{repo}`).
+2. Labels.
+3. Milestones (`state=all`).
+4. Issues, open and closed. List to find numbers, then `GET /repos/{owner}/{repo}/issues/{number}` for each, including pull requests as issue resources.
+5. Issue comments, repo-wide (`GET /issues/comments`). This includes conversation comments on pull requests.
+6. Pull requests, open and closed. List, then `GET /repos/{owner}/{repo}/pulls/{number}` for each.
+7. Pull request reviews (`GET /pulls/{number}/reviews`). There is no repo-wide reviews route.
+8. Pull request review comments, repo-wide (`GET /pulls/comments`). These are diff line comments, not the conversation comments in step 5.
+9. Branches as tip refs (`GET /branches`). Default branch first, then name order.
+10. Commits on every branch (`GET /commits?sha={branch}`), then commits on each pull request (`GET /pulls/{number}/commits`) so a fork-only SHA is kept. Each SHA is written once. Listing still requests every branch; dedupe is on the way out.
+11. Commit comments (`GET /comments`).
+12. Releases. The list object includes `body`.
+13. Tags.
+14. Annotated tag objects. `GET /git/matching-refs/tags`, then `GET /git/tags/{sha}` when `object.type` is `tag`. A 404 on matching-refs means there are no tag refs and the pull continues.
+15. Issue events (`GET /issues/events`).
+16. Contributors.
 
-List pages and commit pages stay one-after-another. Issue and pull-request detail GETs run 12 at a time, then the JSONL is written in the same order as a serial pull. The envelopes are the same objects as before. Tune with `--concurrency N` or `GITHUB_PULL_CONCURRENCY` (1–32). If GitHub returns `Retry-After`, or a primary rate limit with `x-ratelimit-remaining: 0`, the script waits and retries that request.
+Issues and pull requests are full GETs. The other rows are the list objects for those routes, because a second GET would store the same comment, review, commit, or release again.
+
+List pages inside one collection stay in order, 100 per page, and stop with an error after 200 pages (20,000 objects) instead of truncating quietly. Independent lists run together. The detail wave (issue GETs, pull GETs, reviews, per-branch commits, pull-request commits, annotated tags) runs together, then the JSONL is written in the order above. Tune in-flight requests with `--concurrency N` or `GITHUB_PULL_CONCURRENCY` (default 32, allowed 1–80). If GitHub returns `Retry-After`, a primary rate limit with `x-ratelimit-remaining: 0`, or a secondary rate-limit / abuse-detection response, every worker shares one gate, waits (at most 120 seconds), and retries that request.
 
 ### What this cut does not pull
 
-Issue comments, pull request reviews, review comments, check runs, statuses, releases, file contents, diffs, or any repository other than `GITHUB_TEST_REPO`. It does not replay webhooks.
+These are intentional. The pull stays on Metadata, Contents, Issues, and Pull requests read, and it avoids per-object walks that would multiply the rate limit by commit or comment count.
+
+- File trees, blobs, `/contents`, and pull request file diffs.
+- `GET /commits/{sha}` (the `files` list). The commit list object, including `commit.message`, is stored.
+- Check runs and commit statuses. REST has no repo-wide list, and Checks is outside this permission set. Subscribe to `check_run`, `check_suite`, and `status` for the live path.
+- Actions workflows, runs, and jobs (Actions permission). Subscribe to `workflow_run` and `workflow_job` for the live path.
+- Deployments, environments, and branch protection. Subscribe to `deployment` and `deployment_status` for the live path.
+- Code scanning, Dependabot, and secret scanning alerts.
+- Stars, watchers, and forks.
+- Reactions on comments and reviews.
+- Per-issue timelines (`/issues/{number}/timeline`). Repo-wide issue events are stored instead.
+- Discussions and discussion comments. GitHub has no REST collection for them (GraphQL only). Subscribe to `discussion` and `discussion_comment` for the live path.
+- Projects v2. No REST collection (GraphQL only).
+- Traffic, hooks, teams, and org membership.
+- Any repository other than `GITHUB_TEST_REPO`. This command does not replay webhooks.
 
 ## Local webhook smoke
 
-This checks a signed delivery against the receiver on your machine. It does not call GitHub and it does not need a public URL. `pull_test.py` is a separate backfill.
+This checks signed deliveries against the receiver on your machine. It does not call GitHub and it does not need a public URL. `pull_test.py` is a separate backfill.
 
 ```sh
-git fetch && git checkout feature/EMBER-35-github-ingestion-worker
+git fetch && git checkout feature/EMBER-35-github-full-backfill
 
 export GITHUB_WEBHOOK_SECRET="throwaway-local-secret"
 
 scripts/smoke_webhook.sh
 ```
 
-Any throwaway string is fine. The script starts the receiver, POSTs an `issues` `opened` payload and a `pull_request` `opened` payload with `X-Hub-Signature-256`, and expects HTTP 202 plus two stdout lines:
+Any throwaway string is fine. The script starts the receiver and POSTs `issues`, `pull_request`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `release`, and `create`, each with `X-Hub-Signature-256`. It expects HTTP 202 and one stdout line per delivery. The first two lines are:
 
 ```json
 {"type":"github","body":{"action":"opened","issue":{"number":12,"title":"Login redirect drops the query string","state":"open","body":"Repro: sign in with ?next=/settings and land on /."},"repository":{"full_name":"acme/widget"},"installation":{"id":1}}}
@@ -174,7 +240,7 @@ Any throwaway string is fine. The script starts the receiver, POSTs an `issues` 
 {"type":"github","body":{"action":"opened","pull_request":{"number":3,"title":"Add parser","state":"open","body":"What this changes."},"repository":{"full_name":"acme/widget"},"installation":{"id":1}}}
 ```
 
-Success ends with `smoke ok: 2 envelopes` on stderr.
+Five more stdout lines follow, one per remaining event, each the posted JSON wrapped unchanged. Success ends with `smoke ok: 7 envelopes` on stderr.
 
 To receive a real App delivery later, point a tunnel at `GITHUB_INGESTION_PORT` (default `8080`) and set the App webhook URL to `https://<tunnel-host>/webhook/github` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8080` or `ngrok http 8080`. The tunnel is not part of this smoke and CI does not start one.
 
@@ -183,6 +249,7 @@ To receive a real App delivery later, point a tunnel at `GITHUB_INGESTION_PORT` 
 ```sh
 python3 services/github-ingestion/test_webhook.py
 python3 services/github-ingestion/test_pull.py
+GITHUB_WEBHOOK_SECRET=ci-local-smoke python3 services/github-ingestion/smoke_webhook.py
 ```
 
-`test_pull.py` mocks HTTP. CI runs both. Neither test calls GitHub.
+`test_pull.py` mocks HTTP. CI runs all three. None of them call GitHub.

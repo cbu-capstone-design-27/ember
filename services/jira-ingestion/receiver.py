@@ -1,15 +1,10 @@
-"""GitHub App webhook receiver. POST /webhook/github.
+"""Jira admin-webhook receiver. POST /webhook/jira.
 
-Repo- and account-agnostic. Stdlib HTTP server. Verifies X-Hub-Signature-256
-when GITHUB_WEBHOOK_SECRET is set, wraps the raw JSON body as
-{"type":"github","body":...}, and logs it. When the payload includes them,
-logs installation id and repository full_name for later routing. Does not
-filter on a configured repository or on X-GitHub-Event.
-
-RECOMMENDED_WEBHOOK_EVENTS is the App subscription list that lets a live
-delivery carry the same entity types as the REST backfill, plus a few that
-REST cannot list (discussions) or that this pull does not walk (checks,
-Actions, deployments). The receiver does not read that tuple.
+Site- and project-agnostic. Stdlib HTTP server. Verifies X-Hub-Signature
+when JIRA_WEBHOOK_SECRET is set, wraps the raw JSON body as
+{"type":"jira","body":...}, and logs it. When the payload includes them,
+logs cloudId, project key, and issue key for later routing. Does not
+filter on a configured site or project.
 """
 
 from __future__ import annotations
@@ -28,44 +23,16 @@ from envelope import (
     note_verification,
 )
 
-LOG = logging.getLogger("github-ingestion")
-WEBHOOK_PATH = "/webhook/github"
-
-# Configure these on the GitHub App. Delivery intake does not filter on them.
-RECOMMENDED_WEBHOOK_EVENTS = (
-    "installation",
-    "installation_repositories",
-    "repository",
-    "push",
-    "create",
-    "delete",
-    "issues",
-    "issue_comment",
-    "pull_request",
-    "pull_request_review",
-    "pull_request_review_comment",
-    "commit_comment",
-    "release",
-    "milestone",
-    "label",
-    "status",
-    "check_run",
-    "check_suite",
-    "workflow_run",
-    "workflow_job",
-    "deployment",
-    "deployment_status",
-    "discussion",
-    "discussion_comment",
-)
+LOG = logging.getLogger("jira-ingestion")
+WEBHOOK_PATH = "/webhook/jira"
 
 
 def _route(path: str) -> str:
     return path.split("?", 1)[0].rstrip("/") or "/"
 
 
-class GithubWebhookHandler(BaseHTTPRequestHandler):
-    server_version = "ember-github-ingestion"
+class JiraWebhookHandler(BaseHTTPRequestHandler):
+    server_version = "ember-jira-ingestion"
 
     def log_message(self, fmt: str, *args) -> None:
         LOG.info("%s - " + fmt, self.address_string(), *args)
@@ -103,8 +70,8 @@ class GithubWebhookHandler(BaseHTTPRequestHandler):
             return
 
         raw = self.rfile.read(length)
-        secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
-        signature = self.headers.get("X-Hub-Signature-256")
+        secret = os.environ.get("JIRA_WEBHOOK_SECRET", "")
+        signature = self.headers.get("X-Hub-Signature")
         try:
             envelope = ingest(raw, signature, secret)
         except WebhookError as exc:
@@ -112,24 +79,27 @@ class GithubWebhookHandler(BaseHTTPRequestHandler):
             return
 
         emit(envelope)
-        delivery = self.headers.get("X-GitHub-Delivery", "")
-        event = self.headers.get("X-GitHub-Event", "")
+        delivery = self.headers.get("X-Atlassian-Webhook-Identifier", "")
+        event = envelope["body"].get("webhookEvent")
+        if not isinstance(event, str):
+            event = ""
         key = delivery_key(envelope["body"])
         LOG.info(
-            "ingested github delivery=%s event=%s installation_id=%s full_name=%s",
+            "ingested jira delivery=%s event=%s cloud_id=%s project_key=%s issue_key=%s",
             delivery,
             event,
-            key["installation_id"],
-            key["full_name"],
+            key["cloud_id"],
+            key["project_key"],
+            key["issue_key"],
         )
         self._send(202, {"status": "accepted"})
 
 
 def serve(host: str = "0.0.0.0", port: int | None = None) -> ThreadingHTTPServer:
     if port is None:
-        port = int(os.environ.get("GITHUB_INGESTION_PORT", "8080"))
-    note_verification(os.environ.get("GITHUB_WEBHOOK_SECRET", ""))
-    server = ThreadingHTTPServer((host, port), GithubWebhookHandler)
+        port = int(os.environ.get("JIRA_INGESTION_PORT", "8081"))
+    note_verification(os.environ.get("JIRA_WEBHOOK_SECRET", ""))
+    server = ThreadingHTTPServer((host, port), JiraWebhookHandler)
     LOG.info("listening on %s:%s", host, server.server_address[1])
     return server
 

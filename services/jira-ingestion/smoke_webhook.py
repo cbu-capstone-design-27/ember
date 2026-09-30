@@ -1,9 +1,12 @@
-"""Local webhook smoke. No public URL and no GitHub call.
+"""Local webhook smoke. No public URL and no Jira call.
 
-Starts the receiver, POSTs HMAC-signed deliveries for the event names in
-EVENTS, and checks each response is 202 with one {"type":"github","body":...}
-line on the receiver stdout. The event name is not a filter. Set
-GITHUB_WEBHOOK_SECRET to any throwaway value.
+Starts the receiver, POSTs HMAC-signed issue, comment, worklog, and
+attachment deliveries, and checks each response is 202 with one
+{"type":"jira","body":...} line on the receiver stdout. Set
+JIRA_WEBHOOK_SECRET to any throwaway value.
+
+The signature header is X-Hub-Signature (sha256=<hex>), which is what Jira
+admin webhooks send when a secret is set. A query-string secret is not used.
 """
 
 from __future__ import annotations
@@ -25,79 +28,91 @@ RECEIVER = HERE / "receiver.py"
 
 EVENTS = (
     (
-        "issues",
+        "jira:issue_created",
         {
-            "action": "opened",
+            "timestamp": 1758668948000,
+            "webhookEvent": "jira:issue_created",
+            "cloudId": "site-a",
             "issue": {
-                "number": 12,
-                "title": "Login redirect drops the query string",
-                "state": "open",
-                "body": "Repro: sign in with ?next=/settings and land on /.",
+                "id": "10231",
+                "key": "EMBER-31",
+                "fields": {
+                    "summary": "Start Jira ingestion",
+                    "description": "Spike the connector and keep the description.",
+                    "issuetype": {"name": "Story"},
+                    "project": {"id": "10000", "key": "EMBER"},
+                    "status": {"name": "In Progress"},
+                },
             },
-            "repository": {"full_name": "acme/widget"},
-            "installation": {"id": 1},
         },
     ),
     (
-        "pull_request",
+        "jira:issue_updated",
         {
-            "action": "opened",
-            "pull_request": {
-                "number": 3,
-                "title": "Add parser",
-                "state": "open",
-                "body": "What this changes.",
+            "timestamp": 1758669000000,
+            "webhookEvent": "jira:issue_updated",
+            "cloudId": "site-b",
+            "issue": {
+                "id": "20001",
+                "key": "OTHER-4",
+                "fields": {
+                    "summary": "Notes from another site",
+                    "description": {
+                        "type": "doc",
+                        "version": 1,
+                        "content": [
+                            {
+                                "type": "paragraph",
+                                "content": [{"type": "text", "text": "ADF description stays in the body."}],
+                            }
+                        ],
+                    },
+                    "project": {"id": "20000", "key": "OTHER"},
+                    "status": {"name": "To Do"},
+                },
             },
-            "repository": {"full_name": "acme/widget"},
-            "installation": {"id": 1},
         },
     ),
     (
-        "issue_comment",
+        "comment_created",
         {
-            "action": "created",
-            "issue": {"number": 12},
-            "comment": {"id": 9, "body": "thanks", "user": {"login": "octocat"}},
-            "repository": {"full_name": "acme/widget"},
-            "installation": {"id": 1},
+            "timestamp": 1758669100000,
+            "webhookEvent": "comment_created",
+            "cloudId": "site-a",
+            "issue": {"id": "10231", "key": "EMBER-31", "fields": {"project": {"key": "EMBER"}}},
+            "comment": {
+                "id": "10001",
+                "body": "Comment text stays on the delivery.",
+                "created": "2026-09-28T00:00:00.000+0000",
+            },
         },
     ),
     (
-        "pull_request_review",
+        "worklog_created",
         {
-            "action": "submitted",
-            "review": {"id": 4, "body": "LGTM", "state": "approved"},
-            "pull_request": {"number": 3},
-            "repository": {"full_name": "acme/widget"},
-            "installation": {"id": 1},
+            "timestamp": 1758669200000,
+            "webhookEvent": "worklog_created",
+            "cloudId": "site-a",
+            "worklog": {
+                "id": "10002",
+                "timeSpent": "1h",
+                "timeSpentSeconds": 3600,
+                "comment": "Work note stays on the delivery.",
+            },
         },
     ),
     (
-        "pull_request_review_comment",
+        "attachment_created",
         {
-            "action": "created",
-            "comment": {"id": 8, "body": "nit"},
-            "pull_request": {"number": 3},
-            "repository": {"full_name": "acme/widget"},
-            "installation": {"id": 1},
-        },
-    ),
-    (
-        "release",
-        {
-            "action": "published",
-            "release": {"tag_name": "v1.0.0", "name": "v1", "body": "notes"},
-            "repository": {"full_name": "acme/widget"},
-            "installation": {"id": 1},
-        },
-    ),
-    (
-        "create",
-        {
-            "ref": "feature",
-            "ref_type": "branch",
-            "repository": {"full_name": "acme/widget"},
-            "installation": {"id": 1},
+            "timestamp": 1758669300000,
+            "webhookEvent": "attachment_created",
+            "cloudId": "site-a",
+            "attachment": {
+                "id": "55",
+                "filename": "notes.txt",
+                "mimeType": "text/plain",
+                "size": 12,
+            },
         },
     ),
 )
@@ -132,14 +147,13 @@ def wait_until_ready(port: int, proc: subprocess.Popen) -> None:
 def post_event(port: int, secret: str, event: str, payload: dict) -> tuple[int, dict]:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/webhook/github",
+        f"http://127.0.0.1:{port}/webhook/jira",
         data=raw,
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "X-GitHub-Event": event,
-            "X-GitHub-Delivery": f"smoke-{event}",
-            "X-Hub-Signature-256": sign(secret, raw),
+            "X-Atlassian-Webhook-Identifier": f"smoke-{event}",
+            "X-Hub-Signature": sign(secret, raw),
         },
     )
     try:
@@ -163,15 +177,15 @@ def envelopes_from_stdout(raw: bytes) -> list[dict]:
 
 
 def main() -> int:
-    secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+    secret = os.environ.get("JIRA_WEBHOOK_SECRET", "")
     if not secret:
-        print("Set GITHUB_WEBHOOK_SECRET to a throwaway local value.", file=sys.stderr)
+        print("Set JIRA_WEBHOOK_SECRET to a throwaway local value.", file=sys.stderr)
         return 2
 
     port = free_port()
     env = os.environ.copy()
-    env["GITHUB_WEBHOOK_SECRET"] = secret
-    env["GITHUB_INGESTION_PORT"] = str(port)
+    env["JIRA_WEBHOOK_SECRET"] = secret
+    env["JIRA_INGESTION_PORT"] = str(port)
     proc = subprocess.Popen(
         [sys.executable, str(RECEIVER)],
         cwd=str(HERE),
@@ -197,12 +211,10 @@ def main() -> int:
             proc.kill()
             stdout, stderr = proc.communicate()
 
-    if proc.returncode not in (0, -15, 143, None) and proc.returncode != 0:
-        # terminate yields SIGTERM (-15 / 143). Any other code is a crash.
-        if proc.returncode not in (-15, 143):
-            sys.stderr.write(stderr.decode("utf-8", "replace"))
-            print(f"receiver exit {proc.returncode}", file=sys.stderr)
-            return 1
+    if proc.returncode not in (0, -15, 143):
+        sys.stderr.write(stderr.decode("utf-8", "replace"))
+        print(f"receiver exit {proc.returncode}", file=sys.stderr)
+        return 1
 
     try:
         envelopes = envelopes_from_stdout(stdout)
@@ -216,8 +228,8 @@ def main() -> int:
         return 1
 
     for (event, payload), envelope in zip(EVENTS, envelopes):
-        if set(envelope) != {"type", "body"} or envelope.get("type") != "github":
-            print(f"{event}: envelope is not {{\"type\":\"github\",\"body\":...}}", file=sys.stderr)
+        if set(envelope) != {"type", "body"} or envelope.get("type") != "jira":
+            print(f"{event}: envelope is not {{\"type\":\"jira\",\"body\":...}}", file=sys.stderr)
             return 1
         if envelope["body"] != payload:
             print(f"{event}: body does not match the posted payload", file=sys.stderr)

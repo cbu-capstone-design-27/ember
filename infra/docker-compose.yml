@@ -4,12 +4,14 @@
 #   cp .env.example .env          # first time only; fill in values
 #   docker compose -f infra/docker-compose.yml --env-file .env up -d
 #
-# Neo4j starts by default. github-ingestion and slack-ingestion are optional
+# Neo4j starts by default. github-ingestion, jira-ingestion and slack-ingestion are optional
 # profiles so a plain `up` stays Neo4j-only:
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile github-ingestion up --build github-ingestion
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile slack-ingestion up --build slack-ingestion
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile jira-ingestion up --build jira-ingestion
 
 name: ember
 
@@ -98,6 +100,23 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  # EMBER-31. Not part of the default `up` (see profiles).
+  jira-ingestion:
+    profiles: ["jira-ingestion"]
+    build:
+      context: ..
+      dockerfile: services/jira-ingestion/Dockerfile
+    container_name: ember-jira-ingestion
+    ports:
+      - "${JIRA_INGESTION_PORT:-8081}:${JIRA_INGESTION_PORT:-8081}"
+    environment:
+      JIRA_WEBHOOK_SECRET: "${JIRA_WEBHOOK_SECRET:-}"
+      JIRA_BASE_URL: "${JIRA_BASE_URL:-}"
+      JIRA_EMAIL: "${JIRA_EMAIL:-}"
+      JIRA_API_TOKEN: "${JIRA_API_TOKEN:-}"
+      JIRA_TEST_PROJECT: "${JIRA_TEST_PROJECT:-}"
+      JIRA_INGESTION_PORT: "${JIRA_INGESTION_PORT:-8081}"
 
 volumes:
   neo4j-data:
