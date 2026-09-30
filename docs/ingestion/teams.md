@@ -2,7 +2,12 @@
 
 - Jira: EMBER-37 (drop-first), epic EMBER-19 (Teams Ingestion)
 - Status: proposed, for team review. Documentation only. No code in this change.
-- Microsoft Graph facts were checked against Microsoft Learn on 2026-09-29 (see [Sources](#sources)). Items marked **verify** could not be confirmed from Microsoft's documentation and should be checked in the build spike.
+- Microsoft Graph facts were checked against Microsoft Learn on 2026-09-29 (see [Sources](#sources)). Three items could not be confirmed from Microsoft's documentation and are marked **verify** / **unverified**:
+  - whether RSC calls need a protected-API request
+  - whether RSC can subscribe to channel-created events
+  - the exact Teams rate-limit numbers
+
+  None of them blocks the design; each is a check for the build spike.
 - Related: EMBER-36 Slack (shared patterns), EMBER-39 intake contract, EMBER-34 graph schema, EMBER-12 auth and multi-tenancy
 
 EMBER-19 names the known risk: *"Graph API auth complexity is the known risk here, scope the auth work before the ingestion work."* That's why [Auth](#auth) is the longest section.
@@ -13,7 +18,12 @@ This section answers the three EMBER-37 acceptance criteria directly. Each answe
 
 ### 1. Requirements documented
 
-- **Scope:** channel messages and replies in teams that install the Ember Teams app. 1:1 chats, group chats and meeting transcripts are out (see [Scope](#scope)).
+- **Scope:** messages and replies in **standard channels** of teams that install the Ember Teams app. Out of the first cut:
+  - private and shared channels (RSC can't subscribe to them)
+  - 1:1 and group chats
+  - meeting transcripts
+
+  See [Scope](#scope).
 - **Auth:** one Microsoft Entra app, packaged as a Teams app that uses **resource-specific consent (RSC)**.
   - Adding the app to a team grants read access to **that team only**. That's the Teams equivalent of inviting the Slack bot to a channel.
   - Ember uses app-only tokens, obtained with the client-credentials flow for each customer tenant.
@@ -82,7 +92,12 @@ Full comparison: [Relationship to Slack](#relationship-to-slack).
 - **1:1 and group chats.** These are Teams' direct messages, and the Slack design excludes DMs too. Reading them would need `Chat.Read.All` (tenant-wide) or per-chat consent.
 - **Meeting transcripts and recordings.** The proposal's example answer ("decided in a Teams meeting") shows the value. But this adds more permissions (`ChannelMeetingTranscript.Read.Group` / `OnlineMeetingTranscript.Read.Chat`), has licensing caveats, and raises its own privacy questions. Recorded as a follow-up.
 - **File contents.** Attachment metadata stays inside the message. Files live in SharePoint and would need separate permissions.
-- **Private and shared channels:** to **verify**. RSC applies to "teams (and the channels within those teams)", but access to private and shared channels needs confirming in the spike.
+- **Private and shared channels (out of the first cut; verified limits):**
+  - Unlike standard channels, the Ember app has to be **added to each private or shared channel separately**; installing it in the team isn't enough. Calls to a channel the app wasn't added to return `403 "app not enabled in this channel"`.
+  - With RSC, **message subscriptions (`/channels/{id}/messages`) are blocked** in private and shared channels. Microsoft says to expect `403` and to use on-demand reads instead.
+  - The app manifest also needs `supportsChannelFeatures: tier1` (manifest v1.25+) to be addable to these channels.
+  - So a private or shared channel could only be **polled** on the resync schedule, never delivered live. Real-time access across all channel types needs tenant-wide `ChannelMessage.Read.All`, which [Auth](#auth) rules out.
+  - These channels also hold the most sensitive conversations by design. The first cut reads **standard channels only**. Polling private channels the team explicitly added Ember to is open question 2.
 
 ## Auth
 
@@ -93,10 +108,10 @@ Full comparison: [Relationship to Slack](#relationship-to-slack).
 
    | RSC permission | Why |
    | --- | --- |
-   | `ChannelMessage.Read.Group` | Read the team's channel messages and replies. Also covers per-channel change notifications. |
-   | `ChannelSettings.Read.Group` | List channels and their names and descriptions, to know what to subscribe to |
+   | `ChannelMessage.Read.Group` | Read the team's channel messages and replies. Also covers per-channel change notifications. (Least-privileged application permission for listing, getting and subscribing to channel messages.) |
+   | `ChannelSettings.Read.Group` | List channels (`GET /teams/{id}/channels`, least-privileged application permission) with name, description, `membershipType` and `isArchived`, to know what to subscribe to |
    | `TeamSettings.Read.Group` | Team name and settings, for the tenant and container records |
-   | `TeamMember.Read.Group` | Team members, for attribution |
+   | `TeamMember.Read.Group` | Team members (`GET /teams/{id}/members`, least-privileged application permission). Each member includes `userId`, `displayName`, `roles` **and `email`**, which is the attribution join key. |
 
 3. **Install equals consent.** A team owner adds the Ember app to a team, and the RSC permissions are granted **for that team only**. Removing the app removes access.
 4. **Token:** Ember gets an **app-only token** for the customer's tenant with the client-credentials flow (`https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/token`, scope `https://graph.microsoft.com/.default`). One token per tenant, reused across that tenant's teams.
@@ -114,8 +129,8 @@ Full comparison: [Relationship to Slack](#relationship-to-slack).
 
 - It reads **every** channel in the organization, which breaks the opt-in boundary we chose for Slack.
 - It needs tenant admin consent.
-- Microsoft treats application use of this permission as a **protected API**, which needs a separate access request reviewed by Microsoft.
-- **Verify:** whether any protected-API request also applies to RSC `ChannelMessage.Read.Group`. Microsoft lists it as the least-privileged application permission for these APIs, and the protected-API note appears alongside `ChannelMessage.Read.All`.
+- The permissions reference marks it **admin consent required**. Microsoft Q&A answers also say application use needs the **protected APIs request form**, which Microsoft reviews and which is approved per tenant.
+- RSC is the documented alternative. Microsoft's guide to reading all channel messages with `ChannelMessage.Read.Group` needs only the manifest declaration and the team owner's consent at install, and lists **no protected-API request**. **Verify** once in the spike that an RSC call succeeds without one; no official page says outright that RSC is exempt.
 
 ### Secrets
 
@@ -147,7 +162,7 @@ Full comparison: [Relationship to Slack](#relationship-to-slack).
 
 Resource data can be added later to save one GET per message.
 
-**New channels:** a new channel needs its own subscription. The first cut finds new channels by listing a team's channels on each resync. A subscription to channel creation events might work too; **verify** whether RSC supports it.
+**New channels:** a new channel needs its own subscription. The first cut finds new channels by listing a team's channels (`ChannelSettings.Read.Group`) on each resync, and subscribes to any new standard channel. That's simple and verified. A subscription to channel-created events could make this faster; whether RSC supports one is **unverified** (Microsoft's channel-notification page couldn't be retrieved), so it's an optimization for later, not a dependency.
 
 ## Data shapes
 
@@ -252,7 +267,7 @@ flowchart LR
 | Duplicates and versions | The same message can arrive from a notification, a retry, and a resync | An idempotent upsert by message key. The newest `lastModifiedDateTime` wins. |
 | Threads | `replyToId` on every reply | Rebuilding each thread (root + replies) as one record |
 | Edits and deletes | The re-fetched message with `lastEditedDateTime` / `deletedDateTime` | Applying it to the stored message. A reversed decision supersedes the old one; it does not overwrite it. |
-| People | `from.user.id` (the Entra object ID) and team members | Resolving to people and joining to GitHub and Jira by email or UPN. **Verify** that the member objects include email. |
+| People | `from.user.id` (the Entra object ID) and team member objects with `userId` and `email` | Resolving `userId` to a person and joining to GitHub and Jira by email. Guests and external users can appear with other tenant IDs, so don't assume every member belongs to the installing tenant. |
 | Noise | Nothing filtered: `systemEventMessage`, bot posts, reactions | Filtering and decision detection |
 | Gaps | Resync runs; lifecycle events are logged | Treating resync output like any other intake |
 
@@ -283,23 +298,28 @@ flowchart LR
 | Hosted install needs admin approval in each customer tenant | Slower adoption | Document the admin step and ship a ready-made app package |
 | Subscriptions silently lapse (3-day lifetime, removals, no `missed`) | Gaps in the graph | Subscription manager with alerting, plus a periodic resync |
 | Slow webhook responses trigger Graph's drop mode | Notifications lost for good | Acknowledge within 3 s, queue, and fetch asynchronously |
-| Protected-API or private-channel limits turn out to apply to RSC | Scope shrinks | Verify first in the spike, before any build (per EMBER-19) |
-| No Microsoft 365 test tenant on the team | Can't validate | Get a test tenant before the build ticket starts (open question) |
+| A protected-API request turns out to apply to RSC too | Weeks of delay for Microsoft's review | Check first in the spike, before any build (per EMBER-19) |
+| Teams discuss decisions in private channels, which RSC can't subscribe to (verified) | Those decisions are missed, or only polled | Standard channels only for launch. Polling private channels the team explicitly added Ember to is open question 2. |
+| The member list returns `401` in newly created tenants (a Microsoft known issue) | A fresh test tenant can't read members at first | Expect it in the spike. Retry after the tenant settles; attribution falls back to `from.user`. |
+| No Microsoft 365 test tenant on the team | Can't validate | Get one before the build ticket starts (open question 1) |
 
 ## Follow-ups (not changed in this PR)
 
 | Where | Change | Owner |
 | --- | --- | --- |
 | `packages/ingestion-envelope/fixtures/teams.json` and `docs/contracts/ingestion-payload.md` | The fixture is a notification only. Consider a second Teams fixture holding a `chatMessage`, and a note that Teams intake includes fetched messages. | Ryan (EMBER-39 owner) |
-| `services/pipeline/ontology/sources.py` (PR #9) | `_teams` only classifies notification collections. Fetched `chatMessage`, `channel`, `team` and member bodies return `None`. It needs rules matching [Data shapes](#data-shapes). | Brandon (EMBER-34) |
-| `docs/graph-schema.md` (PR #9) | "Teams → Conversation: chat". Under this scope, the Teams Conversation is a **channel thread** (root + replies), and 1:1 and group chats are out of scope. | Brandon |
-| Future build ticket under EMBER-19 | An auth spike first: register an Entra app, sideload into a test tenant, confirm RSC reads, a per-channel subscription, private channels, and the protected-API question | Payton |
+| `services/pipeline/ontology/sources.py` (on `develop` since #9) | `_teams` only classifies notification collections. Fetched `chatMessage`, `channel`, `team` and member bodies return `None`. It needs rules matching [Data shapes](#data-shapes). | Brandon (EMBER-34) |
+| `docs/graph-schema.md` (on `develop` since #9) | "Teams → Conversation: chat". Under this scope, the Teams Conversation is a **channel thread** (root + replies), and 1:1 and group chats are out of scope. | Brandon |
+| Future build ticket under EMBER-19 | An auth spike first: register an Entra app, sideload into a test tenant, and confirm that RSC reads work without a protected-API request, that a per-channel subscription works, and that the member list returns email | Payton |
 | Meeting transcripts | A separate decision and ticket, if the team wants the "decided in a meeting" case | Team |
 
 ## Open questions
 
-1. Does the team have, or can it get, a **Microsoft 365 test tenant** with Teams? (The developer-program sandbox is no longer freely available to everyone. **Verify** eligibility.)
-2. Are **private and shared channels** in scope for launch, given they may need extra verification?
+1. Does the team have, or can it get, a **Microsoft 365 test tenant** with Teams? Microsoft's free developer sandbox (a Microsoft 365 E5 instant sandbox) now requires an active **Visual Studio Professional or Enterprise standard subscription** (monthly ones don't qualify) or certain Microsoft partner programs. Options:
+   - someone with that Visual Studio subscription
+   - CBU's school tenant, with IT approving the Ember app
+   - a paid trial tenant
+2. Should **private and shared channels** be read at all? RSC can't subscribe to them (verified), so they'd be polled only, and only where a team explicitly adds Ember to that channel.
 3. Should intake emit **both** the notification and the fetched message, or only the fetched `chatMessage`? This affects the contract fixture and Brandon's classifier.
 4. **Meeting transcripts:** worth a separate ticket?
 5. When a team **removes the Ember app**, keep or purge the data already ingested? This is the same question as open question 1 for Slack. Deciding once would cover both sources.
@@ -318,3 +338,9 @@ Checked against Microsoft Learn on 2026-09-29:
 - [Get chatMessage](https://learn.microsoft.com/en-us/graph/api/chatmessage-get): message and reply GET, and the permissions for each
 - [Metered APIs](https://learn.microsoft.com/en-us/graph/metered-api-list): Teams APIs not metered since Aug 25, 2025
 - [Microsoft Graph throttling limits](https://learn.microsoft.com/en-us/graph/throttling-limits): Teams limits by scope. No specific published number for listing channel messages.
+- [List channels](https://learn.microsoft.com/en-us/graph/api/channel-list): `ChannelSettings.Read.Group` as the least-privileged application permission, `membershipType` values
+- [List members of team](https://learn.microsoft.com/en-us/graph/api/team-list-members): `TeamMember.Read.Group`, member `email`, and the `401` known issue for new tenants
+- [Shared and private channels for apps](https://learn.microsoft.com/en-us/microsoftteams/platform/build-apps-for-shared-private-channels): the app must be added per channel, RSC message subscriptions are blocked (403) and reads are on demand, `supportsChannelFeatures: tier1`
+- [Enable an agent to receive all chat messages](https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/enable-receive-all-chat-messages): `ChannelMessage.Read.Group` gives access to all channel messages with the team owner's consent at install, and no protected-API request is listed
+- [Microsoft Graph permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference): `ChannelMessage.Read.All` requires admin consent
+- [Microsoft 365 Developer Program FAQ](https://learn.microsoft.com/en-us/office/developer-program/microsoft-365-developer-program-faq): sandbox eligibility
