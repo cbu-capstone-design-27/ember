@@ -346,6 +346,8 @@ class SettingsTest(unittest.TestCase):
                 pull_test.bot_token()
         os.environ["SLACK_BOT_TOKEN"] = " xoxb-ok "
         self.assertEqual(pull_test.bot_token(), "xoxb-ok")
+        os.environ["SLACK_BOT_TOKEN"] = "xoxe.xoxb-rotated"
+        self.assertEqual(pull_test.bot_token(), "xoxe.xoxb-rotated")
 
     def test_channel_resolution(self):
         os.environ.pop("SLACK_TEST_CHANNEL", None)

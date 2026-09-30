@@ -22,6 +22,8 @@ skips it. Progress goes to stderr.
 Slack limits each Web API method separately. Each method has its own gate:
 a 429 holds every worker calling that method for Retry-After seconds and
 leaves the other methods running. A 5xx backs off 1s, 2s, 4s, ...
+--since limits conversations.history, so a thread whose parent is older
+than --since is not read even if it has newer replies.
 Channels are read DEFAULT_CONCURRENCY at a time (--concurrency or
 SLACK_PULL_CONCURRENCY). Pages inside one channel stay in order.
 
@@ -52,7 +54,9 @@ from envelope import wrap_slack
 API_BASE = "https://slack.com/api"
 USER_AGENT = "ember-slack-ingestion"
 PAGE_LIMIT = 200
-MAX_PAGES = 50
+# Safety stop for a cursor that never ends: 500 pages is 100,000 items
+# per channel (or member list). A bigger channel needs --since.
+MAX_PAGES = 500
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
 MAX_RETRY_WAIT = 120.0
@@ -156,7 +160,7 @@ def bot_token() -> str:
     token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
     if not token:
         raise PullError("Set SLACK_BOT_TOKEN to the app's Bot User OAuth Token (xoxb-...).")
-    if not token.startswith("xoxb-"):
+    if not token.startswith(("xoxb-", "xoxe.xoxb-")):
         raise PullError(
             "SLACK_BOT_TOKEN must be a bot token (xoxb-...). User (xoxp-) and "
             "app-level (xapp-) tokens are not used by this worker."
@@ -319,7 +323,9 @@ class SlackClient:
             if following == cursor:
                 raise PullError(f"{api_method} pagination repeated its cursor")
             cursor = following
-        raise PullError(f"stopped after {MAX_PAGES} pages of {api_method}")
+        raise PullError(
+            f"stopped after {MAX_PAGES} pages of {api_method}; use --since to read a shorter window"
+        )
 
 
 def _ts_key(message: dict) -> float:

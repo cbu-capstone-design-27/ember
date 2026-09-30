@@ -66,7 +66,7 @@ Edits arrive as `message` with `subtype: message_changed` (new text in `event.me
 | --- | --- |
 | `SLACK_SIGNING_SECRET` | Request signing key for the receiver. Empty skips verification. Not used by `pull_test.py`. |
 | `SLACK_INGESTION_PORT` | Receiver port. Default `8082`, beside `github-ingestion` on `8080`. |
-| `SLACK_BOT_TOKEN` | Bot User OAuth Token (`xoxb-…`) for `pull_test.py` only. User (`xoxp-`) and app-level (`xapp-`) tokens are refused. The receiver does not read it. Never commit it. |
+| `SLACK_BOT_TOKEN` | Bot User OAuth Token (`xoxb-…`, or `xoxe.xoxb-…` with token rotation on) for `pull_test.py` only. User (`xoxp-`) and app-level (`xapp-`) tokens are refused. The receiver does not read it. Never commit it. |
 | `SLACK_TEST_CHANNEL` | One channel id (`C…`/`G…`) for `pull_test.py` only. Empty reads every channel the bot is in. Not a filter on the webhook path. |
 | `SLACK_PULL_CONCURRENCY` | Channels read in parallel by `pull_test.py`. Default `4`. Range 1–16. |
 
@@ -117,7 +117,7 @@ One envelope each, in this order:
 
 The one change to raw objects: history and reply messages have no channel id of their own, so `channel` is set to the channel they were read from when the message does not already carry one. That is the same field name Slack uses on message events. Nothing else is rewritten, dropped, or merged.
 
-Pages follow `response_metadata.next_cursor`, 200 per page, up to 50 pages per list. Channels are read 4 at a time. Pages inside one channel stay in order.
+Pages follow `response_metadata.next_cursor`, 200 per page, up to 500 pages (100,000 items) per list. A longer channel stops the pull with a message to use `--since`. `--since` filters top-level messages, so a thread whose parent is older than `--since` is not read even if it has newer replies. Channels are read 4 at a time. Pages inside one channel stay in order.
 
 Slack rate-limits each Web API method on its own. Each method has its own gate: a `429` holds every worker calling that method for `Retry-After` seconds and leaves the rest running. A `5xx` backs off 1s, 2s, 4s. After five throttled attempts the pull stops.
 

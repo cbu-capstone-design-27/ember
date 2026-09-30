@@ -20,6 +20,7 @@ import hmac
 import json
 import logging
 import sys
+import threading
 import time
 from typing import NamedTuple
 
@@ -31,6 +32,7 @@ MAX_TIMESTAMP_SKEW = 5 * 60
 SIGNATURE_VERSION = "v0"
 
 _hmac_skip_warned = False
+_emit_lock = threading.Lock()
 
 
 class WebhookError(Exception):
@@ -161,6 +163,12 @@ def ingest(
 
 
 def emit(envelope: dict) -> None:
-    """Write one envelope as a single JSON line. No queue in this scaffold."""
-    sys.stdout.write(json.dumps(envelope, separators=(",", ":")) + "\n")
-    sys.stdout.flush()
+    """Write one envelope as a single JSON line. No queue in this scaffold.
+
+    The receiver is threaded and Slack sends events in bursts, so writes are
+    serialized to keep each envelope on its own line.
+    """
+    line = json.dumps(envelope, separators=(",", ":")) + "\n"
+    with _emit_lock:
+        sys.stdout.write(line)
+        sys.stdout.flush()
