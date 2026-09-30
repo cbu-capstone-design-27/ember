@@ -1,0 +1,25 @@
+flowchart TD
+    subgraph GL["GitLab (tenant project or group)"]
+        WH["Webhook: Merge request, Issue, Comments triggers"]
+        API["GitLab REST API v4"]
+    end
+
+    subgraph AD["GitLab intake (EMBER-20, this ticket)"]
+        RCV["Receiver POST /webhook/gitlab: verify token, no filtering, never calls GitLab"]
+        BF["Backfill and reconciliation: paged REST pull"]
+        ENV["Envelope: type gitlab + raw body, unchanged"]
+    end
+
+    subgraph CORE["Downstream of handoff (not this ticket)"]
+        ROUTER["Ingestion Router (EMBER-2 queue)"]
+        PIPE["GitLab source pipeline (Brandon)"]
+        GRAPH(("Neo4j GitLab subgraph (EMBER-34)"))
+    end
+
+    WH -->|"HTTPS POST with token headers"| RCV
+    API -->|"paged GET with read_api token"| BF
+    RCV --> ENV
+    BF --> ENV
+    ENV ==>|"HANDOFF: one JSON line per object, stdout today"| ROUTER
+    ROUTER --> PIPE
+    PIPE --> GRAPH
