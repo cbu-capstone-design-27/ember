@@ -129,7 +129,7 @@ The engine embeds entity names and fact text. The model and its settings are fix
 Once the cluster Neo4j is reachable:
 
 1. Let the engine create its indexes (`build_indices_and_constraints()`).
-2. Apply `services/pipeline/ontology/schema.cypher`: uniqueness on `(group_id, source, external_id)` per source-backed type, and on `EmberConfig.key`. Neo4j Community supports uniqueness constraints but not existence or node-key constraints, so "required" attributes are enforced in code by the pydantic models. Apply these only after the ADR 0002 spike confirms custom attributes are stored as node properties. The file was checked against Neo4j 5 Community (7 constraints created, re-run is a no-op); it has not been run on the cluster's Neo4j 2026.9.0.
+2. Apply `services/pipeline/ontology/schema.cypher`: uniqueness on `(group_id, source, external_id)` per source-backed type, and on `EmberConfig.key`. Neo4j Community supports uniqueness constraints but not existence or node-key constraints, so "required" attributes are enforced in code by the pydantic models. Apply these only after the ADR 0002 spike confirms custom attributes are stored as node properties. Checked on Neo4j 2026.09.0 Community, the cluster's version: 7 constraints are created, a re-run is a no-op, a duplicate `(group_id, source, external_id)` is rejected, and the same id in another subgraph is allowed.
 3. Write the `EmberConfig` node from `ontology.config.EXPECTED`.
 4. Start ingesting.
 

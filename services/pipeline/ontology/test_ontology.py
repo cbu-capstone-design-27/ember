@@ -1,6 +1,6 @@
 """Contract tests for the graph ontology. Run: python3 services/pipeline/ontology/test_ontology.py
 
-Needs pydantic (pip install pydantic). Not wired into CI yet.
+Needs pydantic (pip install "pydantic>=2,<3"). Runs in CI as the `pipeline` job.
 """
 
 import json
