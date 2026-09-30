@@ -83,6 +83,37 @@ Teams needs one component Slack doesn't: a **subscription manager**. Slack keeps
 
 Full comparison: [Relationship to Slack](#relationship-to-slack).
 
+## Decisions needed from the team
+
+Two decisions block the next step (the auth spike under EMBER-19). They're also listed in [Open questions](#open-questions).
+
+### A. Where do we get a Microsoft 365 test tenant?
+
+**Why it's needed:** nothing in this doc can be tried without a Microsoft 365 organization that has Teams and where we're allowed to register an Entra app and upload a custom Teams app. Every open check depends on it:
+- whether RSC works without a protected-API request
+- whether per-channel subscriptions work
+- whether the member list returns email
+
+Slack had a free workspace we could test in. Teams has no equivalent.
+
+**Options:**
+
+| Option | Cost | Catch |
+| --- | --- | --- |
+| Microsoft 365 Developer Program sandbox (E5, instant setup) | Free | Needs an active Visual Studio Professional or Enterprise **standard** subscription (monthly ones don't qualify), or a qualifying Microsoft partner program |
+| CBU's school tenant | Free | CBU IT must allow custom-app upload and approve an app that reads channel messages |
+| Microsoft 365 business trial | Free for the trial period, then paid | Must be cancelled or paid for; setup is on us |
+
+**Status:** undecided. To raise at standup.
+
+### B. Private and shared channels: in or out for launch?
+
+**Why it matters:** these are where the most sensitive conversations happen, and possibly some decisions. But with RSC, Microsoft **blocks live message subscriptions** in them (verified), and the app has to be added to **each** private or shared channel by hand. The only option would be scheduled polling.
+
+**Proposal:** standard channels only for launch. Revisit after the first cut if teams ask for private channels.
+
+**Status:** proposed by Payton (EMBER-37 owner). Needs team agreement.
+
 ## Scope
 
 **In:** standard channels' top-level messages and replies, the channel and team objects, and the team member list, for teams that installed the Ember app.
@@ -315,11 +346,11 @@ flowchart LR
 
 ## Open questions
 
-1. Does the team have, or can it get, a **Microsoft 365 test tenant** with Teams? Microsoft's free developer sandbox (a Microsoft 365 E5 instant sandbox) now requires an active **Visual Studio Professional or Enterprise standard subscription** (monthly ones don't qualify) or certain Microsoft partner programs. Options:
+1. **(Decision A)** Does the team have, or can it get, a **Microsoft 365 test tenant** with Teams? Microsoft's free developer sandbox (a Microsoft 365 E5 instant sandbox) now requires an active **Visual Studio Professional or Enterprise standard subscription** (monthly ones don't qualify) or certain Microsoft partner programs. Options:
    - someone with that Visual Studio subscription
    - CBU's school tenant, with IT approving the Ember app
    - a paid trial tenant
-2. Should **private and shared channels** be read at all? RSC can't subscribe to them (verified), so they'd be polled only, and only where a team explicitly adds Ember to that channel.
+2. **(Decision B)** Should **private and shared channels** be read at all? RSC can't subscribe to them (verified), so they'd be polled only, and only where a team explicitly adds Ember to that channel.
 3. Should intake emit **both** the notification and the fetched message, or only the fetched `chatMessage`? This affects the contract fixture and Brandon's classifier.
 4. **Meeting transcripts:** worth a separate ticket?
 5. When a team **removes the Ember app**, keep or purge the data already ingested? This is the same question as open question 1 for Slack. Deciding once would cover both sources.
