@@ -1,0 +1,2 @@
+ansible-core==2.21.4
+netaddr==1.3.0   # ansible.utils.ipwrap, used by k3s-ansible for api_endpoint

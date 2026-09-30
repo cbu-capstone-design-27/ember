@@ -1,0 +1,23 @@
+#cloud-config
+# Baked into the image by build.sh. No apt and no Tailscale steps here: Tailscale is
+# preinstalled and tailscale-firstboot.service joins the tailnet.
+manage_resolv_conf: false
+
+hostname: pi-cp
+manage_etc_hosts: true
+timezone: America/Los_Angeles
+keyboard:
+  model: pc105
+  layout: "us"
+user:
+  name: control
+  shell: /bin/bash
+  lock_passwd: false
+  passwd: "<yescrypt hash from: mkpasswd -m yescrypt>"
+  groups: [sudo, adm]
+  sudo: "ALL=(ALL) NOPASSWD:ALL"
+  ssh_authorized_keys:
+    - "<contents of ~/.ssh/id_ed25519.pub>"
+ssh_pwauth: false
+runcmd:
+  - [ systemctl, enable, --now, ssh ]

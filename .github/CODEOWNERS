@@ -17,6 +17,7 @@
 # Services
 /services/pipeline/          @RyanStoffel
 /services/github-ingestion/  @RyanStoffel
+/services/jira-ingestion/    @RyanStoffel
 
 # Shared packages
 /packages/              @RyanStoffel
