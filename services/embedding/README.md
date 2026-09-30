@@ -34,6 +34,8 @@ cp .env.example .env
 docker compose -f infra/docker-compose.yml --env-file .env --profile embedding up -d embedding
 ```
 
+`infra/spark/deploy.sh [branch]` does all of the above (pull, `.env` setup with a generated key if missing, restart, and a check that the endpoint returns 1024 dimensions and rejects requests without a key). It can be run remotely with `ssh shared-dev ember/infra/spark/deploy.sh`.
+
 The endpoint binds to `EMBEDDING_BIND_ADDR`, which defaults to loopback. On the Spark it is the LAN address that the public IP maps to; do not use `0.0.0.0`, which would also expose the Spark's internal interfaces. Clients must send `Authorization: Bearer <key>`.
 
 Reaching it from the cluster: clients call `http://<public-ip>:8000` (the port must be forwarded to the Spark by whoever runs the network). Traffic is plain HTTP, so the API key crosses the network unencrypted. Treat the key as low-trust: rotate it by changing `EMBEDDING_API_KEY` and recreating the container, and put TLS in front (a reverse proxy) before sending anything sensitive.
