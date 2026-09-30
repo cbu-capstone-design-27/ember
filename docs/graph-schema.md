@@ -49,6 +49,31 @@ Each relationship is a fact with validity over time. The allowed endpoints are i
 | `SUPERSEDES` | Decision → Decision | Replaces an earlier decision |
 | `AFFECTS` | Decision → Module, Container, WorkItem | Constrains it |
 
+Main relationships (the table above is complete; `REFERENCES`, and the extra targets of `AUTHORED`, `ASSIGNED_TO`, `DECIDED_IN` and `AFFECTS`, are left out to keep this readable):
+
+```mermaid
+flowchart LR
+  Identity -->|RESOLVES_TO| Person
+  Person -->|MEMBER_OF| Container
+  Person -->|OWNS| Module
+  Person -->|ASSIGNED_TO| WorkItem
+  Person -->|REVIEWED| Change
+  Person -->|AUTHORED| Message
+  Container -->|CONTAINS| WorkItem
+  Container -->|CONTAINS| Change
+  Container -->|CONTAINS| Conversation
+  Container -->|CONTAINS| Module
+  Message -->|PART_OF| Conversation
+  Message -->|REPLIES_TO| Message
+  Message -.->|REFERENCES| WorkItem
+  Change -->|RESOLVES| WorkItem
+  Change -->|TOUCHES| Module
+  WorkItem -->|RELATES_TO| WorkItem
+  Decision -->|DECIDED_IN| Message
+  Decision -->|SUPERSEDES| Decision
+  Decision -->|AFFECTS| Module
+```
+
 ## Launch sources
 
 | Source | Container | WorkItem | Change | Conversation | Message | Identity from |
