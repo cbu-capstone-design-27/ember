@@ -114,6 +114,18 @@ class EnvelopeContractTest(unittest.TestCase):
         self.assertEqual(envelope.delivery_key(edited)["event_subtype"], "message_changed")
         assert_valid(got.envelope)
 
+    def test_reaction_key_reads_the_channel_from_the_item(self):
+        payload = message_event("T0AAA", "Ev5", "")
+        payload["event"] = {
+            "type": "reaction_added",
+            "user": "U0TEST",
+            "reaction": "raised_hands",
+            "item": {"type": "message", "channel": "C0DEC", "ts": "1717000001.000200"},
+        }
+        got = envelope.ingest(json.dumps(payload).encode("utf-8"), None, None, "")
+        self.assertEqual(got.envelope["body"], payload)
+        self.assertEqual(envelope.delivery_key(payload)["channel"], "C0DEC")
+
     def test_non_event_callbacks_are_still_intake(self):
         raw = b'{"type":"app_rate_limited","team_id":"T0AAA","minute_rate_limited":1717000000,"api_app_id":"A0TEST"}'
         got = envelope.ingest(raw, None, None, "")

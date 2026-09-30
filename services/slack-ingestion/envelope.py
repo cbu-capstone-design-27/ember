@@ -116,6 +116,8 @@ def delivery_key(payload: dict) -> dict[str, str | None]:
     is the time of the edit itself.
     """
     event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
+    # reaction_* events name their message under event.item, not event.channel.
+    item = event.get("item") if isinstance(event.get("item"), dict) else {}
     return {
         "team_id": _text(payload.get("team_id")),
         "enterprise_id": _text(payload.get("enterprise_id")),
@@ -123,7 +125,7 @@ def delivery_key(payload: dict) -> dict[str, str | None]:
         "event_id": _text(payload.get("event_id")),
         "event_type": _text(event.get("type")),
         "event_subtype": _text(event.get("subtype")),
-        "channel": _text(event.get("channel")),
+        "channel": _text(event.get("channel")) or _text(item.get("channel")),
         "ts": _text(event.get("ts")),
         "thread_ts": _text(event.get("thread_ts")),
     }

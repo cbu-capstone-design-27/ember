@@ -2,6 +2,9 @@
 
 - Jira: EMBER-36 (floor), epic EMBER-7 (Slack Ingestion)
 - Status: requirements and architecture accepted for the first cut. Intake worker built: `services/slack-ingestion`.
+- Verified live against the Ember workspace (2026-09-29):
+  - Receiver, reached through a temporary tunnel: Slack's Request URL check passed with signing on. Slack delivered a message, a thread reply, a `message_changed` edit, a reaction, and six `channel_join` events. Each one was signature-checked and each envelope validated.
+  - Backfill: it read the workspace, its members, and the history of the channels the bot had been invited to. Channels the bot wasn't in were skipped.
 - Related: EMBER-39 intake contract, EMBER-3/34 graph schema, EMBER-12 auth and multi-tenancy, EMBER-37 Teams
 
 ## Why Slack matters to Ember
