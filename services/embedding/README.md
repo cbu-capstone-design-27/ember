@@ -1,6 +1,6 @@
 # Embedding service
 
-The single embedding model for Ember (ADR 0001, EMBER-33). It runs on the shared DGX Spark, not on the k3s cluster, and serves an OpenAI-compatible `/v1/embeddings` endpoint over Tailscale. The pipeline and the retrieval endpoint are its only clients.
+The single embedding model for Ember (ADR 0001, EMBER-33). It runs on the shared DGX Spark, not on the k3s cluster, and serves an OpenAI-compatible `/v1/embeddings` endpoint on one open port, protected by an API key. The pipeline and the retrieval endpoint are its only clients.
 
 ## Model identity
 
@@ -30,18 +30,20 @@ Compose profile `embedding` in `infra/docker-compose.yml`. Image: `nvcr.io/nvidi
 ```bash
 cd ~/ember
 cp .env.example .env
-# set EMBEDDING_API_KEY (openssl rand -hex 32) and EMBEDDING_BIND_ADDR=$(tailscale ip -4)
+# set EMBEDDING_API_KEY (openssl rand -hex 32) and EMBEDDING_BIND_ADDR=192.168.94.11
 docker compose -f infra/docker-compose.yml --env-file .env --profile embedding up -d embedding
 ```
 
-The endpoint binds to `EMBEDDING_BIND_ADDR`, which defaults to loopback. Set it to the Spark's Tailscale IP so nothing on the LAN can reach it. The API key is required by clients (`Authorization: Bearer <key>`).
+The endpoint binds to `EMBEDDING_BIND_ADDR`, which defaults to loopback. On the Spark it is the LAN address that the public IP maps to; do not use `0.0.0.0`, which would also expose the Spark's internal interfaces. Clients must send `Authorization: Bearer <key>`.
+
+Reaching it from the cluster: clients call `http://<public-ip>:8000` (the port must be forwarded to the Spark by whoever runs the network). Traffic is plain HTTP, so the API key crosses the network unencrypted. Treat the key as low-trust: rotate it by changing `EMBEDDING_API_KEY` and recreating the container, and put TLS in front (a reverse proxy) before sending anything sensitive.
 
 The Spark is shared. The service reserves a small slice of GPU memory (`EMBEDDING_GPU_MEMORY_UTILIZATION`, default 0.10) and does not use host ports other than `EMBEDDING_PORT`.
 
 ## Checking it
 
 ```bash
-curl -s http://<spark-tailscale-ip>:8000/v1/embeddings \
+curl -s http://<spark-public-ip>:8000/v1/embeddings \
   -H "Authorization: Bearer $EMBEDDING_API_KEY" -H 'Content-Type: application/json' \
   -d '{"model":"qwen3-embedding-0.6b","input":["hello world"]}' \
   | python -c "import sys,json; print(len(json.load(sys.stdin)['data'][0]['embedding']))"
