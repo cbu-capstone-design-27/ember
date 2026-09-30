@@ -14,9 +14,17 @@ kubectl --context homelab apply -k k8s/infrastructure
 kubectl --context homelab apply -k k8s/apps
 ```
 
+Or from `infra/ansible`: `make apps-diff` to preview, then `make apps-up`, which applies both and waits for the workloads to roll out. `make apps-down` deletes what's in `apps/` and leaves `infrastructure/` in place.
+
 `kubectl` is in `ansible/.venv/bin` after `make deps`. Preview with `kubectl kustomize k8s/apps` or `kubectl --context homelab diff -k k8s/apps`.
 
 The `local-path-retain` StorageClass is not here: k3s deploys it on start from `ansible/manifests/`. Don't redefine it in this tree, or two things will own it.
+
+## Plain-manifest apps
+
+### nginx
+
+A single `nginx:1.28-alpine` replica in namespace `ember`, with a ClusterIP Service reachable in-cluster at `http://nginx.ember.svc.cluster.local`. It is a starting point for plain-manifest apps rather than an Ember service. Deployed by `make apps-up`, removed by `make apps-down`.
 
 ## Helm charts (until Flux)
 

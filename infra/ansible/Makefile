@@ -1,4 +1,5 @@
 # Run from infra/ansible. Everything uses the local .venv, so no system Ansible is needed.
+PYTHON  ?= python3
 VENV    := .venv
 BIN     := $(abspath $(VENV))/bin
 export PATH := $(BIN):$(PATH)
@@ -10,13 +11,13 @@ HELM_VERSION := v4.3.0
 CONTEXT := homelab
 
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
-	neo4j-prep neo4j-up neo4j-health neo4j-down
+	apps-diff apps-up apps-down neo4j-prep neo4j-up neo4j-health neo4j-down
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
 
 deps: ## Create .venv with Ansible, install the pinned collections, kubectl and helm
-	test -x $(BIN)/python || python3 -m venv $(VENV)
+	test -x $(BIN)/python || $(PYTHON) -m venv $(VENV)
 	$(BIN)/pip install -q -r requirements.txt
 	$(BIN)/ansible-galaxy collection install -r requirements.yml -p collections
 	@if ! $(BIN)/kubectl version --client 2>/dev/null | grep -q '$(KUBECTL_VERSION)'; then \
@@ -59,7 +60,7 @@ smoke: ## Smoke tests only (nodes, taint, DNS, PVC persistence)
 	ansible-playbook playbooks/smoke.yml
 
 kubeconfig: ## Re-fetch the kubeconfig into ~/.kube/config as context "homelab"
-	ansible-playbook k3s.orchestration.site --tags kubeconfig
+	ansible-playbook playbooks/kubeconfig.yml
 
 upgrade: ## Upgrade k3s to k3s_version in group_vars/all/main.yml (then make deps for a matching kubectl)
 	ansible-playbook k3s.orchestration.upgrade
@@ -70,6 +71,22 @@ reboot: ## Rolling reboot of every node
 reset: ## Uninstall k3s from every node (destroys the cluster and local-path data)
 	@read -p "Type 'reset homelab' to uninstall k3s from all nodes: " ans && [ "$$ans" = "reset homelab" ]
 	ansible-playbook k3s.orchestration.reset
+
+apps-diff: ## Preview what apps-up would change on the cluster
+	kubectl --context $(CONTEXT) diff -k ../k8s/infrastructure || [ $$? -eq 1 ]
+	kubectl --context $(CONTEXT) diff -k ../k8s/apps || [ $$? -eq 1 ]
+
+# Every app lives in namespace ember, so rollout status runs there.
+apps-up: ## Apply k8s/infrastructure then k8s/apps, and wait for their workloads to roll out
+	kubectl --context $(CONTEXT) apply -k ../k8s/infrastructure
+	kubectl --context $(CONTEXT) apply -k ../k8s/apps
+	kubectl kustomize ../k8s/apps | kubectl --context $(CONTEXT) get -f - -o name \
+	  | grep -E '^(deployment|statefulset|daemonset)\.' \
+	  | xargs -r -n1 kubectl --context $(CONTEXT) -n ember rollout status --timeout=180s
+
+# Leaves k8s/infrastructure alone: deleting the ember namespace would also take Neo4j with it.
+apps-down: ## Delete everything in k8s/apps (keeps the namespace and Neo4j)
+	kubectl --context $(CONTEXT) delete -k ../k8s/apps --ignore-not-found --wait
 
 neo4j-prep: ## Neo4j prerequisites: helm, pinned node Ready, StorageClass, namespace, chart repo
 	ansible-playbook playbooks/neo4j.yml --tags prep
