@@ -63,7 +63,7 @@ jobs:
       - name: Repo layout present
         run: |
           set -euo pipefail
-          for p in apps/web apps/cli apps/mcp services/pipeline services/github-ingestion packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
+          for p in apps/web apps/cli apps/mcp services/pipeline services/github-ingestion services/jira-ingestion packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
             test -e "$p" || { echo "missing: $p"; exit 1; }
           done
           echo "layout ok"
@@ -79,6 +79,14 @@ jobs:
         env:
           GITHUB_WEBHOOK_SECRET: ci-local-smoke
         run: python3 services/github-ingestion/smoke_webhook.py
+      - name: Jira ingestion webhook contract
+        run: python3 services/jira-ingestion/test_webhook.py
+      - name: Jira ingestion local pull contract
+        run: python3 services/jira-ingestion/test_pull.py
+      - name: Jira ingestion webhook smoke
+        env:
+          JIRA_WEBHOOK_SECRET: ci-local-smoke
+        run: python3 services/jira-ingestion/smoke_webhook.py
 
   # Placeholder for future per-area jobs. Gate each on the matching `changes`
   # output, e.g.:
