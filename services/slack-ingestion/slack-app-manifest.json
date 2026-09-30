@@ -1,0 +1,55 @@
+{
+    "display_information": {
+        "name": "Ember",
+        "description": "Captures team decisions from channels Ember is invited to."
+    },
+    "features": {
+        "bot_user": {
+            "display_name": "Ember",
+            "always_online": false
+        }
+    },
+    "oauth_config": {
+        "scopes": {
+            "bot": [
+                "channels:history",
+                "channels:read",
+                "groups:history",
+                "groups:read",
+                "users:read",
+                "users:read.email",
+                "team:read",
+                "reactions:read"
+            ]
+        }
+    },
+    "settings": {
+        "event_subscriptions": {
+            "request_url": "https://example.invalid/webhook/slack",
+            "bot_events": [
+                "message.channels",
+                "message.groups",
+                "reaction_added",
+                "reaction_removed",
+                "channel_created",
+                "channel_rename",
+                "channel_archive",
+                "channel_unarchive",
+                "channel_deleted",
+                "group_rename",
+                "group_archive",
+                "group_unarchive",
+                "member_joined_channel",
+                "member_left_channel",
+                "user_change",
+                "team_join",
+                "app_uninstalled",
+                "tokens_revoked"
+            ]
+        },
+        "org_deploy_enabled": false,
+        "socket_mode_enabled": false,
+        "is_hosted": false,
+        "token_rotation_enabled": false
+    }
+}
