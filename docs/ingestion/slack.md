@@ -1,11 +1,103 @@
 # Slack ingestion: requirements and architecture
 
 - Jira: EMBER-36 (floor), epic EMBER-7 (Slack Ingestion)
-- Status: requirements and architecture accepted for the first cut. Intake worker built: `services/slack-ingestion`.
+- Status: proposed, for team review. Intake worker built: `services/slack-ingestion`.
 - Verified live against the Ember workspace (2026-09-29):
   - Receiver, reached through a temporary tunnel: Slack's Request URL check passed with signing on. Slack delivered a message, a thread reply, a `message_changed` edit, a reaction, and six `channel_join` events. Each one was signature-checked and each envelope validated.
   - Backfill: it read the workspace, its members, and the history of the channels the bot had been invited to. Channels the bot wasn't in were skipped.
 - Related: EMBER-39 intake contract, EMBER-3/34 graph schema, EMBER-12 auth and multi-tenancy, EMBER-37 Teams
+
+## Requirements and architecture
+
+This section answers the three EMBER-36 acceptance criteria directly. Each answer links to the section with the details.
+
+### 1. Requirements documented (auth, events, data shapes, rate limits)
+
+- **Auth:**
+  - One Slack app per deployment, created from `services/slack-ingestion/slack-app-manifest.json`.
+  - Each workspace installs the app and gets a **bot token** (`xoxb-…`). The app has one **signing secret**, which checks that every live request came from Slack.
+  - The bot has 8 read-only scopes:
+    - `channels:history` and `groups:history`
+    - `channels:read` and `groups:read`
+    - `users:read` and `users:read.email`
+    - `team:read`
+    - `reactions:read`
+  - It reads only channels it has been invited to. There are no DM scopes and no user tokens.
+  - For more than one workspace, the CLI / web onboarding (EMBER-12) runs Slack's OAuth install and stores the bot token by `team_id`. The intake worker never runs OAuth.
+  - Details: [Auth](#auth).
+- **Events:** the app subscribes to 18 bot events:
+  - new messages, which also carry edits, deletes and thread replies as subtypes: `message.channels` and `message.groups`
+  - reactions
+  - public and private channel lifecycle
+  - channel membership
+  - user changes
+  - uninstall and token revocation
+
+  DMs, files and pins are left out on purpose. Details: [Events](#events).
+- **Data shapes:**
+  - Every line is `{"type":"slack","body":<raw Slack object>}` (EMBER-39).
+  - `body` is one of:
+    - a live Events API request (`event_callback`, key `team_id` + `event_id`)
+    - an `app_rate_limited` notice
+    - a backfilled workspace, member, or channel object (key `id`)
+    - a backfilled message or reply (key `channel` + `ts`)
+  - Bodies are unmodified, except that backfilled messages get the `channel` they were read from.
+  - Details: [Data shapes](#data-shapes).
+- **Rate limits:**
+  - **Inbound (Events API):**
+    - Slack must get an answer within 3 seconds. Otherwise it retries up to 3 times.
+    - Slack delivers about 30,000 events per workspace per hour. Past that it sends `app_rate_limited` and drops events.
+  - **Outbound (Web API, backfill):**
+    - Limits are per method: history and replies are Tier 3 (50+/min), and list methods are Tier 2 (20+/min).
+    - A `429` carries `Retry-After`, and the backfill waits it out per method.
+  - **Risk for hosted Ember:** Slack's 2025 limit on history for non-Marketplace apps. Verify it before hosted launch.
+  - Details: [Rate limits](#rate-limits).
+
+### 2. Proposed architecture for how Slack feeds ingestion
+
+Slack feeds the per-tenant ingestion pipeline from the team architecture diagram (section 2) along two paths. Both emit the same `{type, body}` intake.
+
+```
+Slack Events API ──signed POST──▶ Webhook Trigger: services/slack-ingestion receiver.py
+                                   (verify signature, answer challenge, wrap, de-dupe retries)
+                                              │
+Slack Web API ◀──bot token── Ingestion Worker: pull_test.py backfill
+                              (onboarding, gaps, newly joined channels)
+                                              │
+                                              ▼
+                              {"type":"slack","body":<raw>}
+                                              │
+                                              ▼
+                     Ingestion Router ──▶ Slack Source Pipeline (EMBER-7) ──▶ Neo4j Slack subgraph
+```
+
+- **Live path:**
+  - Slack POSTs each event to `https://<ember-host>/webhook/slack`.
+  - The receiver verifies it, acknowledges within 3 s, and emits it.
+  - The receiver holds no token and works for any workspace.
+- **Pull path:** the backfill uses the workspace's bot token to read the members and the channels the bot is in. It runs:
+  - at onboarding
+  - after an `app_rate_limited` gap
+  - when the bot is invited to a new channel
+- **Deployment:**
+  - One small stdlib Python container: the `slack-ingestion` compose profile, port 8082.
+  - It needs a permanent public HTTPS URL. That URL is not set up yet; it will be shared with the GitHub and Jira receivers.
+- Details: [Architecture](#architecture).
+
+### 3. Clear handoff points to the ingestion pipeline
+
+| Handoff point | Intake (this worker) provides | Pipeline (EMBER-7) is responsible for |
+| --- | --- | --- |
+| **Where data is handed over** | One `{type, body}` JSON line per object. Today it goes to stdout; later it goes to the router's job queue (EMBER-2). | Reading from the queue and routing `type: "slack"` to the Slack source pipeline |
+| **Identifying each object** | Stable ids: `team_id` + `event_id` (live), `channel` + `ts` (messages), `id` (workspace, members, channels). The shapes are listed in [Data shapes](#data-shapes). | Recognizing each shape, and treating live and backfilled copies of one message as the same message |
+| **Duplicates** | Each retried event is emitted once per receiver run | Idempotent upserts on the keys above, which also survive a receiver restart |
+| **Threads** | `thread_ts` on every reply. The backfill emits each reply right after its parent. | Rebuilding each thread as one record |
+| **Edits and deletes** | `message_changed` (old and new text) and `message_deleted` (`deleted_ts`) | Applying them to the stored message. A reversed decision supersedes the old one; it does not overwrite it. |
+| **People** | Raw member objects with email, plus `user_change` events | Resolving `U…` ids to people and joining them to GitHub and Jira by email |
+| **Noise and decisions** | Nothing filtered: joins, bot posts and emoji replies all arrive | Filtering, decision detection, and attribution |
+| **Gaps and scope changes** | `app_rate_limited` notices, and the bot's own `member_joined_channel` / `member_left_channel` events | Triggering a backfill. Starting or stopping a channel, including what to do with that channel's stored data (open question 1). |
+
+Details: [Handoff to the pipeline](#handoff-to-the-pipeline).
 
 ## Why Slack matters to Ember
 
