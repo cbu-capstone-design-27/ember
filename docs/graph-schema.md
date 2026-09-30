@@ -4,9 +4,21 @@ Jira: EMBER-34. Status: draft for the launch sources (GitHub, GitLab, Jira, Slac
 
 ## Shape
 
-Nine node types shared by every source, and sixteen relationship types. Source differences are attributes and a registry, not extra node types. A GitHub pull request and a GitLab merge request are both a `Change`; a Slack message and a Teams message are both a `Message`. Queries and agents work across sources without knowing where a thing came from.
+One subgraph per data source per tenant, all in the same Neo4j database. Every subgraph uses the same nine node types and sixteen relationship types. Source differences are attributes and a registry, not extra node types. A GitHub pull request and a GitLab merge request are both a `Change`; a Slack message and a Teams message are both a `Message`. Because the types are shared, merging subgraphs later (retrieval phase 2) joins on the same labels and ids and needs no translation between schemas.
 
 Every source-backed node carries `source`, `kind`, `external_id` and `url`. `(group_id, source, external_id)` identifies it.
+
+## Subgraphs
+
+Each subgraph is a Graphiti `group_id` of the form `<tenant>_<source>`, for example `acme_github` or `acme_slack`. `ontology.subgraph_id(tenant, source)` builds it. Tenant names use lowercase letters, digits and `-`, because `_` is the separator.
+
+| Phase | What retrieval does | Graph work it needs |
+| --- | --- | --- |
+| 1 | Embed the prompt, compare it with each subgraph, take the top candidates across all of them | Nothing beyond the per-source subgraphs |
+| 2 | Merge related subgraphs across sources | Cross-subgraph links: `RESOLVES_TO` from each source's `Identity` to one `Person`, and `REFERENCES`/`RESOLVES` from a mention in one source to the item in another |
+| 3 | Merge with the Tree-sitter code layer | A `code` subgraph (below) |
+
+In phase 1 each subgraph is self-contained. A person appears once per source they use, and a Jira key mentioned in Slack stays text inside the Slack subgraph. Links inside one source, such as a GitHub PR resolving a GitHub issue, are made in phase 1. Graphiti searches accept a list of `group_id`s, so one subgraph, several, or all of a tenant's (`ontology.tenant_subgraphs(tenant)`) is the same call.
 
 ## Nodes
 
@@ -22,7 +34,7 @@ Every source-backed node carries `source`, `kind`, `external_id` and `url`. `(gr
 | `Decision` | A choice the team made | `status`, `decided_on` |
 | `Module` | Directory, package, service, component | `path` |
 
-`Person`, `Decision` and `Module` are not tied to one source, so they have no source fields. A `Person` is created by resolving `Identity` nodes, and `Decision` and `Module` are extracted from text and code paths.
+`Person`, `Decision` and `Module` have no source fields: they are extracted from text or resolved from `Identity` nodes, not copied from one source record. They still live in the subgraph of the source they came from.
 
 Names, summaries and timestamps come from the graph engine (`name`, `summary`, `created_at`); we do not redefine them.
 
@@ -86,19 +98,19 @@ flowchart LR
 
 `ontology/sources.py` holds this table as code, with a `kind_of` function that classifies a raw envelope body. Each fixture in `packages/ingestion-envelope/fixtures/` is checked against it.
 
-Cross-source links come from text and keys: a Jira key such as `EMBER-39` in a Slack message or PR title becomes a `REFERENCES` or `RESOLVES` edge to that `WorkItem`. The key is the join, so it must appear in the item's `external_id` (Jira) or be extracted from the text.
+Cross-source links (phase 2) come from text and keys: a Jira key such as `EMBER-39` in a Slack message or PR title becomes a `REFERENCES` or `RESOLVES` edge from the Slack or GitHub subgraph to that `WorkItem` in the Jira subgraph. The key is the join, so it must appear in the item's `external_id` (Jira) or be extracted from the text. Until phase 2, the mention stays in the text of the source subgraph.
+
+### Reserved: code (phase 3)
+
+The codebase, parsed with Tree-sitter, becomes a `<tenant>_code` subgraph. It is not a launch source for this ticket and is not in `SOURCES` yet. It will be built deterministically from the parse tree, not by LLM extraction, and will add file and symbol types that link to `Module` and to the `Change` nodes that touch them.
 
 ## People
 
-`Identity` nodes are created deterministically from source ids and never merged with each other. `RESOLVES_TO` links an identity to a `Person`. Resolution starts from exact matches (same verified email) and treats anything weaker as a suggestion for review. Because identities stay separate, a wrong merge is one deleted edge, not a graph rewrite.
+`Identity` nodes are created deterministically from source ids and never merged with each other. In phase 1 each subgraph resolves its own identities to a `Person` in that subgraph. In phase 2, a person's per-source `Person` nodes are linked to each other. Resolution starts from exact matches (same verified email) and treats anything weaker as a suggestion for review. Because identities and per-source people stay separate, a wrong merge is one deleted edge, not a graph rewrite.
 
 ## Time
 
 Node and edge validity comes from the engine: each fact has `valid_at`, `invalid_at`, `created_at` and `expired_at`. A status change on a `WorkItem` invalidates the old status fact and adds the new one; both stay queryable. `Decision` nodes add `SUPERSEDES` so "what replaced this decision" is a direct edge and not something inferred from invalidation.
-
-## Tenancy
-
-One `group_id` per tenant (for the capstone, one). Sources are attributes, not partitions, so links across sources stay inside the partition.
 
 ## Embeddings and config
 
@@ -106,7 +118,7 @@ The engine embeds entity names and fact text. The model and its settings are fix
 
 ## Extending
 
-- New source: add an entry to `SOURCES` (kinds mapped to core types, plus `kind_of`) and fixtures. No graph change.
+- New source: add an entry to `SOURCES` (kinds mapped to core types, plus `kind_of`) and fixtures. It gets its own subgraph; existing subgraphs are untouched.
 - New attribute: add an optional field to a model. Existing nodes lack it and stay valid.
 - New relationship: add a model and its allowed pairs in `edges.py`.
 - New core type: add a model to `entities.py` and edge rows. Do this only when a thing fits none of the nine.
@@ -125,6 +137,6 @@ Vector indexes are not created; similarity is an exact scan at launch scale. Add
 
 ## Open questions
 
-- Whether one `group_id` per tenant holds up if a deployment needs strict per-source isolation.
+- How phase 2 creates cross-subgraph edges. Graphiti deduplicates and extracts within one `group_id`, so the linking step is likely our own code over the shared labels and keys, not Graphiti's extraction.
 - Whether retrieval over entity names and facts alone is enough, or source text needs its own embeddings (spike item 3 in ADR 0002).
 - How `Module` gets populated: from paths in PR file lists (deterministic) or extracted from text.

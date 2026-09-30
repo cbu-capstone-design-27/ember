@@ -5,6 +5,7 @@ kind becomes) and a kind_of function that classifies a raw envelope body. No new
 core type is needed unless the source has something that fits none of them.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -92,3 +93,28 @@ SOURCES: dict[str, Source] = {
         _teams,
     ),
 }
+
+# Graphiti group_ids allow ASCII letters, digits, '-' and '_'. '_' is reserved as the
+# separator, so tenant names use lowercase letters, digits and '-' only.
+_TENANT = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+
+def subgraph_id(tenant: str, source: str) -> str:
+    """group_id of the subgraph that holds one source's data for one tenant."""
+    if not _TENANT.fullmatch(tenant):
+        raise ValueError(f"tenant {tenant!r} must match {_TENANT.pattern}")
+    if source not in SOURCES:
+        raise ValueError(f"unknown source {source!r}")
+    return f"{tenant}_{source}"
+
+
+def parse_subgraph_id(group_id: str) -> tuple[str, str]:
+    """Inverse of subgraph_id: returns (tenant, source)."""
+    tenant, _, source = group_id.rpartition("_")
+    subgraph_id(tenant, source)
+    return tenant, source
+
+
+def tenant_subgraphs(tenant: str) -> list[str]:
+    """All subgraph ids for a tenant, e.g. for a search across every source."""
+    return [subgraph_id(tenant, s) for s in SOURCES]

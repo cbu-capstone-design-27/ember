@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "services" / "pipeline"))
 from ontology import (  # noqa: E402
     EDGE_TYPE_MAP, EDGE_TYPES, ENTITY_TYPES, EXPECTED, SOURCES,
     EmbeddingIdentity, EmbeddingMismatch, check_embedding_identity,
+    parse_subgraph_id, subgraph_id, tenant_subgraphs,
 )
 
 FIXTURES = ROOT / "packages" / "ingestion-envelope" / "fixtures"
@@ -67,6 +68,16 @@ class OntologyTests(unittest.TestCase):
         for name, kind in expect.items():
             envelope = json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
             self.assertEqual(SOURCES[name].kind_of(envelope["body"]), kind)
+
+    def test_subgraph_ids(self):
+        self.assertEqual(subgraph_id("acme", "github"), "acme_github")
+        self.assertEqual(parse_subgraph_id("cbu-ember_slack"), ("cbu-ember", "slack"))
+        self.assertEqual(len(tenant_subgraphs("acme")), len(LAUNCH_SOURCES))
+        for gid in tenant_subgraphs("acme"):
+            self.assertRegex(gid, r"^[A-Za-z0-9_-]+$")
+        for tenant, source in [("acme_co", "github"), ("Acme", "github"), ("acme", "discord"), ("", "jira")]:
+            with self.assertRaises(ValueError):
+                subgraph_id(tenant, source)
 
     def test_embedding_identity_check(self):
         check_embedding_identity(EXPECTED)

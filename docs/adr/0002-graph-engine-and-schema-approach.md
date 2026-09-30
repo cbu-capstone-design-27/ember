@@ -22,7 +22,7 @@ We evaluated Graphiti (getzep/graphiti), a temporal knowledge graph engine that 
 Adopt Graphiti provisionally as the graph engine, keeping the ontology independent of it.
 
 - The ontology lives in `services/pipeline/ontology/` as plain Pydantic models plus a registry mapping each source's payload kinds onto a small set of core types. Nothing in it imports Graphiti, so it can be reused with plain Neo4j if Graphiti is rejected. `docs/graph-schema.md` describes it.
-- One `group_id` per tenant. The source is an attribute on nodes and tagged on episodes, not a separate graph, so cross-source links such as a Jira key mentioned in a Slack message resolve inside one partition.
+- One subgraph per source per tenant, as in the architecture diagram: `group_id = <tenant>_<source>`. Phase 1 retrieval searches each subgraph. Every subgraph uses the same core types, so the phase 2 merge across sources joins on shared labels and keys. Cross-source links (a Jira key mentioned in Slack, one person across sources) are phase 2 work.
 - Embedding identity and schema version are recorded in one `EmberConfig` node (ADR 0001), because Graphiti does not record them.
 - Decisions are entities with a `SUPERSEDES` edge. Graphiti's edge invalidation records that facts changed; the `SUPERSEDES` edge records that a decision replaced another.
 
@@ -33,7 +33,7 @@ This ADR stays Proposed until a spike passes.
 Run the five fixtures in `packages/ingestion-envelope/fixtures/`, plus a small set of realistic Slack threads and GitHub PRs, through Graphiti with this ontology on the Spark-hosted LLM and embedding service. Accept only if:
 
 1. Entities and edges land on the declared types without hand correction on most items.
-2. A Jira key mentioned in Slack links to the right `WorkItem`, and a re-sent event does not create duplicates.
+2. Within one subgraph, a GitHub PR that closes a GitHub issue links to it, and a re-sent event does not create duplicates.
 3. Retrieval over entity names and facts alone answers questions that today need message text. If it cannot, keep source text embedded separately (ADR 0001 already stores `embed_text`).
 4. Ingest cost and latency per event are tolerable with the local model.
 5. Custom attributes land as node properties, so the constraints in `ontology/schema.cypher` can be applied.
