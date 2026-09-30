@@ -47,6 +47,44 @@ services:
       GITHUB_TEST_REPO: "${GITHUB_TEST_REPO:-}"
       GITHUB_INGESTION_PORT: "${GITHUB_INGESTION_PORT:-8080}"
 
+  # EMBER-33. Runs on the DGX Spark, not in the default `up`. See
+  # services/embedding/README.md.
+  embedding:
+    profiles: ["embedding"]
+    image: "${EMBEDDING_IMAGE:-nvcr.io/nvidia/vllm:26.02-py3}"
+    container_name: ember-embedding
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${EMBEDDING_BIND_ADDR:-127.0.0.1}:${EMBEDDING_PORT:-8000}:8000"
+    environment:
+      HF_HOME: /models
+      VLLM_API_KEY: "${EMBEDDING_API_KEY:-}"
+    volumes:
+      - embedding-models:/models
+    command:
+      - vllm
+      - serve
+      - "${EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}"
+      - --revision
+      - "${EMBEDDING_REVISION:-97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3}"
+      - --runner
+      - pooling
+      - --served-model-name
+      - "${EMBEDDING_SERVED_NAME:-qwen3-embedding-0.6b}"
+      - --gpu-memory-utilization
+      - "${EMBEDDING_GPU_MEMORY_UTILIZATION:-0.10}"
+      - --max-model-len
+      - "${EMBEDDING_MAX_MODEL_LEN:-8192}"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
 volumes:
   neo4j-data:
   neo4j-logs:
+  embedding-models:
