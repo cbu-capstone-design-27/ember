@@ -16,8 +16,11 @@ sys.path.insert(0, str(REPO / "packages" / "ingestion-envelope"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import envelope  # noqa: E402
-from receiver import serve  # noqa: E402
+import smoke_webhook  # noqa: E402
+from receiver import RECOMMENDED_WEBHOOK_EVENTS, serve  # noqa: E402
 from validate import assert_valid  # noqa: E402
+
+README = Path(__file__).resolve().parent / "README.md"
 
 FIXTURE = REPO / "packages" / "ingestion-envelope" / "fixtures" / "github.json"
 SECRET = "test-webhook-secret"
@@ -163,6 +166,37 @@ class WebhookHttpTest(unittest.TestCase):
     def test_post_rejects_missing_signature(self):
         status, _payload = self._post(b'{"zen":"nope"}', None)
         self.assertEqual(status, 401)
+
+    def test_recommended_events_are_documented_and_not_a_filter(self):
+        required = {
+            "issues",
+            "issue_comment",
+            "pull_request",
+            "pull_request_review",
+            "pull_request_review_comment",
+            "push",
+            "create",
+            "delete",
+            "release",
+            "commit_comment",
+            "milestone",
+            "label",
+            "discussion",
+            "discussion_comment",
+            "check_run",
+            "workflow_run",
+            "deployment",
+        }
+        self.assertTrue(required <= set(RECOMMENDED_WEBHOOK_EVENTS))
+        readme = README.read_text(encoding="utf-8")
+        for event in RECOMMENDED_WEBHOOK_EVENTS:
+            self.assertIn(f"`{event}`", readme)
+        smoked = {event for event, _payload in smoke_webhook.EVENTS}
+        self.assertTrue(smoked <= set(RECOMMENDED_WEBHOOK_EVENTS))
+        self.assertIn("issues", smoked)
+        self.assertIn("create", smoked)
+        source = Path(__file__).resolve().parent.joinpath("receiver.py").read_text(encoding="utf-8")
+        self.assertNotIn("RECOMMENDED_WEBHOOK_EVENTS", source.split("def do_POST", 1)[1])
 
     def test_health(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=2) as response:
