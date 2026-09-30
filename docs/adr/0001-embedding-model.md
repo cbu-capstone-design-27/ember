@@ -8,7 +8,7 @@
 
 Ember embeds text in two places: the processing pipeline embeds what it writes to the graph, and the retrieval endpoint embeds the agent's prompt at query time. Similarity only means something when both sides use the same model, so the model is a shared, long-lived choice. Switching later invalidates every stored vector.
 
-The model has to run on the DGX Spark cluster, be usable in a self-hosted deployment, and carry a license compatible with Ember's Apache 2.0. We also expect to move to a hosted model (Vertex AI or similar) for embeddings and the LLM later, so the choice should be cheap to replace.
+The model has to run on the shared DGX Spark (a GPU host outside the k3s cluster, reached over the network), be usable in a self-hosted deployment, and carry a license compatible with Ember's Apache 2.0. We also expect to move to a hosted model (Vertex AI or similar) for embeddings and the LLM later, so the choice should be cheap to replace.
 
 ## Decision
 
