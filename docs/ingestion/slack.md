@@ -48,9 +48,9 @@ This section answers the three EMBER-36 acceptance criteria directly. Each answe
     - Slack must get an answer within 3 seconds. Otherwise it retries up to 3 times.
     - Slack delivers about 30,000 events per workspace per hour. Past that it sends `app_rate_limited` and drops events.
   - **Outbound (Web API, backfill):**
-    - Limits are per method: history and replies are Tier 3 (50+/min), and list methods are Tier 2 (20+/min).
-    - A `429` carries `Retry-After`, and the backfill waits it out per method.
-  - **Risk for hosted Ember:** Slack's 2025 limit on history for non-Marketplace apps. Verify it before hosted launch.
+    - Limits are per method, per workspace, per app, and **not per user**. History and replies are Tier 3 (50+/min), and list methods are Tier 2 (20+/min).
+    - A `429` (or a `ratelimited` error) carries `Retry-After`. The backfill paces itself, waits out every throttle, retries transient errors, and resumes after a crash, so a full channel backfill completes (EMBER-52).
+  - **Risk for hosted Ember (confirmed):** non-Marketplace apps get 1 request/min and 15 messages per page on history and replies. Internal (self-hosted) apps are exempt.
   - Details: [Rate limits](#rate-limits).
 
 ### 2. Proposed architecture for how Slack feeds ingestion
@@ -194,25 +194,112 @@ Message essentials the pipeline relies on: `ts` (string, unique per channel, als
 
 ## Rate limits
 
+Checked against Slack's developer docs (docs.slack.dev) on 2026-10-01. Links are in [Rate limit sources](#rate-limit-sources).
+
+### Slack's limits
+
+**How Slack counts:** Web API limits apply **per method, per workspace, per app**. They are **not per user**: Ember calls with one bot token, so a 5-person workspace and a 5,000-person workspace get the same quota. Each method has its own budget, so throttling on `conversations.replies` doesn't slow `users.list`.
+
+**Tiers:**
+
+| Tier | Allowance |
+| --- | --- |
+| 1 | 1+ per minute |
+| 2 | 20+ per minute |
+| 3 | 50+ per minute |
+| 4 | 100+ per minute |
+| Special | Varies by method |
+
+Short bursts above the tier are tolerated, but Slack doesn't publish burst limits. It recommends designing for about **1 request per second**.
+
+**Methods Ember calls:**
+
+| Method | Used for | Tier | Page size |
+| --- | --- | --- | --- |
+| `team.info` | Workspace object | 3 (50+/min) | — |
+| `users.list` | Members | 2 (20+/min) | 200 (`limit` is required on large workspaces) |
+| `conversations.list` | Channels | 2 (20+/min) | 200 |
+| `conversations.history` | Top-level messages | 3 (50+/min) | 200 |
+| `conversations.replies` | Thread replies, one call per thread | 3 (50+/min) | 200 |
+
+Slack recommends no more than 200 results per page, and the tier limits assume you paginate.
+
+**When throttled:** Slack answers `HTTP 429 Too Many Requests` with a `Retry-After` header giving the seconds to wait before calling **that method for that workspace** again. A response can also carry the error code `ratelimited` with the same meaning.
+
 **Events API (inbound):**
+- Answer within **3 seconds**, or Slack retries up to 3 times (about immediately, after 1 minute, after 5 minutes) with `X-Slack-Retry-Num` and `X-Slack-Retry-Reason`. If most deliveries keep failing, Slack temporarily disables the app's event subscriptions. The receiver acknowledges before doing anything else.
+- Delivery is capped at **30,000 events per workspace per app per 60 minutes**. Past that, Slack sends `app_rate_limited` and **drops** the extra events. The receiver emits that notice so the pipeline can backfill the gap.
 
-- Answer within **3 seconds** or Slack retries up to 3 times (roughly immediately, after 1 minute, after 5 minutes), with `X-Slack-Retry-Num` and `X-Slack-Retry-Reason`. If most deliveries keep failing, Slack temporarily disables the app's event subscriptions. The receiver acknowledges before doing anything else.
-- Delivery is capped at about **30,000 events per workspace per app per hour**. Past that, Slack sends `app_rate_limited` and drops events. The receiver emits that notice so the pipeline can schedule a backfill of the gap.
+### Non-Marketplace apps: the 2025 limit (confirmed)
 
-**Web API (outbound, backfill):** limits are per method, per workspace, per app, by tier:
+For **commercially distributed apps that aren't approved for the Slack Marketplace**:
+- `conversations.history` and `conversations.replies` drop to **1 request per minute**.
+- The maximum (and default) page size drops to **15**.
+- New apps and new installs have been affected since **May 29, 2025**, and existing installs since **March 3, 2026**.
+- **Internal customer-built apps are not affected.**
 
-| Method | Tier | Rough limit |
-| --- | --- | --- |
-| `conversations.history`, `conversations.replies` | 3 | 50+ per minute |
-| `conversations.list`, `users.list` | 2 | 20+ per minute |
-| `team.info` | 3 | 50+ per minute |
+What that means for Ember:
+- **Self-hosted Ember is unaffected.** Each team creates its own internal app from `slack-app-manifest.json`, so normal tiers apply.
+- **Hosted Ember, one app installed into other companies' workspaces, is affected** unless it's Marketplace-approved. History backfill would run at 15 messages a minute (see the estimate below), though live events are not affected. A hosted launch needs either Marketplace approval or a deliberately slow "trickle backfill" mode.
 
-A `429` carries `Retry-After`. The backfill gives each method its own gate, so a throttled `conversations.replies` does not stall `users.list`.
+### What a backfill costs
 
-**Distribution caveat (verify against current Slack docs before hosted launch):** in 2025 Slack cut `conversations.history` and `conversations.replies` to about 1 request per minute and 15 messages per page for **commercially distributed apps not listed in the Slack Marketplace**. Apps a workspace builds for itself ("internal", including one created from our manifest by a self-hosting team) keep the normal tiers. Consequences:
+Backfill time grows with **message volume**, not user count. Worked example: one channel with **100,000 messages**, of which **20,000 are thread parents**.
 
-- Self-hosted Ember: unaffected. Each team creates its own internal app.
-- Hosted Ember installed into other companies' workspaces: backfill would be throttled to near-uselessness unless the app is Marketplace-approved. Live events are not affected. Plan the Marketplace review as part of hosted launch, or keep hosted backfill shallow.
+| Step | Calls | Internal app (normal tiers) | Non-Marketplace app (1/min, 15 per page) |
+| --- | --- | --- | --- |
+| History | 100,000 ÷ 200 = 500 pages (÷ 15 = 6,667 pages) | 500 ÷ 50/min ≈ **10 min** | 6,667 ÷ 1/min ≈ **4.6 days** |
+| Replies | 1 call per thread = 20,000 | 20,000 ÷ 50/min ≈ **6.7 hours** | 20,000 ÷ 1/min ≈ **14 days** |
+| Members (5,000 people) | 5,000 ÷ 200 = 25 | 25 ÷ 20/min ≈ **1–2 min** | same |
+
+Two things follow:
+- **Thread replies dominate.** That's one call per thread, not per page.
+- **A large backfill runs for hours** even with an internal app. It has to survive throttling, network blips and restarts without starting over. That's what EMBER-52's "a full channel backfill completes without failure" requires.
+
+### How the connector handles limits
+
+**Built** (`services/slack-ingestion/pull_test.py`, EMBER-52):
+
+| Behavior | How |
+| --- | --- |
+| **Pace before Slack throttles** | Every method has its own gate that spaces calls at the tier rate (Tier 2: 20/min, Tier 3: 50/min), so workers don't burst into `429`s. `SLACK_RATE_MODE=internal\|non_marketplace` switches history and replies to 1/min with page size 15 for hosted, non-Marketplace installs. |
+| **Throttling is not failure** | `429` or `ratelimited`: wait the full `Retry-After` (1 s to 15 min), then retry the same call with no attempt limit. It gives up only after one call has waited an hour in total. |
+| **Transient errors retry** | `5xx`, timeouts, connection resets and DNS errors: back off 1, 2, 4… up to 60 s with **jitter**, 8 attempts, then fail with a clear message. |
+| **Real errors still stop** | `invalid_auth`, `token_revoked`, `missing_scope`: stop immediately. Retrying can't fix them. |
+| **No page ceiling** | The old 500-page stop is gone. A cursor seen twice still stops the run, so it can't loop forever. |
+| **Never lose progress** | With `--output`, each page is appended to a part file and a checkpoint `{phase, cursor, threads done}` is saved per channel. `--resume` continues from it, so a crash costs at most one page. The final file is identical to an uninterrupted run's. |
+
+**Verified:**
+- 47 unit tests, including:
+  - a 10,600-message channel through injected `429`s, `ratelimited` bodies, `503`s and network errors (every message exactly once)
+  - crash-and-resume during history and during thread replies
+  - more than 500 pages
+  - the backoff sequence, jitter, pacing, and non-Marketplace mode
+- Live against the Ember workspace (2026-10-01):
+  - a paced full backfill (314 objects, 6 channels)
+  - a backfill killed 10 s in and resumed, which produced the same 314 objects
+  - the same backfill inside the `slack-backfill` container on Docker, which also builds for arm64 (DGX Spark)
+
+### Scaling: one user to many users, one workspace to many
+
+**One workspace growing from one user to many:**
+- The API quota stays the same, while messages, channels and threads grow. Pacing plus resume is what keeps a big workspace's backfill reliable. Larger quota isn't available.
+- Very busy workspaces can exceed the **30,000 events/hour** delivery cap, and Slack drops the overflow. On `app_rate_limited`, the pipeline records the gap window and runs a backfill with `--since` the start of the gap.
+- Member lists grow too. `users.list` must always paginate (`limit` is required on large workspaces).
+
+**One Ember deployment serving many workspaces (hosted, multi-tenant):**
+- Every workspace has its own quota, so rate-limit state is keyed by **(app, workspace `team_id`, method)**, never by method alone.
+- When ingestion runs as several replicas on the cluster, the limiter state moves to a shared store (Redis or Postgres) so two pods never spend one workspace's quota twice. The code calls a `RateLimiter` interface: in-process today, shared later, with no connector changes.
+- Backfills become resumable jobs in the job queue (EMBER-2), with progress in the Application Database. **Per-tenant fair scheduling** keeps one company's huge backfill from starving everyone else's.
+- Per-workspace metrics (throttles, seconds waited, backfill progress) feed the dashboard, so an admin can see "backfill 62%, about 3 hours left" instead of guessing.
+
+### Rate limit sources
+
+- [Rate limits](https://docs.slack.dev/apis/web-api/rate-limits): scope per method, workspace and app; tiers; `429` and `Retry-After`; ~1 request/second guidance; Events API 30,000/hour and `app_rate_limited`
+- [Rate limit changes for non-Marketplace apps](https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps/): 1/min and 15 objects; May 29, 2025 and March 3, 2026; internal apps exempt
+- [`conversations.history`](https://docs.slack.dev/reference/methods/conversations.history) and [`conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies): Tier 3, the non-Marketplace note, 200 per page, the `ratelimited` error
+- [`conversations.list`](https://docs.slack.dev/reference/methods/conversations.list) and [`users.list`](https://docs.slack.dev/reference/methods/users.list): Tier 2, 200 per page, `limit` required on large teams
+- [`team.info`](https://docs.slack.dev/reference/methods/team.info): Tier 3
 
 ## Architecture
 
