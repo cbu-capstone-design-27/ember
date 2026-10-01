@@ -10,6 +10,9 @@
 #     --profile github-ingestion up --build github-ingestion
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile slack-ingestion up --build slack-ingestion
+#   # one-off Slack backfill (exits when done; output in volume slack-backfill-data):
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile slack-backfill run --rm --build slack-backfill
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile jira-ingestion up --build jira-ingestion
 
@@ -63,6 +66,23 @@ services:
     environment:
       SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET:-}"
       SLACK_INGESTION_PORT: "${SLACK_INGESTION_PORT:-8082}"
+
+  # EMBER-52. Same image as slack-ingestion; runs pull_test.py once and exits.
+  # Extra flags go after the service name, e.g. `... run --rm slack-backfill
+  # python3 pull_test.py --channel C0123ABCD --output /data/slack-intake.jsonl`.
+  slack-backfill:
+    profiles: ["slack-backfill"]
+    build:
+      context: ..
+      dockerfile: services/slack-ingestion/Dockerfile
+    command: ["python3", "pull_test.py", "--output", "/data/slack-intake.jsonl"]
+    restart: "no"
+    environment:
+      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN:-}"
+      SLACK_TEST_CHANNEL: "${SLACK_TEST_CHANNEL:-}"
+      SLACK_PULL_CONCURRENCY: "${SLACK_PULL_CONCURRENCY:-}"
+    volumes:
+      - slack-backfill-data:/data
 
   # EMBER-33. Runs on the DGX Spark, not in the default `up`. See
   # services/embedding/README.md.
@@ -122,3 +142,4 @@ volumes:
   neo4j-data:
   neo4j-logs:
   embedding-models:
+  slack-backfill-data:

@@ -85,6 +85,32 @@ docker compose -f infra/docker-compose.yml --env-file .env \
   --profile slack-ingestion up --build slack-ingestion
 ```
 
+### Containers
+
+One image holds both programs (`envelope.py`, `receiver.py`, `pull_test.py`). It runs as `nobody`.
+
+| Compose service | Runs | Lifetime |
+| --- | --- | --- |
+| `slack-ingestion` | `receiver.py` (the image's default command) | Always on; serves port 8082 |
+| `slack-backfill` | `pull_test.py --output /data/slack-intake.jsonl` | One-off. Exits when the backfill finishes. Output goes to the named volume `slack-backfill-data`. |
+
+Run a backfill in a container (reads `SLACK_BOT_TOKEN`, and optionally `SLACK_TEST_CHANNEL` and `SLACK_PULL_CONCURRENCY`, from `.env`):
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env \
+  --profile slack-backfill run --rm --build slack-backfill
+```
+
+Pass flags by overriding the command, e.g. one channel since a date:
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env --profile slack-backfill \
+  run --rm slack-backfill python3 pull_test.py --channel C0123ABCD --since 2026-09-01 \
+  --output /data/slack-intake.jsonl
+```
+
+The base image `python:3.12-slim` is multi-architecture, so the same Dockerfile builds natively on x86_64 and on arm64 hosts such as the DGX Spark (GB10). Checked with `docker buildx build --platform linux/arm64`.
+
 ## Local test pull
 
 ```sh
