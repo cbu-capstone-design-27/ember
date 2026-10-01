@@ -12,7 +12,7 @@ HTTP receiver for live deliveries, plus a local full REST backfill for one test 
 
 `pull_test.py` is the backfill. It is a follow-on to the slim issues / pull requests / default-branch commits cut: one envelope per discrete REST object, not a second copy of the same pull request.
 
-Live App webhooks still need a public URL. This change does not open a tunnel or register a webhook. Subscribe the events below on the App when you want those deliveries.
+Live App webhooks still need a public URL that reaches this receiver. The cluster's webhook URL ends at a placeholder for now (see the end of "Local webhook smoke"). This change does not open a tunnel or register a webhook. Subscribe the events below on the App when you want those deliveries.
 
 ## Contract
 
@@ -242,7 +242,7 @@ Any throwaway string is fine. The script starts the receiver and POSTs `issues`,
 
 Five more stdout lines follow, one per remaining event, each the posted JSON wrapped unchanged. Success ends with `smoke ok: 7 envelopes` on stderr.
 
-On the cluster, the App's public URL is `https://ember.tail470a31.ts.net` (Tailscale Funnel, see `infra/k8s/README.md`), so the webhook URL becomes `https://ember.tail470a31.ts.net/webhook/github` once the Ingress points at this service. For a receiver on your own machine, point a tunnel at `GITHUB_INGESTION_PORT` (default `8080`) and set the App webhook URL to `https://<tunnel-host>/webhook/github` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8080` or `ngrok http 8080`. The tunnel is not part of this smoke and CI does not start one.
+On the cluster, the App's public URL is `https://ember.tail470a31.ts.net` (Tailscale Funnel), and nginx routes `https://ember.tail470a31.ts.net/webhook/github` to Service `github-webhook`. That route currently ends at a placeholder listener that returns 200 and stores nothing (see `infra/k8s/README.md`). This receiver replaces the placeholder behind Service `github-webhook` in EMBER-56; until then, do not leave the App's webhook URL pointing at it, because GitHub would record deliveries as successful while they are thrown away. For a receiver on your own machine, point a tunnel at `GITHUB_INGESTION_PORT` (default `8080`) and set the App webhook URL to `https://<tunnel-host>/webhook/github` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8080` or `ngrok http 8080`. The tunnel is not part of this smoke and CI does not start one.
 
 ## Test
 
