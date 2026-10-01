@@ -49,7 +49,7 @@ This section answers the three EMBER-36 acceptance criteria directly. Each answe
     - Slack delivers about 30,000 events per workspace per hour. Past that it sends `app_rate_limited` and drops events.
   - **Outbound (Web API, backfill):**
     - Limits are per method, per workspace, per app, and **not per user**. History and replies are Tier 3 (50+/min), and list methods are Tier 2 (20+/min).
-    - A `429` (or a `ratelimited` error) carries `Retry-After`. EMBER-52 makes the backfill pace itself, wait out every throttle, retry transient errors, and resume after a crash, so a full channel backfill completes.
+    - A `429` (or a `ratelimited` error) carries `Retry-After`. The backfill paces itself, waits out every throttle, retries transient errors, and resumes after a crash, so a full channel backfill completes (EMBER-52).
   - **Risk for hosted Ember (confirmed):** non-Marketplace apps get 1 request/min and 15 messages per page on history and replies. Internal (self-hosted) apps are exempt.
   - Details: [Rate limits](#rate-limits).
 
@@ -258,30 +258,27 @@ Two things follow:
 
 ### How the connector handles limits
 
-**Built today** (`services/slack-ingestion/pull_test.py`, EMBER-36):
-- One gate per Slack method. A `429` holds every worker calling that method for `Retry-After` seconds; other methods keep running.
-- `5xx` responses back off 1 s, 2 s, 4 s.
-- 200 results per page. Channels are read 4 at a time.
+**Built** (`services/slack-ingestion/pull_test.py`, EMBER-52):
 
-**Known gaps:**
-- It gives up after **5** throttled attempts.
-- It caps waits at **120 s**.
-- It treats a `ratelimited` error body and network errors (timeouts, resets) as fatal.
-- It stops at **500 pages**.
-- It holds all output in memory with no resume, so a crash hours in loses the run.
-
-Any of these can fail a large backfill.
-
-**EMBER-52 design (planned, not built yet):**
-
-| Behavior | Design |
+| Behavior | How |
 | --- | --- |
-| **Pace before Slack throttles** | A token bucket per method at its tier rate (Tier 2: 20/min, Tier 3: 50/min), so workers don't burst into `429`s. `SLACK_RATE_MODE=internal\|non_marketplace` switches history and replies to 1/min with page size 15 for hosted, non-Marketplace installs. |
-| **Throttling is not failure** | `429` or `ratelimited`: wait the full `Retry-After` (no attempt limit, with a long overall deadline), then retry the same call. |
-| **Transient errors retry** | `5xx`, timeouts, connection resets and DNS errors: exponential backoff with **jitter** (so workers don't retry in lockstep), about 8 attempts, then fail with a clear message. |
+| **Pace before Slack throttles** | Every method has its own gate that spaces calls at the tier rate (Tier 2: 20/min, Tier 3: 50/min), so workers don't burst into `429`s. `SLACK_RATE_MODE=internal\|non_marketplace` switches history and replies to 1/min with page size 15 for hosted, non-Marketplace installs. |
+| **Throttling is not failure** | `429` or `ratelimited`: wait the full `Retry-After` (1 s to 15 min), then retry the same call with no attempt limit. It gives up only after one call has waited an hour in total. |
+| **Transient errors retry** | `5xx`, timeouts, connection resets and DNS errors: back off 1, 2, 4… up to 60 s with **jitter**, 8 attempts, then fail with a clear message. |
 | **Real errors still stop** | `invalid_auth`, `token_revoked`, `missing_scope`: stop immediately. Retrying can't fix them. |
-| **No page ceiling** | Remove the 500-page stop. Keep the repeated-cursor guard against infinite loops. |
-| **Never lose progress** | Write output page by page instead of at the end. After each page, save a checkpoint `{team_id, channel, cursor, last_ts}`. `--resume` continues from it, so a crash costs at most one page. |
+| **No page ceiling** | The old 500-page stop is gone. A cursor seen twice still stops the run, so it can't loop forever. |
+| **Never lose progress** | With `--output`, each page is appended to a part file and a checkpoint `{phase, cursor, threads done}` is saved per channel. `--resume` continues from it, so a crash costs at most one page. The final file is identical to an uninterrupted run's. |
+
+**Verified:**
+- 47 unit tests, including:
+  - a 10,600-message channel through injected `429`s, `ratelimited` bodies, `503`s and network errors (every message exactly once)
+  - crash-and-resume during history and during thread replies
+  - more than 500 pages
+  - the backoff sequence, jitter, pacing, and non-Marketplace mode
+- Live against the Ember workspace (2026-10-01):
+  - a paced full backfill (314 objects, 6 channels)
+  - a backfill killed 10 s in and resumed, which produced the same 314 objects
+  - the same backfill inside the `slack-backfill` container on Docker, which also builds for arm64 (DGX Spark)
 
 ### Scaling: one user to many users, one workspace to many
 

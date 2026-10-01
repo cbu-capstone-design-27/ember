@@ -10,7 +10,7 @@
 #     --profile github-ingestion up --build github-ingestion
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile slack-ingestion up --build slack-ingestion
-#   # one-off Slack backfill (exits when done; output in volume slack-backfill-data):
+#   # one-off Slack backfill (exits when done; resumes if re-run; output in volume slack-backfill-data):
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile slack-backfill run --rm --build slack-backfill
 #   docker compose -f infra/docker-compose.yml --env-file .env \
@@ -75,12 +75,13 @@ services:
     build:
       context: ..
       dockerfile: services/slack-ingestion/Dockerfile
-    command: ["python3", "pull_test.py", "--output", "/data/slack-intake.jsonl"]
+    command: ["python3", "pull_test.py", "--output", "/data/slack-intake.jsonl", "--resume"]
     restart: "no"
     environment:
       SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN:-}"
       SLACK_TEST_CHANNEL: "${SLACK_TEST_CHANNEL:-}"
       SLACK_PULL_CONCURRENCY: "${SLACK_PULL_CONCURRENCY:-}"
+      SLACK_RATE_MODE: "${SLACK_RATE_MODE:-}"
     volumes:
       - slack-backfill-data:/data
 
