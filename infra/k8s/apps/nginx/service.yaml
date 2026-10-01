@@ -1,4 +1,5 @@
 # In-cluster only: http://nginx.ember.svc.cluster.local
+# The reverse proxy. Public traffic reaches it through the Funnel Ingress (ingress.yaml).
 apiVersion: v1
 kind: Service
 metadata:
