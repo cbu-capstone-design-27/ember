@@ -94,17 +94,28 @@ Two decisions block the next step (the auth spike under EMBER-19). They're also 
 - whether per-channel subscriptions work
 - whether the member list returns email
 
-Slack had a free workspace we could test in. Teams has no equivalent.
+Slack had a free workspace we could test in. Teams has no equivalent. Personal Microsoft accounts don't work, even paid Microsoft 365 Personal or Family: every Teams API used here lists "Personal Microsoft account: Not supported".
 
-**Options:**
+**Ruled out:**
+- **CBU's school tenant:** CBU IT will not provide a Teams environment or approve the Ember app for this project.
+- **Buying a Microsoft 365 business subscription:** out of the project's budget.
 
-| Option | Cost | Catch |
+**What's left, all no-cost:**
+
+| Option | What it gives | Catch |
 | --- | --- | --- |
-| Microsoft 365 Developer Program sandbox (E5, instant setup) | Free | Needs an active Visual Studio Professional or Enterprise **standard** subscription (monthly ones don't qualify), or a qualifying Microsoft partner program |
-| CBU's school tenant | Free | CBU IT must allow custom-app upload and approve an app that reads channel messages |
-| Microsoft 365 business trial | Free for the trial period, then paid | Must be cancelled or paid for; setup is on us |
+| **1. Free 30-day Microsoft 365 Business trial** (Business Basic includes Teams) | A real tenant for 30 days: 25 user licenses, our own admin, so we can register the Entra app, upload the Teams app and create teams. This is everything the auth spike needs. | A payment method is needed at sign-up. Turn off **recurring billing** (Billing → Your products) on day one, and the card isn't charged. A trial-only tenant is limited to 30 days and 300 GB and is removed afterwards, so the spike must fit in that window. Someone has to own the account and the billing switch. |
+| **2. Microsoft 365 Developer Program sandbox** (E5, renews while eligible) | A permanent free test tenant | Only for holders of an active Visual Studio Professional or Enterprise **standard** subscription (monthly ones don't qualify), or certain Microsoft partner programs. No one on the team has confirmed one, but faculty (Dr. Sanders, Professor Mosely) might. **Ask before using option 1.** |
+| **3. Build without a tenant** | Most of the code can be written and unit-tested with no tenant, the same way the Slack worker was: fake Graph responses built from the payloads in Microsoft's docs. That covers the receiver (validation token, `clientState`, 3 s ack), the fetcher, the subscription manager logic and the resync. Microsoft 365 Agents Playground can also run Teams bot interactions locally with mock data and no account. | Can't prove the parts that only a real tenant can: RSC consent, app install, real subscriptions and the protected-API question. Those still need option 1 or 2 at the end. |
 
-**Status:** undecided. To raise at standup.
+There's also a fallback: Teams is `drop-first` (EMBER-19). If no tenant is ever available, the team can keep Teams at "documented, not built" for launch.
+
+**Recommendation:**
+1. Ask faculty about a Visual Studio subscription (option 2).
+2. Otherwise build and unit-test against fakes first (option 3).
+3. Start the 30-day trial (option 1) **only when the code is ready**, so the whole live auth spike fits in the window. Turn off recurring billing the same day.
+
+**Status:** CBU IT and purchasing ruled out. Options 1–3 to confirm at standup.
 
 ### B. Private and shared channels: in or out for launch?
 
@@ -332,7 +343,8 @@ flowchart LR
 | A protected-API request turns out to apply to RSC too | Weeks of delay for Microsoft's review | Check first in the spike, before any build (per EMBER-19) |
 | Teams discuss decisions in private channels, which RSC can't subscribe to (verified) | Those decisions are missed, or only polled | Standard channels only for launch. Polling private channels the team explicitly added Ember to is open question 2. |
 | The member list returns `401` in newly created tenants (a Microsoft known issue) | A fresh test tenant can't read members at first | Expect it in the spike. Retry after the tenant settles; attribution falls back to `from.user`. |
-| No Microsoft 365 test tenant on the team | Can't validate | Get one before the build ticket starts (open question 1) |
+| No Microsoft 365 test tenant: CBU IT won't provide one and buying is out of budget | The auth spike can't run | Build and unit-test against fakes first, then run the live spike inside a free 30-day business trial, with recurring billing off. Fallback: Teams stays documented-only (`drop-first`). See [Decision A](#a-where-do-we-get-a-microsoft-365-test-tenant). |
+| The 30-day trial ends mid-spike, or someone forgets to turn off billing | Lost test tenant, or an unexpected charge | Start the trial only when the code is ready, and turn off recurring billing on day one with a named owner |
 
 ## Follow-ups (not changed in this PR)
 
@@ -341,15 +353,12 @@ flowchart LR
 | `packages/ingestion-envelope/fixtures/teams.json` and `docs/contracts/ingestion-payload.md` | The fixture is a notification only. Consider a second Teams fixture holding a `chatMessage`, and a note that Teams intake includes fetched messages. | Ryan (EMBER-39 owner) |
 | `services/pipeline/ontology/sources.py` (on `develop` since #9) | `_teams` only classifies notification collections. Fetched `chatMessage`, `channel`, `team` and member bodies return `None`. It needs rules matching [Data shapes](#data-shapes). | Brandon (EMBER-34) |
 | `docs/graph-schema.md` (on `develop` since #9) | "Teams → Conversation: chat". Under this scope, the Teams Conversation is a **channel thread** (root + replies), and 1:1 and group chats are out of scope. | Brandon |
-| Future build ticket under EMBER-19 | An auth spike first: register an Entra app, sideload into a test tenant, and confirm that RSC reads work without a protected-API request, that a per-channel subscription works, and that the member list returns email | Payton |
+| Future build ticket under EMBER-19 | Build and unit-test against fake Graph responses first. Then run the auth spike in the test tenant from Decision A (a free 30-day trial if no sandbox): register an Entra app, sideload into a test tenant, and confirm that RSC reads work without a protected-API request, that a per-channel subscription works, and that the member list returns email | Payton |
 | Meeting transcripts | A separate decision and ticket, if the team wants the "decided in a meeting" case | Team |
 
 ## Open questions
 
-1. **(Decision A)** Does the team have, or can it get, a **Microsoft 365 test tenant** with Teams? Microsoft's free developer sandbox (a Microsoft 365 E5 instant sandbox) now requires an active **Visual Studio Professional or Enterprise standard subscription** (monthly ones don't qualify) or certain Microsoft partner programs. Options:
-   - someone with that Visual Studio subscription
-   - CBU's school tenant, with IT approving the Ember app
-   - a paid trial tenant
+1. **(Decision A)** Does the team have, or can it get, a **Microsoft 365 test tenant** with Teams? Microsoft's free developer sandbox (a Microsoft 365 E5 instant sandbox) now requires an active **Visual Studio Professional or Enterprise standard subscription** (monthly ones don't qualify) or certain Microsoft partner programs. CBU IT won't provide one, and buying a subscription is out of budget. What's left: a faculty member's Visual Studio subscription (developer sandbox), building against fakes first, and a free 30-day business trial timed for the live spike. See [Decision A](#a-where-do-we-get-a-microsoft-365-test-tenant).
 2. **(Decision B)** Should **private and shared channels** be read at all? RSC can't subscribe to them (verified), so they'd be polled only, and only where a team explicitly adds Ember to that channel.
 3. Should intake emit **both** the notification and the fetched message, or only the fetched `chatMessage`? This affects the contract fixture and Brandon's classifier.
 4. **Meeting transcripts:** worth a separate ticket?
@@ -375,3 +384,5 @@ Checked against Microsoft Learn on 2026-09-29:
 - [Enable an agent to receive all chat messages](https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/enable-receive-all-chat-messages): `ChannelMessage.Read.Group` gives access to all channel messages with the team owner's consent at install, and no protected-API request is listed
 - [Microsoft Graph permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference): `ChannelMessage.Read.All` requires admin consent
 - [Microsoft 365 Developer Program FAQ](https://learn.microsoft.com/en-us/office/developer-program/microsoft-365-developer-program-faq): sandbox eligibility
+- [Try or buy a Microsoft 365 for business subscription](https://learn.microsoft.com/en-us/microsoft-365/commerce/try-or-buy-microsoft-365): free one-month trial, 25 licenses, trial-only tenants limited to 30 days and 300 GB, turning off recurring billing avoids the charge
+- [Test your agent in Microsoft 365 Agents Playground](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/test-with-toolkit-project): local testing with mock data, no Microsoft 365 account or app registration needed
