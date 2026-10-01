@@ -1,0 +1,14 @@
+# Tailscale Kubernetes operator: chart tailscale/tailscale-operator, installed by
+# ansible/playbooks/tailscale-operator.yml (make ts-operator-up), which pins the chart version.
+# No credentials here: the playbook creates Secret operator-oauth from vault_ts_oauth_client_id and
+# vault_ts_oauth_client_secret, and the chart mounts it because oauth.clientId is left empty.
+operatorConfig:
+  # The operator's own device name on the tailnet
+  hostname: homelab-operator
+  defaultTags:
+    - tag:k8s-operator
+
+# Every proxy the operator creates (one per Tailscale Ingress) joins the tailnet with this tag.
+# Funnel needs the "funnel" nodeAttr on it in the tailnet policy.
+proxyConfig:
+  defaultTags: tag:k8s

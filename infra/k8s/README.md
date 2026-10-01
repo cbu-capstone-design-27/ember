@@ -26,6 +26,45 @@ The `local-path-retain` StorageClass is not here: k3s deploys it on start from `
 
 A single `nginx:1.28-alpine` replica in namespace `ember`, with a ClusterIP Service reachable in-cluster at `http://nginx.ember.svc.cluster.local`. It is a starting point for plain-manifest apps rather than an Ember service. Deployed by `make apps-up`, removed by `make apps-down`.
 
+`apps/nginx/ingress.yaml` publishes it on the public internet at `https://ember.tail470a31.ts.net` through the Tailscale operator and Funnel (below). That hostname is what the GitHub App registers as its callback and webhook URL, so when the real backend replaces nginx, repoint the Ingress's backend and keep `tls.hosts: [ember]`.
+
+## Tailscale operator
+
+Serves Ingresses with `ingressClassName: tailscale`. Each one gets a proxy that joins the tailnet as its own device named after `tls.hosts`, with a Let's Encrypt certificate for `https://<name>.tail470a31.ts.net`. The `tailscale.com/funnel: "true"` annotation also opens it to the internet. Values in `infrastructure/tailscale-operator/values.yaml`; chart version pinned in `ansible/playbooks/tailscale-operator.yml`.
+
+One-time setup in the Tailscale admin console:
+
+1. **DNS**: enable MagicDNS and HTTPS certificates.
+2. **Access controls**: add
+   ```json
+   "tagOwners": {
+     "tag:k8s-operator": ["autogroup:admin"],
+     "tag:k8s": ["tag:k8s-operator"]
+   },
+   "nodeAttrs": [{ "target": ["tag:k8s"], "attr": ["funnel"] }]
+   ```
+   Funnel needs the `nodeAttrs` entry even if `autogroup:member` already has `funnel`, because tagged devices aren't members.
+3. **Settings > Trust credentials**: Credential > OAuth, Read and Write on Devices > Core, Keys > Auth Keys and General > Services, tag `tag:k8s-operator`. Store the ID and secret from `infra/ansible` with `.venv/bin/ansible-vault edit group_vars/all/vault.yml` as `vault_ts_oauth_client_id` and `vault_ts_oauth_client_secret`.
+
+Run from `infra/ansible`:
+
+| Target | What it does |
+|---|---|
+| `make ts-operator-up` | Creates Secret `operator-oauth` from the vault, installs the chart, then health. Safe to re-run |
+| `make ts-operator-health` | Operator ready and logged in; each Tailscale Ingress has a hostname and answers over HTTPS; each Funnel Ingress also has a public DNS record |
+| `make ts-operator-down` | Uninstalls the operator and removes the Secret. Refuses while a Tailscale Ingress exists (`make apps-down` first); CRDs stay |
+
+A changed OAuth secret only takes effect after `kubectl --context homelab -n tailscale rollout restart deploy/operator`.
+
+Requests from a tailnet device resolve the name through MagicDNS and go straight to the proxy, so they work whether or not Funnel does. Test Funnel from a device off the tailnet, or rely on the public DNS check in `ts-operator-health`.
+
+| Symptom | Check |
+|---|---|
+| The URL loads on tailnet devices, everything else gets a DNS error | The proxy has no `funnel` attribute, so the name was never published. Add the `nodeAttrs` entry above; the record appears within a minute or two. Resolvers cache the earlier "not found" for up to 5 minutes |
+| Still no public record after the policy change | `kubectl --context homelab -n tailscale rollout restart statefulset -l tailscale.com/parent-resource=ember` |
+| `ts-operator-up` fails on "Check the operator logged in" | The OAuth credential lacks a scope or the `tag:k8s-operator` tag |
+| First request hangs for up to a minute | The proxy is fetching its Let's Encrypt certificate; later requests are fast |
+
 ## Helm charts (until Flux)
 
 Ansible installs charts with the `helm` CLI from a committed `values.yaml`, so each one moves into a Flux `HelmRelease` as-is later. The chart version is pinned in the playbook so a reinstall doesn't pick up a newer chart.

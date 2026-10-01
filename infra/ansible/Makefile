@@ -11,10 +11,11 @@ HELM_VERSION := v4.3.0
 CONTEXT := homelab
 
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
-	apps-diff apps-up apps-down neo4j-prep neo4j-up neo4j-health neo4j-down
+	apps-diff apps-up apps-down ts-operator-up ts-operator-health ts-operator-down \
+	neo4j-prep neo4j-up neo4j-health neo4j-down
 
 help:
-	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
+	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
 deps: ## Create .venv with Ansible, install the pinned collections, kubectl and helm
 	test -x $(BIN)/python || $(PYTHON) -m venv $(VENV)
@@ -87,6 +88,15 @@ apps-up: ## Apply k8s/infrastructure then k8s/apps, and wait for their workloads
 # Leaves k8s/infrastructure alone: deleting the ember namespace would also take Neo4j with it.
 apps-down: ## Delete everything in k8s/apps (keeps the namespace and Neo4j)
 	kubectl --context $(CONTEXT) delete -k ../k8s/apps --ignore-not-found --wait
+
+ts-operator-up: ## Install/upgrade the Tailscale operator (serves Tailscale Ingresses), then health check
+	ansible-playbook playbooks/tailscale-operator.yml --tags prep,up,health
+
+ts-operator-health: ## Operator ready and logged in; every Tailscale Ingress has a hostname and answers HTTPS
+	ansible-playbook playbooks/tailscale-operator.yml --tags health
+
+ts-operator-down: ## Uninstall the Tailscale operator (refuses while Tailscale Ingresses exist)
+	ansible-playbook playbooks/tailscale-operator.yml --tags down
 
 neo4j-prep: ## Neo4j prerequisites: helm, pinned node Ready, StorageClass, namespace, chart repo
 	ansible-playbook playbooks/neo4j.yml --tags prep

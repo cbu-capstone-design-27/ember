@@ -242,7 +242,7 @@ Any throwaway string is fine. The script starts the receiver and POSTs `issues`,
 
 Five more stdout lines follow, one per remaining event, each the posted JSON wrapped unchanged. Success ends with `smoke ok: 7 envelopes` on stderr.
 
-To receive a real App delivery later, point a tunnel at `GITHUB_INGESTION_PORT` (default `8080`) and set the App webhook URL to `https://<tunnel-host>/webhook/github` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8080` or `ngrok http 8080`. The tunnel is not part of this smoke and CI does not start one.
+On the cluster, the App's public URL is `https://ember.tail470a31.ts.net` (Tailscale Funnel, see `infra/k8s/README.md`), so the webhook URL becomes `https://ember.tail470a31.ts.net/webhook/github` once the Ingress points at this service. For a receiver on your own machine, point a tunnel at `GITHUB_INGESTION_PORT` (default `8080`) and set the App webhook URL to `https://<tunnel-host>/webhook/github` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8080` or `ngrok http 8080`. The tunnel is not part of this smoke and CI does not start one.
 
 ## Test
 

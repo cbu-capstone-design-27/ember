@@ -327,6 +327,7 @@ Workload manifests live in `infra/k8s/` (see its README), not here.
 | `make reboot` | Rolling reboot of every node |
 | `make kubeconfig` | Fetch the kubeconfig from the server and merge it into `~/.kube/config` as context `homelab`. Run it once on any new machine (needs `.vault-pass`) |
 | `make apps-diff` / `apps-up` / `apps-down` | Preview, apply, or delete the manifests in `infra/k8s` (see `infra/k8s/README.md`) |
+| `make ts-operator-up` / `ts-operator-health` / `ts-operator-down` | Install, check, or remove the Tailscale operator that publishes Ingresses on the tailnet and through Funnel (see `infra/k8s/README.md`) |
 | `make reset` | Uninstall k3s everywhere (asks you to type `reset homelab`). Destroys all volumes |
 
 ---
