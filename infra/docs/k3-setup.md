@@ -20,7 +20,7 @@ The Ansible project (`infra/ansible/`) runs from WSL2 on the Windows host.
 - `qemu-user-static` in WSL with the aarch64 binfmt handler enabled (`/proc/sys/fs/binfmt_misc/qemu-aarch64` exists), to build the Pi image
 - Pi 5 with an SD card or NVMe drive (NVMe preferred, SD cards wear out under k3s writes)
 - `qemu-img` and `e2fsprogs` in WSL (`sudo dnf install qemu-img e2fsprogs`) to build the worker disks
-- This repo cloned inside the WSL filesystem (not `/mnt/c`) and `python3` in WSL. `make deps` installs Ansible and `kubectl` into `infra/ansible/.venv`, so nothing else is needed
+- This repo cloned inside the WSL filesystem (not `/mnt/c`) and Python 3.12 or newer in WSL (the pinned ansible-core needs it; where `python3` is older, install `python3.12` and run `make deps PYTHON=python3.12`). `make deps` installs Ansible and `kubectl` into `infra/ansible/.venv`, so nothing else is needed
 
 ---
 
@@ -325,7 +325,9 @@ Workload manifests live in `infra/k8s/` (see its README), not here.
 |---|---|
 | `make upgrade` | Bump `k3s_version` in `group_vars/all/main.yml` first, then run it (and `make deps` for a matching kubectl) |
 | `make reboot` | Rolling reboot of every node |
-| `make kubeconfig` | Re-fetch the kubeconfig into `~/.kube/config` |
+| `make kubeconfig` | Fetch the kubeconfig from the server and merge it into `~/.kube/config` as context `homelab`. Run it once on any new machine (needs `.vault-pass`) |
+| `make apps-diff` / `apps-up` / `apps-down` | Preview, apply, or delete the manifests in `infra/k8s` (see `infra/k8s/README.md`) |
+| `make ts-operator-up` / `ts-operator-health` / `ts-operator-down` | Install, check, or remove the Tailscale operator that publishes Ingresses on the tailnet and through Funnel (see `infra/k8s/README.md`) |
 | `make reset` | Uninstall k3s everywhere (asks you to type `reset homelab`). Destroys all volumes |
 
 ---
@@ -337,6 +339,8 @@ Workload manifests live in `infra/k8s/` (see its README), not here.
 | Node shows a LAN IP instead of `100.x` | `--node-ip` did not apply. Inspect `/etc/systemd/system/k3s*.service` on that node, then `make up` again |
 | `make prep` fails "needs 3500 MB" | The worker VM has Dynamic Memory on or too little RAM. Shut it down, VM **Settings** > **Memory**: 4096 MB, uncheck **Enable Dynamic Memory**, start it |
 | `make` fails with "The vault password file ... .vault-pass was not found" | `.vault-pass` is missing (Step 7.2) |
+| `make deps` fails "No matching distribution found for ansible-core" | The venv was built with Python older than 3.12. `rm -rf .venv`, then `make deps PYTHON=python3.12` |
+| `error: context "homelab" does not exist` | Run `make kubeconfig` on this machine |
 | Agents never join | From a worker: `curl -k https://<pi ts_ip>:6443/ping` should return `pong`. If not, check ACLs |
 | Pods on different nodes cannot reach each other | `tailscale ping` between nodes; confirm ACL allows `tag:k3s` to `tag:k3s:*` (VXLAN uses UDP 8472) |
 | Everything is slow | `tailscale ping` shows `via DERP`. Use the External switch and make sure UDP 41641 is not blocked outbound |
