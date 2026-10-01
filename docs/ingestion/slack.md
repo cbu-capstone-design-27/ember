@@ -5,7 +5,7 @@
 - Verified live against the Ember workspace (2026-09-29):
   - Receiver, reached through a temporary tunnel: Slack's Request URL check passed with signing on. Slack delivered a message, a thread reply, a `message_changed` edit, a reaction, and six `channel_join` events. Each one was signature-checked and each envelope validated.
   - Backfill: it read the workspace, its members, and the history of the channels the bot had been invited to. Channels the bot wasn't in were skipped.
-- Related: EMBER-39 intake contract, EMBER-3/34 graph schema, EMBER-12 auth and multi-tenancy, EMBER-37 Teams
+- Related: EMBER-39 intake contract, EMBER-3/34 graph schema, EMBER-12 auth and multi-tenancy, EMBER-37 Teams, EMBER-53 agent removal and data retention
 
 ## Requirements and architecture
 
@@ -95,7 +95,7 @@ Slack Web API ◀──bot token── Ingestion Worker: pull_test.py backfill
 | **Edits and deletes** | `message_changed` (old and new text) and `message_deleted` (`deleted_ts`) | Applying them to the stored message. A reversed decision supersedes the old one; it does not overwrite it. |
 | **People** | Raw member objects with email, plus `user_change` events | Resolving `U…` ids to people and joining them to GitHub and Jira by email |
 | **Noise and decisions** | Nothing filtered: joins, bot posts and emoji replies all arrive | Filtering, decision detection, and attribution |
-| **Gaps and scope changes** | `app_rate_limited` notices, and the bot's own `member_joined_channel` / `member_left_channel` events | Triggering a backfill. Starting or stopping a channel, including what to do with that channel's stored data (open question 1). |
+| **Gaps and scope changes** | `app_rate_limited` notices, and the bot's own `member_joined_channel` / `member_left_channel` events | Triggering a backfill. Starting or stopping a channel. Stored data is kept on channel removal and purged on dashboard disconnect ([EMBER-53](#agent-removal-and-data-retention-ember-53)). |
 
 Details: [Handoff to the pipeline](#handoff-to-the-pipeline).
 
@@ -258,7 +258,7 @@ What the Slack source pipeline (EMBER-7, Brandon's processing layer) can rely on
 | People | Raw user objects with email, and `user_change` | Resolve `U…` → Person node. Join to GitHub and Jira by email. |
 | Noise | Nothing is filtered at intake: joins, bot posts, and emoji-only replies all arrive | Filtering and decision detection (research result, negative results included, per EMBER-7) |
 | Gaps | `app_rate_limited` notices | Trigger a backfill with `--since` |
-| Scope changes | `member_joined_channel`/`member_left_channel` for the bot | Start or stop reading that channel. Decide whether to keep or purge already-ingested data (open question). |
+| Scope changes | `member_joined_channel`/`member_left_channel` for the bot | Start or stop reading that channel. Already-ingested data is kept; a dashboard disconnect purges it ([EMBER-53](#agent-removal-and-data-retention-ember-53)). |
 
 ## Privacy and security
 
@@ -268,6 +268,106 @@ What the Slack source pipeline (EMBER-7, Brandon's processing layer) can rely on
 - Self-hosted: all Slack data stays on the team's hardware.
 
 Lessons carried over from the Salesforce Slackbot (NavalX): it stored user tokens in a plain custom field, skipped its OAuth CSRF check when a cache partition was missing, and logged full Slack responses and nonces at INFO. Here tokens live only in env or integration settings, signature checks never silently degrade when a secret is set, and bodies go only to the intake stream, never to logs.
+
+## Agent removal and data retention (EMBER-53)
+
+What happens to ingested Slack data when Ember's bot (the "agent") is removed. This section records the team's decision and looks ahead at how each option plays out in the knowledge graph (ADR 0002, `docs/graph-schema.md`).
+
+### Decision
+
+| Action | Who does it | Ingestion | Data already in Ember |
+| --- | --- | --- | --- |
+| **Remove the bot from a channel** (`/remove @Ember`, or kicking it) | Anyone with channel rights, in Slack | **Stops** for that channel | **Kept** |
+| **Disconnect Slack from the Ember dashboard** | A workspace admin, in Ember | **Stops** for the whole workspace | **Purged** |
+
+**Why it's split this way:**
+- Leaving a channel is easy to do by accident and often temporary, and the decisions already captured are the institutional memory Ember exists to keep.
+- Disconnecting is a deliberate admin action in Ember itself, and it signals "we don't want Ember to have our data". So it removes everything.
+
+### What each action does
+
+**Remove the bot from a channel: keep**
+1. Slack sends `member_left_channel` (or `channel_left`) with the bot as the user, through the subscriptions Ember already has. The intake worker passes it on like any event.
+2. The pipeline marks that channel **inactive** in the integration settings (Application Database) and records `left_at`. Live events stop arriving on their own, because Slack only sends events for channels the bot is in. Backfill and resync skip inactive channels.
+3. **The graph is not touched.** Messages, threads, decisions and people from that channel stay, and their facts stay valid, because they were true when they were said.
+4. Retrieval should show that the channel's facts are as of `left_at`. A decision recorded there may have been revisited later, out of Ember's view.
+5. If the bot is invited back, `member_joined_channel` reactivates the channel, and a backfill with `--since <left_at>` fills the gap.
+
+**Disconnect from the dashboard: purge** (sequence matters, or purged data can come back)
+1. **Stop new data first:**
+   - Mark the workspace `disconnecting` in the integration settings.
+   - Uninstall the app with `apps.uninstall`, or revoke the token with `auth.revoke`. That stops events and kills the token.
+   - Reject anything for that `team_id` still in the queue. The router checks the flag, so in-flight jobs can't write after the purge.
+2. **Delete the subgraph:** Graphiti `clear_data(driver, group_ids=["<tenant>_slack"])` runs `DETACH DELETE` on every entity, episode and community node in that `group_id`, with their relationships.
+3. **Delete every other copy:**
+   - raw intake (`{type:"slack"}` JSONL, and the "data lake" from the proposal)
+   - queued jobs
+   - the token and integration settings
+4. **Keep an audit record:** who disconnected, when, and how many nodes were removed, with **no content**.
+5. Mark the workspace `disconnected`. Reconnecting later is a fresh install and a full backfill.
+
+### Does purging hurt the database?
+
+**Purging a whole Slack connection: no.** This is the payoff of the per-source subgraph design (`group_id = <tenant>_slack`):
+- Everything from that Slack workspace is in one subgraph, and `clear_data` removes exactly that subgraph. The GitHub, Jira, GitLab and Teams subgraphs, the `EmberConfig` node, and the schema constraints are untouched.
+- The uniqueness keys `(group_id, source, external_id)` become free again, so a later reconnect and backfill works normally.
+- **Phase 2 caveat:** cross-source links (a Slack `Identity` → a shared `Person`, or a Slack message `REFERENCES` a Jira issue) are relationships, and `DETACH DELETE` removes them too. The other sources keep their own nodes; they just lose the Slack-side links. No dangling references are possible in Neo4j.
+- **Scale:** a large workspace should be deleted in batches (`CALL { … } IN TRANSACTIONS`) so one huge transaction doesn't stall the database. That's a performance concern, not a correctness one.
+
+**Purging one channel while keeping the rest: yes, it can, unless the graph is built for it.** This isn't in the decision above, but it's the obvious next ask ("remove *that* channel's data"). Graphiti's built-in `remove_episode()` (checked against its source) gets this wrong in three ways:
+
+| Problem | What happens | Why it matters |
+| --- | --- | --- |
+| **Over-deletion** | It deletes every fact whose **first** source was the purged message, even if messages in other channels later confirmed the same fact | Valid knowledge from channels you kept disappears |
+| **Leaked content** | Shared nodes (a `Person`, a `Decision`, a `Module`) survive if anything else mentions them, but their engine-written **summary** isn't rewritten | Sentences from the purged channel can live on inside a summary. That's a privacy failure. |
+| **Broken history** | A `Decision` made in the purged channel can be `SUPERSEDED` by one in a kept channel, or the reverse. Its `DECIDED_IN` evidence disappears. | "Why did we decide X?" chains get gaps, and retrieval may cite a decision whose source is gone |
+
+Neo4j itself stays consistent in every case: no corruption, no dangling edges. The damage is to **meaning**: lost knowledge, leaked text, broken history.
+
+### Future: making per-channel purge safe (note for Brandon)
+
+The ticket asks for a **source channel attribute** on nodes. That's necessary, but on its own it's not sufficient, because some nodes belong to more than one channel.
+
+| Node type | Belongs to one channel? | What to store |
+| --- | --- | --- |
+| `Container` (the channel), `Conversation` (thread), `Message` | Yes | A `channel` attribute: the Slack channel ID (`C…`/`G…`). It's already on every intake message, and the backfill sets it. Purge deletes these by channel directly. |
+| `Identity`, `Person`, `Decision`, `Module` | **No.** The same person or decision shows up across channels. | **Provenance through episodes**, not one attribute. Every Graphiti episode (one intake envelope) is tagged with its channel, e.g. in the episode `name` or `source_description`. A node or fact belongs to a channel only through the episodes that mention it. |
+
+**Purge algorithm** (our own code, replacing `remove_episode`):
+1. Collect the episodes tagged with the channel.
+2. Delete `Message`, `Conversation` and `Container` nodes with that `channel`.
+3. For each fact edge, remove the purged episode IDs from its `episodes` list. Delete the edge only when **no** supporting episode remains.
+4. Delete entity nodes that no remaining episode mentions.
+5. **Regenerate the summary** of every surviving entity that a purged episode mentioned, from its remaining episodes only. Rebuild communities if they're used.
+6. Mark decisions that lost all their `DECIDED_IN` evidence as `evidence removed`, instead of silently keeping them.
+
+**Alternative:** one subgraph per channel (`<tenant>_slack_<channel>`). Channel purge would then be a clean `clear_data`, like disconnect. The cost: Graphiti deduplicates within a `group_id` only, so the same person or decision would be split into one node per channel, and every query would span many subgraphs. **Not recommended** unless per-channel purge becomes a hard requirement.
+
+### Future options beyond the decision
+
+| Option | What it is | When it's worth it |
+| --- | --- | --- |
+| **Grace period** | Disconnect hides the subgraph from retrieval **immediately** (a `disconnected` flag checked at query time), then hard-deletes after e.g. 30 days, unless the admin reconnects | Protects against accidental disconnects. There's still one hard-delete path at the end. |
+| **Redact, keep decisions** | Delete messages and identities, but keep `Decision` nodes and their `SUPERSEDES` chain, with the evidence marked as removed | Teams that want privacy and institutional memory. Needs the admin's explicit choice at disconnect. |
+| **Per-channel purge from the dashboard** | The algorithm above | When users ask to remove one channel's data without disconnecting |
+
+### What a purge cannot reach
+
+These need to be stated in the product and the docs, not discovered later:
+- **Answers already given:** agents (Claude Code, Codex, Cursor) may have received Ember answers built on the purged data. Those can't be recalled.
+- **Hosted LLM calls:** with "your API key" mode (architecture diagram, Extraction LLM), extraction prompts went to the model provider under their retention terms. The local model on the Spark avoids this.
+- **Backups:** Neo4j snapshots and volume backups (EMBER-30/32) keep purged data until they age out. The backup retention period is effectively the real purge deadline. Jacob should set and document it.
+
+### Same pattern for other sources
+
+| Source | "Remove the agent from one scope": keep | "Disconnect": purge `<tenant>_<source>` |
+| --- | --- | --- |
+| Slack | Bot removed from a channel (`member_left_channel`) | Dashboard disconnect, `apps.uninstall` |
+| Teams | Ember app removed from a team (RSC grant revoked; subscriptions fail) | Dashboard disconnect |
+| GitHub | Repo deselected in the App installation (`installation_repositories` removed) | App uninstalled (`installation` deleted) or dashboard disconnect |
+| GitLab, Jira | Project removed from the webhook or connection | Dashboard disconnect |
+
+One rule for every source keeps the dashboard's behavior predictable.
 
 ## Shared patterns for Teams (EMBER-37)
 
@@ -284,7 +384,7 @@ Teams can reuse this shape almost one-for-one:
 
 ## Open questions
 
-1. When the bot is removed from a channel, keep what was already ingested or purge it? (Privacy expectation vs. institutional memory.)
+1. ~~When the bot is removed from a channel, keep what was already ingested or purge it?~~ **Answered (EMBER-53):** removing the bot from a channel keeps the data; disconnecting from the dashboard purges it. See [Agent removal and data retention](#agent-removal-and-data-retention-ember-53).
 2. Is `users:read.email` acceptable to every team, or should email join be opt-in?
 3. Hosted launch: pursue Slack Marketplace listing (backfill limits) or ship hosted with live-only plus shallow backfill?
 4. Should the pipeline treat `thread_broadcast` replies as channel-level statements or only as thread members?
