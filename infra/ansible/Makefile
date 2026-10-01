@@ -11,7 +11,7 @@ HELM_VERSION := v4.3.0
 CONTEXT := homelab
 
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
-	apps-diff apps-up apps-down ts-operator-up ts-operator-health ts-operator-down \
+	apps-diff apps-up apps-health apps-down ts-operator-up ts-operator-health ts-operator-down \
 	neo4j-prep neo4j-up neo4j-health neo4j-down
 
 help:
@@ -77,17 +77,15 @@ apps-diff: ## Preview what apps-up would change on the cluster
 	kubectl --context $(CONTEXT) diff -k ../k8s/infrastructure || [ $$? -eq 1 ]
 	kubectl --context $(CONTEXT) diff -k ../k8s/apps || [ $$? -eq 1 ]
 
-# Every app lives in namespace ember, so rollout status runs there.
-apps-up: ## Apply k8s/infrastructure then k8s/apps, and wait for their workloads to roll out
-	kubectl --context $(CONTEXT) apply -k ../k8s/infrastructure
-	kubectl --context $(CONTEXT) apply -k ../k8s/apps
-	kubectl kustomize ../k8s/apps | kubectl --context $(CONTEXT) get -f - -o name \
-	  | grep -E '^(deployment|statefulset|daemonset)\.' \
-	  | xargs -r -n1 kubectl --context $(CONTEXT) -n ember rollout status --timeout=180s
+apps-up: ## Apply k8s/infrastructure then k8s/apps, wait for the rollouts, then health check
+	ansible-playbook playbooks/apps.yml --tags up,health
+
+apps-health: ## Apps rolled out; the GitHub webhook answers through nginx, from the tailnet and through Funnel
+	ansible-playbook playbooks/apps.yml --tags health
 
 # Leaves k8s/infrastructure alone: deleting the ember namespace would also take Neo4j with it.
-apps-down: ## Delete everything in k8s/apps (keeps the namespace and Neo4j)
-	kubectl --context $(CONTEXT) delete -k ../k8s/apps --ignore-not-found --wait
+apps-down: ## Delete everything in k8s/apps (keeps the namespace and Neo4j; forces a new certificate for the public hostname)
+	ansible-playbook playbooks/apps.yml --tags down
 
 ts-operator-up: ## Install/upgrade the Tailscale operator (serves Tailscale Ingresses), then health check
 	ansible-playbook playbooks/tailscale-operator.yml --tags prep,up,health

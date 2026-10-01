@@ -69,6 +69,20 @@ jobs:
           echo "layout ok"
       - name: docker-compose is valid YAML
         run: docker compose -f infra/docker-compose.yml config --quiet
+      - name: k8s kustomize roots render
+        run: |
+          set -euo pipefail
+          kubectl kustomize infra/k8s/infrastructure > /dev/null
+          kubectl kustomize infra/k8s/apps > /dev/null
+      - name: Placeholder webhook listener compiles
+        run: python3 -m py_compile infra/k8s/apps/github-webhook/listener.py
+      - name: nginx reverse-proxy config loads
+        run: |
+          set -euo pipefail
+          out=$(docker run --rm -e NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
+            -v "$PWD/infra/k8s/apps/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
+            nginx:1.28-alpine nginx -T)
+          grep -F 'location = /webhook/github' <<<"$out"
       - name: Ingestion envelope contract
         run: python3 packages/ingestion-envelope/test_contract.py
       - name: GitHub ingestion webhook contract
