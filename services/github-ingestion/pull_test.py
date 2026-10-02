@@ -22,8 +22,9 @@ many duplicate commit hits were omitted. The JSONL bodies are not rewritten.
 --concurrency or GITHUB_PULL_CONCURRENCY bounds in-flight GETs (default
 DEFAULT_CONCURRENCY, max MAX_CONCURRENCY). Pages inside one collection
 stay in order. Independent collections, detail GETs, reviews, and
-per-branch commit lists run together. One shared gate waits out
-Retry-After, a primary rate-limit reset, or a secondary rate limit.
+per-branch commit lists run together. One shared gate pauses when the
+remaining primary quota is low, waits out Retry-After or a rate-limit
+reset, and retries 5xx and network errors with jittered backoff.
 --readable PATH chooses the summary. --no-readable skips it. --readable -
 prints the summary on stdout and requires --output. Progress goes to stderr.
 
@@ -38,8 +39,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+import http.client
 import json
 import os
+import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -50,6 +54,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 
 from envelope import wrap_github
@@ -60,9 +65,33 @@ MAX_PAGES = 200
 PER_PAGE = 100
 DEFAULT_CONCURRENCY = 32
 MAX_CONCURRENCY = 80
-MAX_RETRY_WAIT = 120.0
+# Delays this connector invents (5xx, network, a 429 with no server wait).
+MAX_BACKOFF_WAIT = 120.0
+# Retry-After and reset timestamps. GitHub's primary window is one hour,
+# and the docs say not to call again before x-ratelimit-reset.
+MAX_SERVER_WAIT = 3600.0
+# Total rate-limit sleep one call may accumulate before it fails.
+THROTTLE_BUDGET = 3600.0
+TRANSIENT_ATTEMPTS = 5
+TRANSIENT_STATUSES = {500, 502, 503, 504}
+# Pause every worker at or below this many remaining requests. Default
+# concurrency (32) is under it, so requests already in flight can finish.
+# The floor shrinks for small limits so a short window does not pause on
+# every response.
+RATE_LIMIT_FLOOR = 50
 SECONDARY_RATE_LIMIT_WAIT = 60.0
+_POLICY_RE = re.compile(r'"([^"]*)"([^,]*)')
 Signer = Callable[[str, bytes], bytes]
+Jitter = Callable[[], float]
+
+
+def _default_jitter() -> float:
+    return random.uniform(0.5, 1.0)
+
+
+def _wait_text(seconds: float) -> str:
+    shown = f"{seconds:.1f}s" if seconds < 10 else f"{seconds:.0f}s"
+    return shown
 
 
 class RateLimitGate:
@@ -169,31 +198,237 @@ def resolve_concurrency(cli_value: int | None) -> int:
     return cli_value
 
 
-def retry_after_seconds(response: Response, *, now: float | None = None) -> float | None:
-    """Seconds to wait on a GitHub throttle, or None when the response is final."""
-    if response.status < 400:
+def _lower_headers(response: Response) -> dict[str, str]:
+    return {key.lower(): value for key, value in response.headers.items()}
+
+
+def _as_float(raw: str | None) -> float | None:
+    if raw is None:
         return None
-    headers = {key.lower(): value for key, value in response.headers.items()}
-    raw = headers.get("retry-after")
-    if raw:
+    try:
+        return float(raw.strip())
+    except ValueError:
+        return None
+
+
+def _header_float(headers: dict[str, str], *names: str) -> float | None:
+    for name in names:
+        value = _as_float(headers.get(name))
+        if value is not None:
+            return value
+    return None
+
+
+def seconds_until_absolute(raw: str | None, now: float) -> float | None:
+    """Seconds until an epoch or ISO-8601 timestamp. Negative when it has passed."""
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    if "T" in text:
         try:
-            return max(0.0, float(raw))
+            moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
         except ValueError:
             return None
-    if response.status in (403, 429) and headers.get("x-ratelimit-remaining") == "0":
-        reset = headers.get("x-ratelimit-reset")
-        if reset:
-            try:
-                clock = time.time() if now is None else now
-                return max(0.0, float(reset) - clock)
-            except ValueError:
-                return None
-    if response.status in (403, 429):
-        text = response.body.decode("utf-8", "replace").lower()
-        if "secondary rate limit" in text or "abuse detection" in text:
-            return SECONDARY_RATE_LIMIT_WAIT
-    if response.status in (429, 502, 503):
-        return 1.0
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment.timestamp() - now
+    value = _as_float(text)
+    if value is None:
+        return None
+    return value - now
+
+
+def _policies(header: str) -> list[tuple[str, dict[str, str]]]:
+    """Parse a RateLimit / RateLimit-Policy header into (name, attributes)."""
+    found: list[tuple[str, dict[str, str]]] = []
+    for match in _POLICY_RE.finditer(header):
+        attrs: dict[str, str] = {}
+        for part in match.group(2).split(";"):
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            attrs[key.strip().lower()] = value.strip().strip('"')
+        found.append((match.group(1), attrs))
+    return found
+
+
+def quota_floor(limit: float | None) -> float:
+    """Remaining count at or below which every worker pauses."""
+    if limit is None:
+        return float(RATE_LIMIT_FLOOR)
+    return float(min(RATE_LIMIT_FLOOR, max(1, int(limit) // 10)))
+
+
+def _quota_windows(response: Response, now: float) -> list[tuple[float, float | None, float]]:
+    """(remaining, limit, seconds-until-reset) from classic and structured headers."""
+    headers = _lower_headers(response)
+    windows: list[tuple[float, float | None, float]] = []
+    remaining = _header_float(headers, "x-ratelimit-remaining", "ratelimit-remaining")
+    limit = _header_float(headers, "x-ratelimit-limit", "ratelimit-limit")
+    reset_raw = headers.get("x-ratelimit-reset") or headers.get("ratelimit-reset")
+    reset_wait = seconds_until_absolute(reset_raw, now)
+    if remaining is not None and reset_wait is not None:
+        windows.append((remaining, limit, reset_wait))
+
+    policy_limits: dict[str, float] = {}
+    for name in ("ratelimit-policy", "beta-ratelimit-policy"):
+        raw = headers.get(name)
+        if not raw or '"' not in raw:
+            continue
+        for policy, attrs in _policies(raw):
+            quota = _as_float(attrs.get("q"))
+            if quota is not None:
+                policy_limits[policy] = quota
+    for name in ("ratelimit", "beta-ratelimit"):
+        raw = headers.get(name)
+        if not raw or '"' not in raw:
+            continue
+        for policy, attrs in _policies(raw):
+            left = _as_float(attrs.get("r"))
+            delta = _as_float(attrs.get("t"))
+            if left is None or delta is None:
+                continue
+            windows.append((left, policy_limits.get(policy), delta))
+    return windows
+
+
+def throttle_seconds(response: Response, *, now: float | None = None) -> float | None:
+    """Seconds to pause because the remaining quota is at or under the floor.
+
+    Needs both a remaining count and a reset. A healthy remaining count, or a
+    remaining count with no reset, does not pause.
+    """
+    clock = time.time() if now is None else now
+    wait: float | None = None
+    for remaining, limit, reset_wait in _quota_windows(response, clock):
+        if remaining > quota_floor(limit) or reset_wait <= 0:
+            continue
+        capped = min(reset_wait, MAX_SERVER_WAIT)
+        if wait is None or capped > wait:
+            wait = capped
+    return wait
+
+
+def _retry_after_header(headers: dict[str, str], *, allow_beta: bool) -> float | None:
+    raw = headers.get("retry-after")
+    if raw is None and allow_beta:
+        raw = headers.get("beta-retry-after")
+    value = _as_float(raw)
+    if value is None:
+        return None
+    return max(0.0, value)
+
+
+def _is_secondary(response: Response) -> bool:
+    text = response.body.decode("utf-8", "replace").lower()
+    return "secondary rate limit" in text or "abuse detection" in text
+
+
+def is_rate_limited(response: Response) -> bool:
+    """True for a primary or secondary GitHub limit, not a permission 403."""
+    if response.status == 429:
+        return True
+    if response.status != 403:
+        return False
+    headers = _lower_headers(response)
+    if headers.get("retry-after"):
+        return True
+    remaining = _header_float(headers, "x-ratelimit-remaining", "ratelimit-remaining")
+    if remaining == 0:
+        return True
+    return _is_secondary(response)
+
+
+def _policy_wait(headers: dict[str, str]) -> float | None:
+    """Longest structured ``t`` (seconds until reset) that applies to this response."""
+    wait: float | None = None
+    for name in ("ratelimit", "beta-ratelimit"):
+        raw = headers.get(name)
+        if not raw or '"' not in raw:
+            continue
+        for _policy, attrs in _policies(raw):
+            delta = _as_float(attrs.get("t"))
+            left = _as_float(attrs.get("r"))
+            # r is omitted when the caller is well inside the quota. Only an
+            # exhausted policy (r=0) names a delay we must wait out.
+            if delta is None or delta <= 0 or left != 0:
+                continue
+            wait = delta if wait is None else max(wait, delta)
+    return wait
+
+
+def _server_wait(response: Response, now: float) -> float | None:
+    """Seconds the response itself asked us to wait, or None if it didn't.
+
+    When the primary quota is exhausted (remaining 0), the later of Retry-After
+    and the reset wins, so the connector does not call again while that window
+    is still closed.
+    """
+    headers = _lower_headers(response)
+    retry_after = _retry_after_header(headers, allow_beta=response.status == 429)
+    remaining = _header_float(headers, "x-ratelimit-remaining", "ratelimit-remaining")
+    reset_raw = headers.get("x-ratelimit-reset") or headers.get("ratelimit-reset")
+    reset_wait = seconds_until_absolute(reset_raw, now)
+    policy_wait = _policy_wait(headers)
+    # x-ratelimit-reset is on every GitHub response, including a secondary
+    # limit that still has primary quota. Use it only when that quota is
+    # exhausted, or when the response gave no remaining count at all.
+    reset_applies = reset_wait is not None and reset_wait > 0 and (remaining is None or remaining == 0)
+    exhausted = remaining == 0 or policy_wait is not None
+
+    candidates: list[float] = []
+    if retry_after is not None:
+        candidates.append(retry_after)
+    if reset_applies:
+        candidates.append(reset_wait)
+    if policy_wait is not None:
+        candidates.append(policy_wait)
+    if not candidates:
+        return None
+    if exhausted:
+        return max(candidates)
+    return candidates[0]
+
+
+def rate_limit_wait(response: Response, attempt: int = 0, *, now: float | None = None, jitter: Jitter | None = None) -> float:
+    """Seconds to wait before retrying a rate-limited response. Never jittered
+    when the server supplied the delay. Capped at MAX_SERVER_WAIT for a
+    server delay and MAX_BACKOFF_WAIT for one we invent."""
+    clock = time.time() if now is None else now
+    server = _server_wait(response, clock)
+    if server is not None and server > 0:
+        return min(server, MAX_SERVER_WAIT)
+    if response.status in (403, 429) and _is_secondary(response):
+        return min(SECONDARY_RATE_LIMIT_WAIT * (2 ** max(0, attempt)), MAX_BACKOFF_WAIT)
+    scale = jitter or _default_jitter
+    base = min(float(2 ** max(0, attempt)), MAX_BACKOFF_WAIT)
+    return min(base * scale(), MAX_BACKOFF_WAIT)
+
+
+def transient_wait(response: Response, attempt: int = 0, *, jitter: Jitter | None = None) -> float:
+    """Seconds to wait on a 5xx or network error. Retry-After wins; otherwise
+    1, 2, 4, ... seconds times jitter in [0.5, 1], capped at MAX_BACKOFF_WAIT."""
+    headers = _lower_headers(response)
+    server = _retry_after_header(headers, allow_beta=False)
+    if server is not None and server > 0:
+        return min(server, MAX_SERVER_WAIT)
+    scale = jitter or _default_jitter
+    base = min(float(2 ** max(0, attempt)), MAX_BACKOFF_WAIT)
+    return min(base * scale(), MAX_BACKOFF_WAIT)
+
+
+def retry_after_seconds(response: Response, attempt: int = 0, *, now: float | None = None, jitter: Jitter | None = None) -> float | None:
+    """Seconds to wait before retrying, or None when the response is final.
+
+    Kept for callers and tests. Rate-limit delays are not jittered when the
+    server named them. Pass ``jitter`` to make a 5xx delay deterministic.
+    """
+    if is_rate_limited(response):
+        return rate_limit_wait(response, attempt, now=now, jitter=jitter)
+    if response.status in TRANSIENT_STATUSES:
+        return transient_wait(response, attempt, jitter=jitter)
     return None
 
 
@@ -204,29 +439,61 @@ def exchange_with_retry(
     headers: dict[str, str],
     body: bytes | None,
     *,
-    attempts: int = 5,
+    attempts: int = TRANSIENT_ATTEMPTS,
+    throttle_budget: float = THROTTLE_BUDGET,
     sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    jitter: Jitter | None = None,
     gate: RateLimitGate | None = None,
 ) -> Response:
-    """Repeat when GitHub sends Retry-After, a primary reset, or a secondary limit.
+    """Send one request. Low quota pauses every worker. Rate limits retry
+    until ``throttle_budget`` seconds have been waited. 5xx and network
+    errors retry ``attempts`` times with jittered backoff.
 
     ``gate`` is shared by every worker in one pull. A throttle extends it so
     the next request from any worker waits out the same window.
     """
+    scale = jitter or _default_jitter
+    throttled = 0.0
+    failures = 0
+    rate_attempt = 0
     response: Response | None = None
-    for attempt in range(attempts):
+    while True:
         if gate is not None:
             gate.wait()
         response = exchange(method, url, headers, body)
-        wait = retry_after_seconds(response)
-        if wait is None or attempt == attempts - 1:
-            return response
-        wait = min(wait, MAX_RETRY_WAIT)
-        if gate is not None:
-            gate.extend(wait)
-        print(f"GitHub asked to wait {wait:.0f}s ({response.status}) {url}", file=sys.stderr)
-        sleep(wait)
-    return response
+        now = clock()
+        pause = throttle_seconds(response, now=now)
+        if pause is not None and gate is not None:
+            gate.extend(pause)
+            print(f"GitHub quota low; pausing {_wait_text(pause)}", file=sys.stderr)
+        if is_rate_limited(response):
+            wait = rate_limit_wait(response, rate_attempt, now=now, jitter=scale)
+            if wait <= 0:
+                wait = 1.0
+            if throttled + wait > throttle_budget:
+                return response
+            throttled += wait
+            rate_attempt += 1
+            if gate is not None:
+                gate.extend(wait)
+            print(f"GitHub asked to wait {_wait_text(wait)} ({response.status}) {url}", file=sys.stderr)
+            sleep(wait)
+            continue
+        if response.status in TRANSIENT_STATUSES:
+            failures += 1
+            if failures >= attempts:
+                return response
+            wait = transient_wait(response, failures - 1, jitter=scale)
+            if gate is not None:
+                gate.extend(wait)
+            print(
+                f"GitHub HTTP {response.status}, retry {failures}/{attempts - 1} in {wait:.1f}s {url}",
+                file=sys.stderr,
+            )
+            sleep(wait)
+            continue
+        return response
 
 
 def map_ordered(fn, items: list, workers: int) -> list:
@@ -239,12 +506,17 @@ def map_ordered(fn, items: list, workers: int) -> list:
 
 
 def urllib_exchange(method: str, url: str, headers: dict[str, str], body: bytes | None) -> Response:
+    """One HTTP exchange. A network failure comes back as 503 so the same
+    backoff retries it instead of ending a long backfill."""
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return Response(response.status, dict(response.headers), response.read())
     except urllib.error.HTTPError as exc:
         return Response(exc.code, dict(exc.headers), exc.read())
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        return Response(503, {}, f"network error: {reason}".encode("utf-8", "replace"))
 
 
 def _private_key_file() -> tuple[str, Callable[[], None]]:
@@ -286,7 +558,16 @@ def _read_json(response: Response, what: str):
     return response.json()
 
 
-def installation_token(app_jwt: str, repo: str, exchange, gate: RateLimitGate | None = None) -> str:
+def installation_token(
+    app_jwt: str,
+    repo: str,
+    exchange,
+    gate: RateLimitGate | None = None,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    jitter: Jitter | None = None,
+) -> str:
     found = exchange_with_retry(
         exchange,
         "GET",
@@ -294,6 +575,9 @@ def installation_token(app_jwt: str, repo: str, exchange, gate: RateLimitGate | 
         _headers(app_jwt),
         None,
         gate=gate,
+        sleep=sleep,
+        clock=clock,
+        jitter=jitter,
     )
     installation = _read_json(found, f"installation lookup for {repo}")
     installation_id = installation.get("id")
@@ -306,6 +590,9 @@ def installation_token(app_jwt: str, repo: str, exchange, gate: RateLimitGate | 
         _headers(app_jwt, json_body=True),
         b"{}",
         gate=gate,
+        sleep=sleep,
+        clock=clock,
+        jitter=jitter,
     )
     token = _read_json(minted, "installation token").get("token")
     if not isinstance(token, str) or not token:
@@ -421,15 +708,39 @@ def unique_commits(groups: list[list[dict]]) -> tuple[list[dict], int]:
 class GithubPull:
     """REST backfill for one repo. HTTP stays inside ``workers`` at a time."""
 
-    def __init__(self, repo: str, token: str, exchange, workers: int, gate: RateLimitGate | None = None) -> None:
+    def __init__(
+        self,
+        repo: str,
+        token: str,
+        exchange,
+        workers: int,
+        gate: RateLimitGate | None = None,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.time,
+        jitter: Jitter | None = None,
+    ) -> None:
         self.repo = repo
         self.token = token
         self.exchange = exchange
         self.workers = workers
         self.gate = gate or RateLimitGate()
+        self.sleep = sleep
+        self.clock = clock
+        self.jitter = jitter
 
     def _request(self, url: str) -> Response:
-        return exchange_with_retry(self.exchange, "GET", url, _headers(self.token), None, gate=self.gate)
+        return exchange_with_retry(
+            self.exchange,
+            "GET",
+            url,
+            _headers(self.token),
+            None,
+            gate=self.gate,
+            sleep=self.sleep,
+            clock=self.clock,
+            jitter=self.jitter,
+        )
 
     def get_object(self, url: str) -> dict:
         payload = _read_json(self._request(url), f"GET {url}")
@@ -818,14 +1129,20 @@ def pull(
     sign: Signer = openssl_sign,
     workers: int = DEFAULT_CONCURRENCY,
     progress: Callable[[str], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    jitter: Jitter | None = None,
+    gate: RateLimitGate | None = None,
 ) -> Capture:
     if "/" not in repo or repo.startswith("/") or repo.endswith("/"):
         raise PullError("GITHUB_TEST_REPO must look like owner/name")
     now = int(time.time()) if now is None else now
     app_jwt = build_app_jwt(app_id, pem_path, now=now, sign=sign)
-    gate = RateLimitGate()
-    token = installation_token(app_jwt, repo, exchange, gate)
-    return GithubPull(repo, token, exchange, workers, gate).capture(progress)
+    gate = gate or RateLimitGate()
+    token = installation_token(app_jwt, repo, exchange, gate, sleep=sleep, clock=clock, jitter=jitter)
+    return GithubPull(
+        repo, token, exchange, workers, gate, sleep=sleep, clock=clock, jitter=jitter
+    ).capture(progress)
 
 
 def main(argv: list[str] | None = None) -> int:

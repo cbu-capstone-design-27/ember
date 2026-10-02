@@ -4,6 +4,8 @@ Jira admin-webhook connector. Each delivery is emitted as EMBER-39 intake: `{"ty
 
 Jira: EMBER-31. Parent epic: EMBER-6. Floor scaffold. The worker is site- and project-agnostic. It does not clean or sort the payload. Embeddings stay out (EMBER-3). No live tunnel and no webhook registration in this change.
 
+Rate limits for an API token and for a Jira Cloud app, and how the backfill waits them out: [`docs/ingestion/jira.md`](../../docs/ingestion/jira.md) (EMBER-44).
+
 Which projects feed Ember is a later webapp concern, not this service. A JQL filter, if you add one, lives on the Jira webhook. This process does not read it.
 
 ## Status
@@ -152,7 +154,9 @@ Then, one envelope each:
 
 The issue object still contains Jira's own comment and worklog previews. Those previews are not removed. The complete comment and worklog lists are additional envelopes. A comment or worklog total of 0 skips that list GET.
 
-Search pages stay one-after-another. Detail GETs run 32 at a time, across issues and across comments, changelog pages, worklogs, and the other resources. Later pages are requested together, then written back in `startAt` order. Tune with `--concurrency N` or `JIRA_PULL_CONCURRENCY` (1–64). If Jira returns `Retry-After`, the script waits that long and retries. A `429` / `502` / `503` without `Retry-After` waits 1s, then 2s, then 4s, and so on.
+Search pages stay one-after-another. Detail GETs run 32 at a time, across issues and across comments, changelog pages, worklogs, and the other resources. Later pages are requested together, then written back in `startAt` order. Tune with `--concurrency N` or `JIRA_PULL_CONCURRENCY` (1–64).
+
+Every worker shares one gate (EMBER-44). It pauses when `X-RateLimit-Remaining` or a `RateLimit` policy's `r` is at or under 50, or under a tenth of a smaller bucket, until the reset. A 429 waits out `Retry-After` or `X-RateLimit-Reset` (ISO-8601), up to an hour, because a quota 429 can ask for most of that hour. A 429 with no server delay, a 5xx, or a dropped connection backs off 1s, 2s, 4s, … with jitter, each sleep at most 120 seconds. Five tries on a 5xx, then the pull stops. A 403 is still a permission error, not a throttle. This command uses an API token, so it is on Jira's burst limits; the hourly points quotas apply to OAuth, Forge, and Connect apps. Details: [`docs/ingestion/jira.md`](../../docs/ingestion/jira.md).
 
 A `403` or `404` on watchers, votes, or one issue's changelog is skipped for that issue. A changelog body with neither `values` nor `histories` is skipped the same way. Every other GET failure stops the pull.
 
