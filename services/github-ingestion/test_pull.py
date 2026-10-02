@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -538,6 +539,225 @@ class ConcurrencyTest(unittest.TestCase):
         finally:
             if prior is not None:
                 os.environ["GITHUB_PULL_CONCURRENCY"] = prior
+
+
+class FakeClock:
+    """Wall time. sleep() advances it and records the delays."""
+
+    def __init__(self, start: float = 1_800_000_000.0) -> None:
+        self.now = start
+        self.slept: list[float] = []
+
+    def time(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+class RateLimitHandlingTest(unittest.TestCase):
+    def test_primary_limit_waits_until_reset_past_the_backoff_cap(self):
+        clock = FakeClock()
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return pull_test.Response(
+                    403,
+                    {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(int(clock.now) + 200)},
+                    b'{"message":"API rate limit exceeded for user ID 1."}',
+                )
+            return pull_test.Response(200, {}, b'{"ok":true}')
+
+        response = pull_test.exchange_with_retry(
+            exchange, "GET", "https://api.github.com/repos/acme/widget", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 1.0,
+        )
+        self.assertEqual(response.status, 200)
+        self.assertEqual(clock.slept, [200.0])
+        self.assertGreater(clock.slept[0], pull_test.MAX_BACKOFF_WAIT)
+
+    def test_retry_after_longer_than_reset_waits_when_quota_is_exhausted(self):
+        clock = FakeClock()
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return pull_test.Response(
+                    429,
+                    {
+                        "Retry-After": "50",
+                        "x-ratelimit-remaining": "0",
+                        "x-ratelimit-reset": str(int(clock.now) + 10),
+                    },
+                    b"slow",
+                )
+            return pull_test.Response(200, {}, b"{}")
+
+        pull_test.exchange_with_retry(
+            exchange, "GET", "https://api.github.com/repos/acme/widget", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 1.0,
+        )
+        self.assertEqual(clock.slept, [50.0])
+
+    def test_server_wait_is_capped_at_one_hour(self):
+        clock = FakeClock()
+        response = pull_test.Response(429, {"Retry-After": "99999"}, b"slow")
+        self.assertEqual(pull_test.rate_limit_wait(response, now=clock.now), pull_test.MAX_SERVER_WAIT)
+
+    def test_secondary_limit_backs_off_then_caps(self):
+        body = b'{"message":"You have exceeded a secondary rate limit. Please wait a few minutes."}'
+        response = pull_test.Response(403, {}, body)
+        self.assertEqual(
+            [pull_test.rate_limit_wait(response, attempt) for attempt in range(3)],
+            [60.0, 120.0, 120.0],
+        )
+
+    def test_secondary_limit_ignores_a_healthy_primary_reset(self):
+        body = b'{"message":"You have exceeded a secondary rate limit. Please wait a few minutes."}'
+        response = pull_test.Response(
+            403,
+            {"x-ratelimit-remaining": "4000", "x-ratelimit-reset": "1800003000"},
+            body,
+        )
+        self.assertEqual(pull_test.rate_limit_wait(response, now=1_800_000_000.0), pull_test.SECONDARY_RATE_LIMIT_WAIT)
+
+    def test_low_quota_pauses_the_next_request(self):
+        clock = FakeClock()
+        reset = str(int(clock.now) + 20)
+        headers = {"X-RateLimit-Limit": "5000", "X-RateLimit-Remaining": "10", "X-RateLimit-Reset": reset}
+        gate = pull_test.RateLimitGate(clock=clock.time, sleep=clock.sleep)
+
+        def exchange(method, url, headers_in, body):
+            return pull_test.Response(200, dict(headers), b"{}")
+
+        pull_test.exchange_with_retry(
+            exchange, "GET", "https://api.github.com/repos/acme/widget", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 1.0, gate=gate,
+        )
+        self.assertEqual(clock.slept, [])
+        pull_test.exchange_with_retry(
+            exchange, "GET", "https://api.github.com/repos/acme/widget", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 1.0, gate=gate,
+        )
+        self.assertEqual(clock.slept, [20.0])
+
+    def test_healthy_quota_does_not_pause(self):
+        now = 1_800_000_000.0
+        response = pull_test.Response(
+            200,
+            {"X-RateLimit-Limit": "5000", "X-RateLimit-Remaining": "1500", "X-RateLimit-Reset": str(int(now) + 20)},
+            b"{}",
+        )
+        self.assertIsNone(pull_test.throttle_seconds(response, now=now))
+
+    def test_floor_shrinks_for_a_small_limit(self):
+        now = 1000.0
+
+        def response(limit: int, remaining: int) -> pull_test.Response:
+            return pull_test.Response(
+                200,
+                {
+                    "X-RateLimit-Limit": str(limit),
+                    "X-RateLimit-Remaining": str(remaining),
+                    "X-RateLimit-Reset": "1010",
+                },
+                b"",
+            )
+
+        self.assertEqual(pull_test.throttle_seconds(response(5000, 50), now=now), 10.0)
+        self.assertIsNone(pull_test.throttle_seconds(response(5000, 51), now=now))
+        self.assertIsNone(pull_test.throttle_seconds(response(60, 7), now=now))
+        self.assertEqual(pull_test.throttle_seconds(response(60, 6), now=now), 10.0)
+        self.assertEqual(
+            pull_test.throttle_seconds(
+                pull_test.Response(200, {"RateLimit-Remaining": "40", "RateLimit-Reset": "1010"}, b""),
+                now=now,
+            ),
+            10.0,
+        )
+
+    def test_server_errors_back_off_with_jitter_then_give_up(self):
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            return pull_test.Response(503, {}, b"busy")
+
+        clock = FakeClock()
+        response = pull_test.exchange_with_retry(
+            exchange, "GET", "https://api.github.com/repos/acme/widget", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 0.5, attempts=4,
+        )
+        self.assertEqual(response.status, 503)
+        self.assertEqual(calls["n"], 4)
+        self.assertEqual(clock.slept, [0.5, 1.0, 2.0])
+
+    def test_retry_after_on_503_is_not_jittered(self):
+        response = pull_test.Response(503, {"Retry-After": "9"}, b"busy")
+        self.assertEqual(pull_test.transient_wait(response, 3, jitter=lambda: 0.5), 9.0)
+
+    def test_backoff_stays_under_the_cap(self):
+        response = pull_test.Response(500, {}, b"")
+        self.assertEqual(pull_test.transient_wait(response, 10, jitter=lambda: 1.0), pull_test.MAX_BACKOFF_WAIT)
+
+    def test_network_errors_are_retried(self):
+        import urllib.error
+
+        for error in (urllib.error.URLError("dns failure"), TimeoutError("timed out"), ConnectionResetError("reset")):
+            with self.subTest(error=type(error).__name__):
+                with unittest.mock.patch.object(pull_test.urllib.request, "urlopen", side_effect=error):
+                    response = pull_test.urllib_exchange("GET", "https://api.github.com/rate_limit", {}, None)
+                self.assertEqual(response.status, 503)
+                self.assertIn(b"network error", response.body)
+                self.assertEqual(pull_test.retry_after_seconds(response, jitter=lambda: 1.0), 1.0)
+
+    def test_rate_limit_budget_stops_a_stuck_429(self):
+        def exchange(method, url, headers, body):
+            return pull_test.Response(429, {"Retry-After": "6"}, b"slow")
+
+        clock = FakeClock()
+        response = pull_test.exchange_with_retry(
+            exchange, "GET", "https://api.github.com/repos/acme/widget", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 1.0, throttle_budget=10,
+        )
+        self.assertEqual(response.status, 429)
+        self.assertEqual(clock.slept, [6.0])
+
+    def test_permission_403_is_not_retried(self):
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            return pull_test.Response(403, {"x-ratelimit-remaining": "4000"}, b'{"message":"Resource not accessible by integration"}')
+
+        response = pull_test.exchange_with_retry(
+            exchange, "GET", "https://api.github.com/repos/acme/widget", {}, None,
+            sleep=lambda _seconds: self.fail("slept"), clock=lambda: 0.0, jitter=lambda: 1.0,
+        )
+        self.assertEqual(response.status, 403)
+        self.assertEqual(calls["n"], 1)
+
+    def test_pull_client_retries_a_429_on_the_request_path(self):
+        clock = FakeClock()
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return pull_test.Response(429, {"Retry-After": "5"}, b"slow")
+            return pull_test.Response(200, {}, b'{"id":1,"body":"kept"}')
+
+        gate = pull_test.RateLimitGate(clock=clock.time, sleep=clock.sleep)
+        client = pull_test.GithubPull(
+            "acme/widget", "ghs_test", exchange, 1, gate, sleep=clock.sleep, clock=clock.time, jitter=lambda: 1.0,
+        )
+        self.assertEqual(client.get_object("https://api.github.com/repos/acme/widget")["body"], "kept")
+        self.assertEqual(clock.slept, [5.0])
+        self.assertEqual(calls["n"], 2)
 
 
 if __name__ == "__main__":
