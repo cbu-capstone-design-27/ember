@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -564,6 +565,42 @@ class PullFlowTest(unittest.TestCase):
             list(pull_test.pull(ORIGIN, EMAIL, TOKEN, "ember", self.exchange))
         self.assertEqual(self.calls, [])
 
+    def test_search_429_is_retried_inside_the_pull(self):
+        clock = FakeClock()
+        seen = {"search": 0}
+        real = self.exchange
+
+        def exchange(method, url, headers, body):
+            if url.endswith("/rest/api/3/search/jql"):
+                seen["search"] += 1
+                if seen["search"] == 1:
+                    return pull_test.Response(
+                        429,
+                        {"Retry-After": "3", "RateLimit-Reason": "jira-burst-based"},
+                        b"slow",
+                    )
+            return real(method, url, headers, body)
+
+        self.calls = []
+        gate = pull_test.RateLimitGate(clock=clock.time, sleep=clock.sleep)
+        envelopes = list(
+            pull_test.pull(
+                ORIGIN,
+                EMAIL,
+                TOKEN,
+                "EMBER",
+                exchange,
+                workers=2,
+                sleep=clock.sleep,
+                clock=clock.time,
+                jitter=lambda: 1.0,
+                gate=gate,
+            )
+        )
+        self.assertGreaterEqual(seen["search"], 2)
+        self.assertIn(3.0, clock.slept)
+        self.assertIn(ISSUE_1, [item["body"] for item in envelopes])
+
 
 class ConcurrencyTest(unittest.TestCase):
     def test_parallel_results_stay_in_list_order(self):
@@ -631,6 +668,7 @@ class ConcurrencyTest(unittest.TestCase):
             {},
             None,
             sleep=waits.append,
+            jitter=lambda: 1.0,
         )
         self.assertEqual(response.status, 200)
         self.assertEqual(waits, [1.0, 2.0])
@@ -659,6 +697,237 @@ class ConcurrencyTest(unittest.TestCase):
                 os.environ.pop("JIRA_PULL_CONCURRENCY", None)
             else:
                 os.environ["JIRA_PULL_CONCURRENCY"] = prior
+
+
+class FakeClock:
+    """Wall time. sleep() advances it and records the delays."""
+
+    def __init__(self, start: float = 1_800_000_000.0) -> None:
+        self.now = start
+        self.slept: list[float] = []
+
+    def time(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+class RateLimitHandlingTest(unittest.TestCase):
+    def test_retry_after_wins_while_quota_remains(self):
+        clock = FakeClock()
+        calls = {"n": 0}
+        from datetime import datetime, timezone
+
+        later = datetime.fromtimestamp(clock.now + 100, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return pull_test.Response(
+                    429,
+                    {
+                        "Retry-After": "8",
+                        "X-RateLimit-Remaining": "12",
+                        "X-RateLimit-Reset": later,
+                    },
+                    b"slow",
+                )
+            return pull_test.Response(200, {}, b'{"ok":true}')
+
+        pull_test.exchange_with_retry(
+            exchange,
+            "GET",
+            f"{ORIGIN}/rest/api/3/issue/EMBER-1",
+            {},
+            None,
+            sleep=clock.sleep,
+            clock=clock.time,
+            jitter=lambda: 1.0,
+        )
+        self.assertEqual(clock.slept, [8.0])
+
+    def test_iso_reset_is_waited_when_retry_after_is_absent(self):
+        clock = FakeClock()
+        from datetime import datetime, timezone
+
+        reset = datetime.fromtimestamp(clock.now + 30, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return pull_test.Response(
+                    429,
+                    {"X-RateLimit-Remaining": "0", "X-RateLimit-Limit": "100", "X-RateLimit-Reset": reset},
+                    b"slow",
+                )
+            return pull_test.Response(200, {}, b'{"ok":true}')
+
+        pull_test.exchange_with_retry(
+            exchange,
+            "GET",
+            f"{ORIGIN}/rest/api/3/issue/EMBER-1",
+            {},
+            None,
+            sleep=clock.sleep,
+            clock=clock.time,
+            jitter=lambda: 1.0,
+        )
+        self.assertEqual(clock.slept, [30.0])
+
+    def test_quota_retry_after_is_not_capped_at_the_backoff_limit(self):
+        clock = FakeClock()
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return pull_test.Response(
+                    429,
+                    {
+                        "Retry-After": "1847",
+                        "X-RateLimit-Remaining": "0",
+                        "RateLimit-Reason": "jira-quota-global-based",
+                    },
+                    b"slow",
+                )
+            return pull_test.Response(200, {}, b"{}")
+
+        pull_test.exchange_with_retry(
+            exchange,
+            "GET",
+            f"{ORIGIN}/rest/api/3/issue/EMBER-1",
+            {},
+            None,
+            sleep=clock.sleep,
+            clock=clock.time,
+            jitter=lambda: 1.0,
+        )
+        self.assertEqual(clock.slept, [1847.0])
+
+    def test_absurd_retry_after_caps_at_one_hour(self):
+        response = pull_test.Response(429, {"Retry-After": "99999"}, b"slow")
+        self.assertEqual(pull_test.rate_limit_wait(response), pull_test.MAX_SERVER_WAIT)
+
+    def test_structured_rate_limit_header_pauses_a_low_burst_bucket(self):
+        now = 1_800_000_000.0
+        low = pull_test.Response(
+            200,
+            {
+                "RateLimit-Policy": '"jira-burst-based";q=100;w=1',
+                "RateLimit": '"jira-burst-based";r=5;t=2',
+            },
+            b"",
+        )
+        healthy = pull_test.Response(
+            200,
+            {
+                "RateLimit-Policy": '"jira-burst-based";q=100;w=1,"global-app-quota";q=65000;w=3600',
+                "RateLimit": '"jira-burst-based";r=90;t=1,"global-app-quota";t=3200',
+            },
+            b"",
+        )
+        self.assertEqual(pull_test.throttle_seconds(low, now=now), 2.0)
+        self.assertIsNone(pull_test.throttle_seconds(healthy, now=now))
+
+    def test_exhausted_policy_wait_is_honored_on_429(self):
+        response = pull_test.Response(
+            429,
+            {"RateLimit": '"global-app-quota";r=0;t=50,"jira-burst-based";r=0;t=1'},
+            b"slow",
+        )
+        self.assertEqual(pull_test.rate_limit_wait(response, now=1_800_000_000.0, jitter=lambda: 1.0), 50.0)
+
+    def test_low_quota_pauses_the_next_request(self):
+        clock = FakeClock()
+        reset = str(int(clock.now) + 15)
+        headers = {"X-RateLimit-Limit": "350", "X-RateLimit-Remaining": "10", "X-RateLimit-Reset": reset}
+        gate = pull_test.RateLimitGate(clock=clock.time, sleep=clock.sleep)
+
+        def exchange(method, url, headers_in, body):
+            return pull_test.Response(200, dict(headers), b"{}")
+
+        pull_test.exchange_with_retry(
+            exchange, "GET", f"{ORIGIN}/rest/api/3/issue/EMBER-1", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 1.0, gate=gate,
+        )
+        self.assertEqual(clock.slept, [])
+        pull_test.exchange_with_retry(
+            exchange, "GET", f"{ORIGIN}/rest/api/3/issue/EMBER-1", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 1.0, gate=gate,
+        )
+        self.assertEqual(clock.slept, [15.0])
+
+    def test_headerless_429_backoff_is_jittered(self):
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                return pull_test.Response(429, {}, b"slow")
+            return pull_test.Response(200, {}, b"{}")
+
+        clock = FakeClock()
+        pull_test.exchange_with_retry(
+            exchange, "GET", f"{ORIGIN}/rest/api/3/issue/EMBER-1", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 0.5,
+        )
+        self.assertEqual(clock.slept, [0.5, 1.0])
+
+    def test_server_errors_back_off_with_jitter_then_give_up(self):
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            return pull_test.Response(502, {}, b"busy")
+
+        clock = FakeClock()
+        response = pull_test.exchange_with_retry(
+            exchange, "GET", f"{ORIGIN}/rest/api/3/issue/EMBER-1", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 0.5, attempts=4,
+        )
+        self.assertEqual(response.status, 502)
+        self.assertEqual(calls["n"], 4)
+        self.assertEqual(clock.slept, [0.5, 1.0, 2.0])
+
+    def test_permission_403_is_not_retried(self):
+        calls = {"n": 0}
+
+        def exchange(method, url, headers, body):
+            calls["n"] += 1
+            return pull_test.Response(403, {}, b"no")
+
+        response = pull_test.exchange_with_retry(
+            exchange, "GET", f"{ORIGIN}/rest/api/3/issue/EMBER-1/watchers", {}, None,
+            sleep=lambda _seconds: self.fail("slept"), jitter=lambda: 1.0,
+        )
+        self.assertEqual(response.status, 403)
+        self.assertEqual(calls["n"], 1)
+
+    def test_network_errors_are_retried(self):
+        import urllib.error
+
+        for error in (urllib.error.URLError("dns failure"), TimeoutError("timed out"), ConnectionResetError("reset")):
+            with self.subTest(error=type(error).__name__):
+                with unittest.mock.patch.object(pull_test.urllib.request, "urlopen", side_effect=error):
+                    response = pull_test.urllib_exchange("GET", f"{ORIGIN}/rest/api/3/myself", {}, None)
+                self.assertEqual(response.status, 503)
+                self.assertIn(b"network error", response.body)
+                self.assertEqual(pull_test.retry_after_seconds(response, jitter=lambda: 1.0), 1.0)
+
+    def test_rate_limit_budget_stops_a_stuck_429(self):
+        def exchange(method, url, headers, body):
+            return pull_test.Response(429, {"Retry-After": "6"}, b"slow")
+
+        clock = FakeClock()
+        response = pull_test.exchange_with_retry(
+            exchange, "GET", f"{ORIGIN}/rest/api/3/issue/EMBER-1", {}, None,
+            sleep=clock.sleep, clock=clock.time, jitter=lambda: 1.0, throttle_budget=10,
+        )
+        self.assertEqual(response.status, 429)
+        self.assertEqual(clock.slept, [6.0])
 
 
 if __name__ == "__main__":
