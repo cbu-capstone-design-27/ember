@@ -1,6 +1,6 @@
 # Container images
 
-CI builds a container image for every service that has a Dockerfile, and publishes it to the GitHub Container Registry (GHCR) when `main` moves. Jira: EMBER-42.
+CI builds a container image for every service that has a Dockerfile, and publishes it to the GitHub Container Registry (GHCR) when `main` or `develop` moves. Jira: EMBER-42.
 
 ## What the pipeline does
 
@@ -8,11 +8,17 @@ The `image targets` and `image (<name>)` jobs in `.github/workflows/ci.yml` hand
 
 - **Targets.** Every `services/<name>/Dockerfile` and `apps/<name>/Dockerfile` is a target. The image is named after the directory.
 - **Every PR and push** to `develop` or `main` builds each target for `linux/amd64` (hv-workers) and `linux/arm64` (pi-cp). A broken Dockerfile fails `ci-ok`.
-- **A push to `main`** also publishes each image to `ghcr.io/cbu-capstone-design-27/ember/<name>` with two tags:
-  - `sha-<short sha>`: immutable. Deploy this one.
-  - `latest`: moves with `main`.
+- **A push to `main` or `develop`** also publishes each image to `ghcr.io/cbu-capstone-design-27/ember/<name>`. Each branch gets its own tags, so the two lines can run side by side on different hv-workers (for example, a staging environment on `main` and a development environment on `develop`):
 
-Publishing uses the workflow's `GITHUB_TOKEN`, so no secrets need to be set up. `develop` builds but never publishes.
+  | Branch    | Pinned tag (immutable) | Moving tags        |
+  |-----------|------------------------|--------------------|
+  | `main`    | `main-<short sha>`     | `main`, `latest`   |
+  | `develop` | `develop-<short sha>`  | `develop`          |
+
+  Deploy the pinned tag. Use a moving tag only where "whatever the branch last built" is what you want.
+- **PRs** build an image tagged `pr-<n>`, but never push it.
+
+Publishing uses the workflow's `GITHUB_TOKEN`, so no secrets need to be set up.
 
 Today's targets are `github-ingestion`, `jira-ingestion` and `slack-ingestion`.
 
@@ -31,12 +37,12 @@ Today's targets are `github-ingestion`, `jira-ingestion` and `slack-ingestion`.
 3. Optional: add a profile to `infra/docker-compose.yml` with `build.context: ..`, the same way `github-ingestion` does.
 4. Open a PR. An `image (<name>)` job shows up next to the others, and it must pass for `ci-ok` to go green. You don't edit the workflow.
 
-The image is published on the next merge to `main`.
+The image is published as soon as the PR merges into `develop`, and again when `develop` is merged to `main`.
 
 ## Pulling images
 
 ```sh
-docker pull ghcr.io/cbu-capstone-design-27/ember/<name>:sha-<short sha>
+docker pull ghcr.io/cbu-capstone-design-27/ember/<name>:develop-<short sha>
 ```
 
 Each package is linked to this repo through its `org.opencontainers.image.source` label. After a package's **first** publish, check its visibility under the organization's Packages tab:

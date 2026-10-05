@@ -150,7 +150,8 @@ jobs:
           cat "$GITHUB_OUTPUT"
 
   # Builds each target for amd64 (hv-workers) and arm64 (pi-cp) on every run.
-  # Only a push to main logs in to GHCR and publishes.
+  # A push to main or develop logs in to GHCR and publishes; each branch gets
+  # its own tags so the two can be deployed to separate environments.
   images:
     name: image (${{ matrix.target.name }})
     runs-on: ubuntu-latest
@@ -164,7 +165,7 @@ jobs:
       matrix:
         target: ${{ fromJSON(needs.image-targets.outputs.matrix) }}
     env:
-      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v4
@@ -181,9 +182,14 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}/${{ matrix.target.name }}
+          # main:    main, main-<sha>, latest
+          # develop: develop, develop-<sha>
+          # PRs:     pr-<n> (built, never pushed)
           tags: |
-            type=sha
+            type=ref,event=branch
+            type=sha,prefix=${{ github.ref_name }}-,enable=${{ env.PUBLISH == 'true' }}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=pr
       - name: Build${{ env.PUBLISH == 'true' && ' and push' || '' }}
         uses: docker/build-push-action@v7
         with:
