@@ -39,6 +39,8 @@ docs/
 .github/        PR template, CODEOWNERS, CI (`ci-ok` required check), Dependabot
 ```
 
+Container images for `services/*` and `apps/*` are built in CI and published to GHCR on pushes to `main` and `develop`. See `docs/container-images.md`, which also covers adding a new service.
+
 See `CONTRIBUTING.md`, `SECURITY.md`, and `.env.example` at the root.
 
 ## Branches
