@@ -5,7 +5,7 @@
 - Verified live against the Ember workspace (2026-09-29):
   - Receiver, reached through a temporary tunnel: Slack's Request URL check passed with signing on. Slack delivered a message, a thread reply, a `message_changed` edit, a reaction, and six `channel_join` events. Each one was signature-checked and each envelope validated.
   - Backfill: it read the workspace, its members, and the history of the channels the bot had been invited to. Channels the bot wasn't in were skipped.
-- Related: EMBER-39 intake contract, EMBER-3/34 graph schema, EMBER-12 auth and multi-tenancy, EMBER-37 Teams
+- Related: EMBER-39 intake contract, EMBER-3/34 graph schema, EMBER-12 auth and multi-tenancy, EMBER-37 Teams, EMBER-53 agent removal and data retention
 
 ## Requirements and architecture
 
@@ -48,9 +48,9 @@ This section answers the three EMBER-36 acceptance criteria directly. Each answe
     - Slack must get an answer within 3 seconds. Otherwise it retries up to 3 times.
     - Slack delivers about 30,000 events per workspace per hour. Past that it sends `app_rate_limited` and drops events.
   - **Outbound (Web API, backfill):**
-    - Limits are per method: history and replies are Tier 3 (50+/min), and list methods are Tier 2 (20+/min).
-    - A `429` carries `Retry-After`, and the backfill waits it out per method.
-  - **Risk for hosted Ember:** Slack's 2025 limit on history for non-Marketplace apps. Verify it before hosted launch.
+    - Limits are per method, per workspace, per app, and **not per user**. History and replies are Tier 3 (50+/min), and list methods are Tier 2 (20+/min).
+    - A `429` (or a `ratelimited` error) carries `Retry-After`. The backfill paces itself, waits out every throttle, retries transient errors, and resumes after a crash, so a full channel backfill completes (EMBER-52).
+  - **Risk for hosted Ember (confirmed):** non-Marketplace apps get 1 request/min and 15 messages per page on history and replies. Internal (self-hosted) apps are exempt.
   - Details: [Rate limits](#rate-limits).
 
 ### 2. Proposed architecture for how Slack feeds ingestion
@@ -95,7 +95,7 @@ Slack Web API ◀──bot token── Ingestion Worker: pull_test.py backfill
 | **Edits and deletes** | `message_changed` (old and new text) and `message_deleted` (`deleted_ts`) | Applying them to the stored message. A reversed decision supersedes the old one; it does not overwrite it. |
 | **People** | Raw member objects with email, plus `user_change` events | Resolving `U…` ids to people and joining them to GitHub and Jira by email |
 | **Noise and decisions** | Nothing filtered: joins, bot posts and emoji replies all arrive | Filtering, decision detection, and attribution |
-| **Gaps and scope changes** | `app_rate_limited` notices, and the bot's own `member_joined_channel` / `member_left_channel` events | Triggering a backfill. Starting or stopping a channel, including what to do with that channel's stored data (open question 1). |
+| **Gaps and scope changes** | `app_rate_limited` notices, and the bot's own `member_joined_channel` / `member_left_channel` events | Triggering a backfill. Starting or stopping a channel. Stored data is kept on channel removal and purged on dashboard disconnect ([EMBER-53](#agent-removal-and-data-retention-ember-53)). |
 
 Details: [Handoff to the pipeline](#handoff-to-the-pipeline).
 
@@ -194,25 +194,112 @@ Message essentials the pipeline relies on: `ts` (string, unique per channel, als
 
 ## Rate limits
 
+Checked against Slack's developer docs (docs.slack.dev) on 2026-10-01. Links are in [Rate limit sources](#rate-limit-sources).
+
+### Slack's limits
+
+**How Slack counts:** Web API limits apply **per method, per workspace, per app**. They are **not per user**: Ember calls with one bot token, so a 5-person workspace and a 5,000-person workspace get the same quota. Each method has its own budget, so throttling on `conversations.replies` doesn't slow `users.list`.
+
+**Tiers:**
+
+| Tier | Allowance |
+| --- | --- |
+| 1 | 1+ per minute |
+| 2 | 20+ per minute |
+| 3 | 50+ per minute |
+| 4 | 100+ per minute |
+| Special | Varies by method |
+
+Short bursts above the tier are tolerated, but Slack doesn't publish burst limits. It recommends designing for about **1 request per second**.
+
+**Methods Ember calls:**
+
+| Method | Used for | Tier | Page size |
+| --- | --- | --- | --- |
+| `team.info` | Workspace object | 3 (50+/min) | — |
+| `users.list` | Members | 2 (20+/min) | 200 (`limit` is required on large workspaces) |
+| `conversations.list` | Channels | 2 (20+/min) | 200 |
+| `conversations.history` | Top-level messages | 3 (50+/min) | 200 |
+| `conversations.replies` | Thread replies, one call per thread | 3 (50+/min) | 200 |
+
+Slack recommends no more than 200 results per page, and the tier limits assume you paginate.
+
+**When throttled:** Slack answers `HTTP 429 Too Many Requests` with a `Retry-After` header giving the seconds to wait before calling **that method for that workspace** again. A response can also carry the error code `ratelimited` with the same meaning.
+
 **Events API (inbound):**
+- Answer within **3 seconds**, or Slack retries up to 3 times (about immediately, after 1 minute, after 5 minutes) with `X-Slack-Retry-Num` and `X-Slack-Retry-Reason`. If most deliveries keep failing, Slack temporarily disables the app's event subscriptions. The receiver acknowledges before doing anything else.
+- Delivery is capped at **30,000 events per workspace per app per 60 minutes**. Past that, Slack sends `app_rate_limited` and **drops** the extra events. The receiver emits that notice so the pipeline can backfill the gap.
 
-- Answer within **3 seconds** or Slack retries up to 3 times (roughly immediately, after 1 minute, after 5 minutes), with `X-Slack-Retry-Num` and `X-Slack-Retry-Reason`. If most deliveries keep failing, Slack temporarily disables the app's event subscriptions. The receiver acknowledges before doing anything else.
-- Delivery is capped at about **30,000 events per workspace per app per hour**. Past that, Slack sends `app_rate_limited` and drops events. The receiver emits that notice so the pipeline can schedule a backfill of the gap.
+### Non-Marketplace apps: the 2025 limit (confirmed)
 
-**Web API (outbound, backfill):** limits are per method, per workspace, per app, by tier:
+For **commercially distributed apps that aren't approved for the Slack Marketplace**:
+- `conversations.history` and `conversations.replies` drop to **1 request per minute**.
+- The maximum (and default) page size drops to **15**.
+- New apps and new installs have been affected since **May 29, 2025**, and existing installs since **March 3, 2026**.
+- **Internal customer-built apps are not affected.**
 
-| Method | Tier | Rough limit |
-| --- | --- | --- |
-| `conversations.history`, `conversations.replies` | 3 | 50+ per minute |
-| `conversations.list`, `users.list` | 2 | 20+ per minute |
-| `team.info` | 3 | 50+ per minute |
+What that means for Ember:
+- **Self-hosted Ember is unaffected.** Each team creates its own internal app from `slack-app-manifest.json`, so normal tiers apply.
+- **Hosted Ember, one app installed into other companies' workspaces, is affected** unless it's Marketplace-approved. History backfill would run at 15 messages a minute (see the estimate below), though live events are not affected. A hosted launch needs either Marketplace approval or a deliberately slow "trickle backfill" mode.
 
-A `429` carries `Retry-After`. The backfill gives each method its own gate, so a throttled `conversations.replies` does not stall `users.list`.
+### What a backfill costs
 
-**Distribution caveat (verify against current Slack docs before hosted launch):** in 2025 Slack cut `conversations.history` and `conversations.replies` to about 1 request per minute and 15 messages per page for **commercially distributed apps not listed in the Slack Marketplace**. Apps a workspace builds for itself ("internal", including one created from our manifest by a self-hosting team) keep the normal tiers. Consequences:
+Backfill time grows with **message volume**, not user count. Worked example: one channel with **100,000 messages**, of which **20,000 are thread parents**.
 
-- Self-hosted Ember: unaffected. Each team creates its own internal app.
-- Hosted Ember installed into other companies' workspaces: backfill would be throttled to near-uselessness unless the app is Marketplace-approved. Live events are not affected. Plan the Marketplace review as part of hosted launch, or keep hosted backfill shallow.
+| Step | Calls | Internal app (normal tiers) | Non-Marketplace app (1/min, 15 per page) |
+| --- | --- | --- | --- |
+| History | 100,000 ÷ 200 = 500 pages (÷ 15 = 6,667 pages) | 500 ÷ 50/min ≈ **10 min** | 6,667 ÷ 1/min ≈ **4.6 days** |
+| Replies | 1 call per thread = 20,000 | 20,000 ÷ 50/min ≈ **6.7 hours** | 20,000 ÷ 1/min ≈ **14 days** |
+| Members (5,000 people) | 5,000 ÷ 200 = 25 | 25 ÷ 20/min ≈ **1–2 min** | same |
+
+Two things follow:
+- **Thread replies dominate.** That's one call per thread, not per page.
+- **A large backfill runs for hours** even with an internal app. It has to survive throttling, network blips and restarts without starting over. That's what EMBER-52's "a full channel backfill completes without failure" requires.
+
+### How the connector handles limits
+
+**Built** (`services/slack-ingestion/pull_test.py`, EMBER-52):
+
+| Behavior | How |
+| --- | --- |
+| **Pace before Slack throttles** | Every method has its own gate that spaces calls at the tier rate (Tier 2: 20/min, Tier 3: 50/min), so workers don't burst into `429`s. `SLACK_RATE_MODE=internal\|non_marketplace` switches history and replies to 1/min with page size 15 for hosted, non-Marketplace installs. |
+| **Throttling is not failure** | `429` or `ratelimited`: wait the full `Retry-After` (1 s to 15 min), then retry the same call with no attempt limit. It gives up only after one call has waited an hour in total. |
+| **Transient errors retry** | `5xx`, timeouts, connection resets and DNS errors: back off 1, 2, 4… up to 60 s with **jitter**, 8 attempts, then fail with a clear message. |
+| **Real errors still stop** | `invalid_auth`, `token_revoked`, `missing_scope`: stop immediately. Retrying can't fix them. |
+| **No page ceiling** | The old 500-page stop is gone. A cursor seen twice still stops the run, so it can't loop forever. |
+| **Never lose progress** | With `--output`, each page is appended to a part file and a checkpoint `{phase, cursor, threads done}` is saved per channel. `--resume` continues from it, so a crash costs at most one page. The final file is identical to an uninterrupted run's. |
+
+**Verified:**
+- 47 unit tests, including:
+  - a 10,600-message channel through injected `429`s, `ratelimited` bodies, `503`s and network errors (every message exactly once)
+  - crash-and-resume during history and during thread replies
+  - more than 500 pages
+  - the backoff sequence, jitter, pacing, and non-Marketplace mode
+- Live against the Ember workspace (2026-10-01):
+  - a paced full backfill (314 objects, 6 channels)
+  - a backfill killed 10 s in and resumed, which produced the same 314 objects
+  - the same backfill inside the `slack-backfill` container on Docker, which also builds for arm64 (DGX Spark)
+
+### Scaling: one user to many users, one workspace to many
+
+**One workspace growing from one user to many:**
+- The API quota stays the same, while messages, channels and threads grow. Pacing plus resume is what keeps a big workspace's backfill reliable. Larger quota isn't available.
+- Very busy workspaces can exceed the **30,000 events/hour** delivery cap, and Slack drops the overflow. On `app_rate_limited`, the pipeline records the gap window and runs a backfill with `--since` the start of the gap.
+- Member lists grow too. `users.list` must always paginate (`limit` is required on large workspaces).
+
+**One Ember deployment serving many workspaces (hosted, multi-tenant):**
+- Every workspace has its own quota, so rate-limit state is keyed by **(app, workspace `team_id`, method)**, never by method alone.
+- When ingestion runs as several replicas on the cluster, the limiter state moves to a shared store (Redis or Postgres) so two pods never spend one workspace's quota twice. The code calls a `RateLimiter` interface: in-process today, shared later, with no connector changes.
+- Backfills become resumable jobs in the job queue (EMBER-2), with progress in the Application Database. **Per-tenant fair scheduling** keeps one company's huge backfill from starving everyone else's.
+- Per-workspace metrics (throttles, seconds waited, backfill progress) feed the dashboard, so an admin can see "backfill 62%, about 3 hours left" instead of guessing.
+
+### Rate limit sources
+
+- [Rate limits](https://docs.slack.dev/apis/web-api/rate-limits): scope per method, workspace and app; tiers; `429` and `Retry-After`; ~1 request/second guidance; Events API 30,000/hour and `app_rate_limited`
+- [Rate limit changes for non-Marketplace apps](https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps/): 1/min and 15 objects; May 29, 2025 and March 3, 2026; internal apps exempt
+- [`conversations.history`](https://docs.slack.dev/reference/methods/conversations.history) and [`conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies): Tier 3, the non-Marketplace note, 200 per page, the `ratelimited` error
+- [`conversations.list`](https://docs.slack.dev/reference/methods/conversations.list) and [`users.list`](https://docs.slack.dev/reference/methods/users.list): Tier 2, 200 per page, `limit` required on large teams
+- [`team.info`](https://docs.slack.dev/reference/methods/team.info): Tier 3
 
 ## Architecture
 
@@ -258,7 +345,7 @@ What the Slack source pipeline (EMBER-7, Brandon's processing layer) can rely on
 | People | Raw user objects with email, and `user_change` | Resolve `U…` → Person node. Join to GitHub and Jira by email. |
 | Noise | Nothing is filtered at intake: joins, bot posts, and emoji-only replies all arrive | Filtering and decision detection (research result, negative results included, per EMBER-7) |
 | Gaps | `app_rate_limited` notices | Trigger a backfill with `--since` |
-| Scope changes | `member_joined_channel`/`member_left_channel` for the bot | Start or stop reading that channel. Decide whether to keep or purge already-ingested data (open question). |
+| Scope changes | `member_joined_channel`/`member_left_channel` for the bot | Start or stop reading that channel. Already-ingested data is kept; a dashboard disconnect purges it ([EMBER-53](#agent-removal-and-data-retention-ember-53)). |
 
 ## Privacy and security
 
@@ -268,6 +355,106 @@ What the Slack source pipeline (EMBER-7, Brandon's processing layer) can rely on
 - Self-hosted: all Slack data stays on the team's hardware.
 
 Lessons carried over from the Salesforce Slackbot (NavalX): it stored user tokens in a plain custom field, skipped its OAuth CSRF check when a cache partition was missing, and logged full Slack responses and nonces at INFO. Here tokens live only in env or integration settings, signature checks never silently degrade when a secret is set, and bodies go only to the intake stream, never to logs.
+
+## Agent removal and data retention (EMBER-53)
+
+What happens to ingested Slack data when Ember's bot (the "agent") is removed. This section records the team's decision and looks ahead at how each option plays out in the knowledge graph (ADR 0002, `docs/graph-schema.md`).
+
+### Decision
+
+| Action | Who does it | Ingestion | Data already in Ember |
+| --- | --- | --- | --- |
+| **Remove the bot from a channel** (`/remove @Ember`, or kicking it) | Anyone with channel rights, in Slack | **Stops** for that channel | **Kept** |
+| **Disconnect Slack from the Ember dashboard** | A workspace admin, in Ember | **Stops** for the whole workspace | **Purged** |
+
+**Why it's split this way:**
+- Leaving a channel is easy to do by accident and often temporary, and the decisions already captured are the institutional memory Ember exists to keep.
+- Disconnecting is a deliberate admin action in Ember itself, and it signals "we don't want Ember to have our data". So it removes everything.
+
+### What each action does
+
+**Remove the bot from a channel: keep**
+1. Slack sends `member_left_channel` (or `channel_left`) with the bot as the user, through the subscriptions Ember already has. The intake worker passes it on like any event.
+2. The pipeline marks that channel **inactive** in the integration settings (Application Database) and records `left_at`. Live events stop arriving on their own, because Slack only sends events for channels the bot is in. Backfill and resync skip inactive channels.
+3. **The graph is not touched.** Messages, threads, decisions and people from that channel stay, and their facts stay valid, because they were true when they were said.
+4. Retrieval should show that the channel's facts are as of `left_at`. A decision recorded there may have been revisited later, out of Ember's view.
+5. If the bot is invited back, `member_joined_channel` reactivates the channel, and a backfill with `--since <left_at>` fills the gap.
+
+**Disconnect from the dashboard: purge** (sequence matters, or purged data can come back)
+1. **Stop new data first:**
+   - Mark the workspace `disconnecting` in the integration settings.
+   - Uninstall the app with `apps.uninstall`, or revoke the token with `auth.revoke`. That stops events and kills the token.
+   - Reject anything for that `team_id` still in the queue. The router checks the flag, so in-flight jobs can't write after the purge.
+2. **Delete the subgraph:** Graphiti `clear_data(driver, group_ids=["<tenant>_slack"])` runs `DETACH DELETE` on every entity, episode and community node in that `group_id`, with their relationships.
+3. **Delete every other copy:**
+   - raw intake (`{type:"slack"}` JSONL, and the "data lake" from the proposal)
+   - queued jobs
+   - the token and integration settings
+4. **Keep an audit record:** who disconnected, when, and how many nodes were removed, with **no content**.
+5. Mark the workspace `disconnected`. Reconnecting later is a fresh install and a full backfill.
+
+### Does purging hurt the database?
+
+**Purging a whole Slack connection: no.** This is the payoff of the per-source subgraph design (`group_id = <tenant>_slack`):
+- Everything from that Slack workspace is in one subgraph, and `clear_data` removes exactly that subgraph. The GitHub, Jira, GitLab and Teams subgraphs, the `EmberConfig` node, and the schema constraints are untouched.
+- The uniqueness keys `(group_id, source, external_id)` become free again, so a later reconnect and backfill works normally.
+- **Phase 2 caveat:** cross-source links (a Slack `Identity` → a shared `Person`, or a Slack message `REFERENCES` a Jira issue) are relationships, and `DETACH DELETE` removes them too. The other sources keep their own nodes; they just lose the Slack-side links. No dangling references are possible in Neo4j.
+- **Scale:** a large workspace should be deleted in batches (`CALL { … } IN TRANSACTIONS`) so one huge transaction doesn't stall the database. That's a performance concern, not a correctness one.
+
+**Purging one channel while keeping the rest: yes, it can, unless the graph is built for it.** This isn't in the decision above, but it's the obvious next ask ("remove *that* channel's data"). Graphiti's built-in `remove_episode()` (checked against its source) gets this wrong in three ways:
+
+| Problem | What happens | Why it matters |
+| --- | --- | --- |
+| **Over-deletion** | It deletes every fact whose **first** source was the purged message, even if messages in other channels later confirmed the same fact | Valid knowledge from channels you kept disappears |
+| **Leaked content** | Shared nodes (a `Person`, a `Decision`, a `Module`) survive if anything else mentions them, but their engine-written **summary** isn't rewritten | Sentences from the purged channel can live on inside a summary. That's a privacy failure. |
+| **Broken history** | A `Decision` made in the purged channel can be `SUPERSEDED` by one in a kept channel, or the reverse. Its `DECIDED_IN` evidence disappears. | "Why did we decide X?" chains get gaps, and retrieval may cite a decision whose source is gone |
+
+Neo4j itself stays consistent in every case: no corruption, no dangling edges. The damage is to **meaning**: lost knowledge, leaked text, broken history.
+
+### Future: making per-channel purge safe (note for Brandon)
+
+The ticket asks for a **source channel attribute** on nodes. That's necessary, but on its own it's not sufficient, because some nodes belong to more than one channel.
+
+| Node type | Belongs to one channel? | What to store |
+| --- | --- | --- |
+| `Container` (the channel), `Conversation` (thread), `Message` | Yes | A `channel` attribute: the Slack channel ID (`C…`/`G…`). It's already on every intake message, and the backfill sets it. Purge deletes these by channel directly. |
+| `Identity`, `Person`, `Decision`, `Module` | **No.** The same person or decision shows up across channels. | **Provenance through episodes**, not one attribute. Every Graphiti episode (one intake envelope) is tagged with its channel, e.g. in the episode `name` or `source_description`. A node or fact belongs to a channel only through the episodes that mention it. |
+
+**Purge algorithm** (our own code, replacing `remove_episode`):
+1. Collect the episodes tagged with the channel.
+2. Delete `Message`, `Conversation` and `Container` nodes with that `channel`.
+3. For each fact edge, remove the purged episode IDs from its `episodes` list. Delete the edge only when **no** supporting episode remains.
+4. Delete entity nodes that no remaining episode mentions.
+5. **Regenerate the summary** of every surviving entity that a purged episode mentioned, from its remaining episodes only. Rebuild communities if they're used.
+6. Mark decisions that lost all their `DECIDED_IN` evidence as `evidence removed`, instead of silently keeping them.
+
+**Alternative:** one subgraph per channel (`<tenant>_slack_<channel>`). Channel purge would then be a clean `clear_data`, like disconnect. The cost: Graphiti deduplicates within a `group_id` only, so the same person or decision would be split into one node per channel, and every query would span many subgraphs. **Not recommended** unless per-channel purge becomes a hard requirement.
+
+### Future options beyond the decision
+
+| Option | What it is | When it's worth it |
+| --- | --- | --- |
+| **Grace period** | Disconnect hides the subgraph from retrieval **immediately** (a `disconnected` flag checked at query time), then hard-deletes after e.g. 30 days, unless the admin reconnects | Protects against accidental disconnects. There's still one hard-delete path at the end. |
+| **Redact, keep decisions** | Delete messages and identities, but keep `Decision` nodes and their `SUPERSEDES` chain, with the evidence marked as removed | Teams that want privacy and institutional memory. Needs the admin's explicit choice at disconnect. |
+| **Per-channel purge from the dashboard** | The algorithm above | When users ask to remove one channel's data without disconnecting |
+
+### What a purge cannot reach
+
+These need to be stated in the product and the docs, not discovered later:
+- **Answers already given:** agents (Claude Code, Codex, Cursor) may have received Ember answers built on the purged data. Those can't be recalled.
+- **Hosted LLM calls:** with "your API key" mode (architecture diagram, Extraction LLM), extraction prompts went to the model provider under their retention terms. The local model on the Spark avoids this.
+- **Backups:** Neo4j snapshots and volume backups (EMBER-30/32) keep purged data until they age out. The backup retention period is effectively the real purge deadline. Jacob should set and document it.
+
+### Same pattern for other sources
+
+| Source | "Remove the agent from one scope": keep | "Disconnect": purge `<tenant>_<source>` |
+| --- | --- | --- |
+| Slack | Bot removed from a channel (`member_left_channel`) | Dashboard disconnect, `apps.uninstall` |
+| Teams | Ember app removed from a team (RSC grant revoked; subscriptions fail) | Dashboard disconnect |
+| GitHub | Repo deselected in the App installation (`installation_repositories` removed) | App uninstalled (`installation` deleted) or dashboard disconnect |
+| GitLab, Jira | Project removed from the webhook or connection | Dashboard disconnect |
+
+One rule for every source keeps the dashboard's behavior predictable.
 
 ## Shared patterns for Teams (EMBER-37)
 
@@ -284,7 +471,7 @@ Teams can reuse this shape almost one-for-one:
 
 ## Open questions
 
-1. When the bot is removed from a channel, keep what was already ingested or purge it? (Privacy expectation vs. institutional memory.)
+1. ~~When the bot is removed from a channel, keep what was already ingested or purge it?~~ **Answered (EMBER-53):** removing the bot from a channel keeps the data; disconnecting from the dashboard purges it. See [Agent removal and data retention](#agent-removal-and-data-retention-ember-53).
 2. Is `users:read.email` acceptable to every team, or should email join be opt-in?
 3. Hosted launch: pursue Slack Marketplace listing (backfill limits) or ship hosted with live-only plus shallow backfill?
 4. Should the pipeline treat `thread_broadcast` replies as channel-level statements or only as thread members?

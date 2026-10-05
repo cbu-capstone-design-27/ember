@@ -1,0 +1,22 @@
+# Public HTTPS through Tailscale Funnel: https://ember.tail470a31.ts.net
+# The name comes from tls.hosts and is what the GitHub App registers (callback and webhook URLs),
+# so keep it stable. Everything goes to nginx, the reverse proxy, which routes by path
+# (default.conf.template); a new backend is a location there, not a change here. Needs the Tailscale
+# operator (make ts-operator-up); until it runs, nothing serves ingressClassName tailscale.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ember
+  namespace: ember
+  annotations:
+    tailscale.com/funnel: "true"
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: nginx
+      port:
+        number: 80
+  tls:
+    - hosts:
+        - ember

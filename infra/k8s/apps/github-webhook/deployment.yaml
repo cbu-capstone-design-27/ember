@@ -1,0 +1,74 @@
+# The always-on container nginx proxies /webhook/github to. For now it runs a placeholder
+# (listener.py, mounted from a ConfigMap) that answers 200 and logs one line per delivery.
+# EMBER-56's worker takes over the name: Service github-webhook is what nginx knows.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-webhook
+  namespace: ember
+  labels:
+    app: github-webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: github-webhook
+  template:
+    metadata:
+      labels:
+        app: github-webhook
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: placeholder
+          # The real worker's base image.
+          image: python:3.12-slim
+          command:
+            - python3
+            - /opt/listener/listener.py
+          env:
+            # Not GITHUB_WEBHOOK_PORT: Kubernetes sets that name for a Service called github-webhook.
+            - name: LISTEN_PORT
+              value: "8080"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: listener
+              mountPath: /opt/listener
+              readOnly: true
+      volumes:
+        - name: listener
+          configMap:
+            name: github-webhook-placeholder

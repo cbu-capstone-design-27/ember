@@ -303,10 +303,24 @@ class RateLimitTest(unittest.TestCase):
         self.assertEqual(clock.slept, [7.0])
         self.assertEqual(len(got), len(run(FakeSlack())))
 
-    def test_gives_up_after_repeated_throttles(self):
+    def test_waits_out_repeated_throttles(self):
+        clock = FakeClock()
+        got = run(FakeSlack(throttle={"team.info": 10}), clock=clock)
+        self.assertEqual(clock.slept, [7.0] * 10)
+        self.assertEqual(len(got), len(run(FakeSlack())))
+
+    def test_gives_up_only_after_the_throttle_budget(self):
+        clock = FakeClock()
+        client = pull_test.SlackClient(
+            "xoxb-test-token",
+            FakeSlack(throttle={"team.info": 1000}),
+            MethodGates(clock.clock, clock.sleep),
+            throttle_budget=60.0,
+        )
         with self.assertRaises(PullError) as caught:
-            run(FakeSlack(throttle={"team.info": 10}))
+            client.call("team.info")
         self.assertIn("still throttled", str(caught.exception))
+        self.assertEqual(clock.slept, [7.0] * 8)  # 8 x 7s fits in 60s; the 9th would not
 
     def test_retry_after_seconds(self):
         self.assertIsNone(pull_test.retry_after_seconds(Response(200, {}, b"")))
@@ -390,6 +404,14 @@ class ReadableOutputTest(unittest.TestCase):
         self.assertIn("  ↳ #decisions", summary)
         self.assertIn("Because of Cypher.", summary)
 
+    def test_summary_from_file_matches_in_memory(self):
+        envelopes = run(FakeSlack())
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "intake.jsonl"
+            with path.open("w", encoding="utf-8") as handle:
+                pull_test.emit_jsonl(envelopes, handle)
+            self.assertEqual(pull_test.render_summary_file(path), pull_test.render_summary(envelopes))
+
     def test_main_writes_jsonl_and_sidecar(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "intake.jsonl"
@@ -399,7 +421,7 @@ class ReadableOutputTest(unittest.TestCase):
             os.environ.pop("SLACK_TEST_CHANNEL", None)
             clock = FakeClock()
             pull_test.urllib_exchange = FakeSlack()
-            pull_test.MethodGates = lambda: saved_gates(clock.clock, clock.sleep)
+            pull_test.MethodGates = lambda **kw: saved_gates(clock.clock, clock.sleep)
             err = io.StringIO()
             try:
                 saved_err, sys.stderr = sys.stderr, err
@@ -421,6 +443,305 @@ class ReadableOutputTest(unittest.TestCase):
     def test_main_rejects_conflicting_readable_flags(self):
         self.assertEqual(pull_test.main(["--readable", "x", "--no-readable"]), 2)
         self.assertEqual(pull_test.main(["--readable", "-"]), 2)
+
+
+
+# --- EMBER-52: backoff, pacing, no page ceiling, checkpoint and resume ------------------
+
+
+class Crash(Exception):
+    """Stands in for the process dying mid-backfill."""
+
+
+class BigSlack:
+    """One workspace, one big channel, with injectable faults.
+
+    ``messages`` top-level messages; every ``thread_every``-th is a thread
+    parent with ``replies_per_thread`` replies. ``faults`` maps a 1-based
+    call number to "429", "ratelimited", "503" or "network". ``crash_at``
+    raises Crash on that call. ``force_page`` overrides the page size.
+    """
+
+    def __init__(self, *, messages=10_000, thread_every=50, replies_per_thread=3, faults=None,
+                 crash_at=None, force_page=None, repeat_cursor=False, always=None):
+        self.faults = dict(faults or {})
+        self.crash_at = crash_at
+        self.force_page = force_page
+        self.repeat_cursor = repeat_cursor
+        self.always = always
+        self.calls = 0
+        self.method_calls: dict[str, int] = {}
+        self.limits: list[tuple[str, int]] = []
+        self._lock = threading.Lock()
+        self.history = []  # newest first, as Slack returns it
+        self.replies = {}
+        for i in range(messages):
+            base = 1_700_000_000 + i
+            ts = f"{base}.000100"
+            message = {"type": "message", "user": "U0ADA", "text": f"message {i}", "ts": ts}
+            if i % thread_every == 0 and replies_per_thread:
+                message.update(thread_ts=ts, reply_count=replies_per_thread)
+                self.replies[ts] = [dict(message)] + [
+                    {"type": "message", "user": "U0ADA", "text": f"reply {i}.{r}",
+                     "ts": f"{base}.{101 + r:06d}", "thread_ts": ts}
+                    for r in range(replies_per_thread)
+                ]
+            self.history.append(message)
+        self.history.reverse()
+
+    def expected_message_ts(self) -> set:
+        expected = {m["ts"] for m in self.history}
+        for thread in self.replies.values():
+            expected.update(r["ts"] for r in thread)
+        return expected
+
+    def _page(self, items, params, field):
+        size = self.force_page or int(params.get("limit", "200"))
+        start = int(params.get("cursor", "0") or 0)
+        chunk = [dict(item) for item in items[start:start + size]]
+        following = start + size
+        if self.repeat_cursor and start > 0:
+            following = start
+        meta = {"next_cursor": str(following) if following < len(items) else ""}
+        return _json({"ok": True, field: chunk, "response_metadata": meta})
+
+    def __call__(self, method, url, headers, body):
+        parts = urlsplit(url)
+        api_method = parts.path.rsplit("/", 1)[-1]
+        params = {key: values[0] for key, values in parse_qs(parts.query).items()}
+        with self._lock:
+            self.calls += 1
+            call = self.calls
+            self.method_calls[api_method] = self.method_calls.get(api_method, 0) + 1
+            if "limit" in params:
+                self.limits.append((api_method, int(params["limit"])))
+        if self.crash_at is not None and call == self.crash_at:
+            raise Crash(f"crash at call {call}")
+        fault = self.always or self.faults.get(call)
+        if fault == "429":
+            return _json({"ok": False, "error": "ratelimited"}, 429, {"Retry-After": "3"})
+        if fault == "ratelimited":
+            return _json({"ok": False, "error": "ratelimited"}, 200, {"Retry-After": "2"})
+        if fault == "503":
+            return _json({"ok": False}, 503)
+        if fault == "network":
+            return Response(pull_test.NETWORK_ERROR, {}, b"ConnectionResetError: reset by peer")
+        if api_method == "team.info":
+            return _json({"ok": True, "team": dict(TEAM)})
+        if api_method == "users.list":
+            return self._page([dict(USERS[0])], params, "members")
+        if api_method == "conversations.list":
+            channel = {"id": "C0BIG", "name": "big", "is_channel": True, "is_private": False, "is_member": True}
+            return self._page([channel], params, "channels")
+        if api_method == "conversations.history":
+            return self._page(self.history, params, "messages")
+        if api_method == "conversations.replies":
+            return self._page(self.replies.get(params["ts"], []), params, "messages")
+        return _json({"ok": False, "error": "unknown_method"}, 404)
+
+
+def backfill(fake, output: Path, clock: FakeClock | None = None, **kwargs) -> int:
+    clock = clock or FakeClock()
+    gates = kwargs.pop("gates", None) or MethodGates(clock.clock, clock.sleep)
+    return pull_test.pull_to_file(TOKEN, fake, output, gates=gates, jitter=lambda: 1.0, **kwargs)
+
+
+def read_output(output: Path) -> list:
+    return [json.loads(line)["body"] for line in output.read_text(encoding="utf-8").splitlines()]
+
+
+def assert_complete(test: unittest.TestCase, fake: BigSlack, output: Path) -> None:
+    got = read_output(output)
+    test.assertEqual(got[0]["id"], "T0TEAM")
+    test.assertEqual(got[2]["id"], "C0BIG")
+    ts = [b["ts"] for b in got if b.get("type") == "message"]
+    test.assertEqual(len(ts), len(set(ts)), "a message was written twice")
+    test.assertEqual(set(ts), fake.expected_message_ts(), "a message is missing")
+    test.assertTrue(all(b.get("channel") == "C0BIG" for b in got if b.get("type") == "message"))
+    test.assertFalse(pull_test.checkpoint_path(output).exists())
+    test.assertFalse(pull_test.parts_dir(output).exists())
+
+
+class FullBackfillTest(unittest.TestCase):
+    """EMBER-52: a full channel backfill completes without failure."""
+
+    def test_ten_thousand_messages_through_throttles_and_errors(self):
+        faults = {3: "429", 6: "ratelimited", 9: "503", 10: "network", 20: "429", 21: "429",
+                  60: "network", 61: "503", 62: "network", 150: "ratelimited", 200: "429"}
+        fake = BigSlack(faults=faults)
+        clock = FakeClock()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "intake.jsonl"
+            count = backfill(fake, output, clock=clock)
+            assert_complete(self, fake, output)
+            self.assertEqual(count, 3 + len(fake.expected_message_ts()))
+        self.assertGreaterEqual(len(fake.expected_message_ts()), 10_000)
+        self.assertIn(3.0, clock.slept)  # 429 Retry-After honored
+        self.assertIn(2.0, clock.slept)  # "ratelimited" body Retry-After honored
+
+    def test_output_order_matches_the_in_memory_pull(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "intake.jsonl"
+            backfill(BigSlack(messages=120, thread_every=10), output)
+            on_disk = read_output(output)
+        clock = FakeClock()
+        in_memory = [env["body"] for env in pull_test.pull(
+            TOKEN, BigSlack(messages=120, thread_every=10), gates=MethodGates(clock.clock, clock.sleep))]
+        self.assertEqual(on_disk, in_memory)
+
+    def test_more_than_five_hundred_pages(self):
+        fake = BigSlack(messages=601, replies_per_thread=0, force_page=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "intake.jsonl"
+            backfill(fake, output)
+            assert_complete(self, fake, output)
+        self.assertGreater(fake.method_calls["conversations.history"], 500)
+
+    def test_repeated_cursor_still_stops(self):
+        fake = BigSlack(messages=10, replies_per_thread=0, force_page=1, repeat_cursor=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(PullError) as caught:
+                backfill(fake, Path(tmp) / "intake.jsonl")
+        self.assertIn("repeated its cursor", str(caught.exception))
+
+
+class ResumeTest(unittest.TestCase):
+    def crash_then_resume(self, crash_at: int) -> BigSlack:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "intake.jsonl"
+            with self.assertRaises(Crash):
+                backfill(BigSlack(crash_at=crash_at), output)
+            self.assertTrue(pull_test.checkpoint_path(output).exists())
+            self.assertFalse(output.exists())
+            second = BigSlack()
+            backfill(second, output, resume=True)
+            assert_complete(self, second, output)
+            return second
+
+    def test_crash_during_history_resumes_from_the_saved_cursor(self):
+        second = self.crash_then_resume(crash_at=20)  # 3 setup calls, then history page 17
+        self.assertLess(second.method_calls["conversations.history"], 50)
+
+    def test_crash_during_replies_skips_finished_history_and_threads(self):
+        second = self.crash_then_resume(crash_at=150)  # 3 setup + 50 history, then ~97 threads
+        self.assertNotIn("conversations.history", second.method_calls)
+        self.assertLess(second.method_calls["conversations.replies"], 200)
+
+    def test_unfinished_run_needs_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "intake.jsonl"
+            with self.assertRaises(Crash):
+                backfill(BigSlack(crash_at=30), output)
+            with self.assertRaises(PullError) as caught:
+                backfill(BigSlack(), output)
+            self.assertIn("--resume", str(caught.exception))
+
+    def test_resume_with_different_options_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "intake.jsonl"
+            with self.assertRaises(Crash):
+                backfill(BigSlack(crash_at=30), output)
+            with self.assertRaises(PullError) as caught:
+                backfill(BigSlack(), output, resume=True, oldest="1700000500.000000")
+            self.assertIn("different options", str(caught.exception))
+
+    def test_resume_without_a_checkpoint_starts_fresh(self):
+        fake = BigSlack(messages=50)
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "intake.jsonl"
+            backfill(fake, output, resume=True)
+            assert_complete(self, fake, output)
+
+
+class BackoffAndPacingTest(unittest.TestCase):
+    def test_transient_errors_back_off_then_give_up(self):
+        clock = FakeClock()
+        client = pull_test.SlackClient(TOKEN, BigSlack(always="503"), MethodGates(clock.clock, clock.sleep),
+                                       jitter=lambda: 1.0)
+        with self.assertRaises(PullError) as caught:
+            client.call("team.info")
+        self.assertIn("failed after 8 attempts", str(caught.exception))
+        self.assertEqual(clock.slept, [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0])
+
+    def test_jitter_shortens_backoff(self):
+        clock = FakeClock()
+        client = pull_test.SlackClient(TOKEN, BigSlack(always="network"), MethodGates(clock.clock, clock.sleep),
+                                       jitter=lambda: 0.5)
+        with self.assertRaises(PullError):
+            client.call("team.info")
+        self.assertEqual(clock.slept[:3], [0.5, 1.0, 2.0])
+
+    def test_auth_errors_stop_immediately(self):
+        clock = FakeClock()
+        with self.assertRaises(SlackApiError):
+            run(FakeSlack(errors={"team.info": "invalid_auth"}), clock=clock)
+        self.assertEqual(clock.slept, [])
+
+    def test_network_exceptions_become_retryable_responses(self):
+        saved = pull_test.urllib.request.urlopen
+
+        def boom(*_args, **_kwargs):
+            raise ConnectionResetError("reset by peer")
+
+        pull_test.urllib.request.urlopen = boom
+        try:
+            response = pull_test.urllib_exchange("GET", "https://slack.com/api/team.info", {}, None)
+        finally:
+            pull_test.urllib.request.urlopen = saved
+        self.assertEqual(response.status, pull_test.NETWORK_ERROR)
+        self.assertIn(b"ConnectionResetError", response.body)
+        self.assertEqual(pull_test.retry_after_seconds(response, attempt=1), 2.0)
+
+    def test_pacing_spaces_calls_at_the_tier_rate(self):
+        clock = FakeClock()
+        gates = MethodGates(clock.clock, clock.sleep, rates={"conversations.history": 50.0})
+        for _ in range(3):
+            gates["conversations.history"].wait()
+            gates["users.list"].wait()  # not in rates: never waits
+        self.assertEqual([round(s, 6) for s in clock.slept], [1.2, 1.2])
+
+    def test_rate_modes(self):
+        internal = pull_test.rate_table("internal")
+        self.assertEqual(internal["conversations.history"], 50.0)
+        self.assertEqual(internal["users.list"], 20.0)
+        strict = pull_test.rate_table("non_marketplace")
+        self.assertEqual(strict["conversations.history"], 1.0)
+        self.assertEqual(strict["conversations.replies"], 1.0)
+        self.assertEqual(strict["users.list"], 20.0)
+        self.assertEqual(pull_test.page_limits("internal"), {})
+        self.assertEqual(pull_test.page_limits("non_marketplace")["conversations.history"], 15)
+        with self.assertRaises(PullError):
+            pull_test.rate_table("fast")
+
+    def test_non_marketplace_mode_uses_15_per_page_and_one_call_a_minute(self):
+        fake = BigSlack(messages=40, replies_per_thread=0)
+        clock = FakeClock()
+        gates = MethodGates(clock.clock, clock.sleep, rates=pull_test.rate_table("non_marketplace"))
+        with tempfile.TemporaryDirectory() as tmp:
+            backfill(fake, Path(tmp) / "intake.jsonl", clock=clock, gates=gates, rate_mode="non_marketplace")
+        history_limits = [limit for method, limit in fake.limits if method == "conversations.history"]
+        self.assertEqual(history_limits, [15, 15, 15])
+        self.assertGreaterEqual(clock.now, 120.0)  # three history calls spaced 60s apart
+
+    def test_rate_mode_setting(self):
+        saved = os.environ.get("SLACK_RATE_MODE")
+        try:
+            os.environ.pop("SLACK_RATE_MODE", None)
+            self.assertEqual(pull_test.resolve_rate_mode(None), "internal")
+            os.environ["SLACK_RATE_MODE"] = "non_marketplace"
+            self.assertEqual(pull_test.resolve_rate_mode(None), "non_marketplace")
+            self.assertEqual(pull_test.resolve_rate_mode("internal"), "internal")
+            os.environ["SLACK_RATE_MODE"] = "turbo"
+            with self.assertRaises(PullError):
+                pull_test.resolve_rate_mode(None)
+        finally:
+            if saved is None:
+                os.environ.pop("SLACK_RATE_MODE", None)
+            else:
+                os.environ["SLACK_RATE_MODE"] = saved
+
+    def test_resume_flag_needs_output(self):
+        self.assertEqual(pull_test.main(["--resume"]), 2)
 
 
 if __name__ == "__main__":

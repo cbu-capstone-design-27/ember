@@ -69,6 +69,20 @@ jobs:
           echo "layout ok"
       - name: docker-compose is valid YAML
         run: docker compose -f infra/docker-compose.yml config --quiet
+      - name: k8s kustomize roots render
+        run: |
+          set -euo pipefail
+          kubectl kustomize infra/k8s/infrastructure > /dev/null
+          kubectl kustomize infra/k8s/apps > /dev/null
+      - name: Placeholder webhook listener compiles
+        run: python3 -m py_compile infra/k8s/apps/github-webhook/listener.py
+      - name: nginx reverse-proxy config loads
+        run: |
+          set -euo pipefail
+          out=$(docker run --rm -e NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
+            -v "$PWD/infra/k8s/apps/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
+            nginx:1.28-alpine nginx -T)
+          grep -F 'location = /webhook/github' <<<"$out"
       - name: Ingestion envelope contract
         run: python3 packages/ingestion-envelope/test_contract.py
       - name: GitHub ingestion webhook contract
@@ -130,6 +144,83 @@ jobs:
       - name: Graph ontology contract
         run: python services/pipeline/ontology/test_ontology.py
 
+  # EMBER-42. Every services/<name>/Dockerfile and apps/<name>/Dockerfile is an
+  # image target named <name>. Adding a Dockerfile is all it takes to enroll a
+  # service; see docs/container-images.md.
+  image-targets:
+    name: image targets
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.find.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find Dockerfiles
+        id: find
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import glob, json, os
+          dirs = sorted(os.path.dirname(p) for p in glob.glob("services/*/Dockerfile") + glob.glob("apps/*/Dockerfile"))
+          names = [os.path.basename(d) for d in dirs]
+          dupes = sorted({n for n in names if names.count(n) > 1})
+          if dupes:
+              raise SystemExit(f"image name collision between services/ and apps/: {dupes}")
+          print("matrix=" + json.dumps([{"name": n, "dir": d} for n, d in zip(names, dirs)]))
+          EOF
+          cat "$GITHUB_OUTPUT"
+
+  # Builds each target for amd64 (hv-workers) and arm64 (pi-cp) on every run.
+  # A push to main or develop logs in to GHCR and publishes; each branch gets
+  # its own tags so the two can be deployed to separate environments.
+  images:
+    name: image (${{ matrix.target.name }})
+    runs-on: ubuntu-latest
+    needs: image-targets
+    if: needs.image-targets.outputs.matrix != '[]'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.image-targets.outputs.matrix) }}
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ matrix.target.name }}
+          # main:    main, main-<sha>, latest
+          # develop: develop, develop-<sha>
+          # PRs:     pr-<n> (built, never pushed)
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=${{ github.ref_name }}-,enable=${{ env.PUBLISH == 'true' }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=pr
+      - name: Build${{ env.PUBLISH == 'true' && ' and push' || '' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.target.dir }}/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.target.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target.name }}
+
   # Placeholder for future per-area jobs. Gate each on the matching `changes`
   # output, e.g.:
   #
@@ -148,6 +239,8 @@ jobs:
       - changes
       - sanity
       - pipeline
+      - image-targets
+      - images
     steps:
       - name: Evaluate upstream job results
         env:

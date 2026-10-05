@@ -69,6 +69,7 @@ Edits arrive as `message` with `subtype: message_changed` (new text in `event.me
 | `SLACK_BOT_TOKEN` | Bot User OAuth Token (`xoxb-…`, or `xoxe.xoxb-…` with token rotation on) for `pull_test.py` only. User (`xoxp-`) and app-level (`xapp-`) tokens are refused. The receiver does not read it. Never commit it. |
 | `SLACK_TEST_CHANNEL` | One channel id (`C…`/`G…`) for `pull_test.py` only. Empty reads every channel the bot is in. Not a filter on the webhook path. |
 | `SLACK_PULL_CONCURRENCY` | Channels read in parallel by `pull_test.py`. Default `4`. Range 1–16. |
+| `SLACK_RATE_MODE` | `internal` (default: Slack's normal tiers, for an app the workspace created itself) or `non_marketplace` (history and replies at 1 call/min and 15 per page, for a commercially distributed app not approved for the Slack Marketplace). `pull_test.py` only. |
 
 `bot_token()` in `pull_test.py` is the one place a token is read. When the Application Database holds per-workspace integration settings (CLI/web onboarding, EMBER-12), that function is what changes.
 
@@ -84,6 +85,32 @@ Own container, optional compose profile. A plain `up` still starts only Neo4j:
 docker compose -f infra/docker-compose.yml --env-file .env \
   --profile slack-ingestion up --build slack-ingestion
 ```
+
+### Containers
+
+One image holds both programs (`envelope.py`, `receiver.py`, `pull_test.py`). It runs as `nobody`.
+
+| Compose service | Runs | Lifetime |
+| --- | --- | --- |
+| `slack-ingestion` | `receiver.py` (the image's default command) | Always on; serves port 8082 |
+| `slack-backfill` | `pull_test.py --output /data/slack-intake.jsonl` | One-off. Exits when the backfill finishes. Output goes to the named volume `slack-backfill-data`. |
+
+Run a backfill in a container (reads `SLACK_BOT_TOKEN`, and optionally `SLACK_TEST_CHANNEL`, `SLACK_PULL_CONCURRENCY` and `SLACK_RATE_MODE`, from `.env`). The command includes `--resume`, so re-running it after a crash or restart continues where it stopped:
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env \
+  --profile slack-backfill run --rm --build slack-backfill
+```
+
+Pass flags by overriding the command, e.g. one channel since a date:
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env --profile slack-backfill \
+  run --rm slack-backfill python3 pull_test.py --channel C0123ABCD --since 2026-09-01 \
+  --output /data/slack-intake.jsonl --resume
+```
+
+The base image `python:3.12-slim` is multi-architecture, so the same Dockerfile builds natively on x86_64 and on arm64 hosts such as the DGX Spark (GB10). Checked with `docker buildx build --platform linux/arm64`.
 
 ## Local test pull
 
@@ -117,9 +144,25 @@ One envelope each, in this order:
 
 The one change to raw objects: history and reply messages have no channel id of their own, so `channel` is set to the channel they were read from when the message does not already carry one. That is the same field name Slack uses on message events. Nothing else is rewritten, dropped, or merged.
 
-Pages follow `response_metadata.next_cursor`, 200 per page, up to 500 pages (100,000 items) per list. A longer channel stops the pull with a message to use `--since`. `--since` filters top-level messages, so a thread whose parent is older than `--since` is not read even if it has newer replies. Channels are read 4 at a time. Pages inside one channel stay in order.
+Pages follow `response_metadata.next_cursor`, 200 per page (15 in `non_marketplace` mode), with no page ceiling; a cursor seen twice stops the pull. `--since` filters top-level messages, so a thread whose parent is older than `--since` is not read even if it has newer replies. Channels are read 4 at a time. Pages inside one channel stay in order.
 
-Slack rate-limits each Web API method on its own. Each method has its own gate: a `429` holds every worker calling that method for `Retry-After` seconds and leaves the rest running. A `5xx` backs off 1s, 2s, 4s. After five throttled attempts the pull stops.
+### Rate limits (EMBER-52)
+
+Slack limits each Web API method per workspace per app. Each method has its own gate:
+
+- **Pacing:** calls are spaced at the method's tier rate. `team.info`, `conversations.history` and `conversations.replies` run at 50/min (Tier 3), and `users.list` and `conversations.list` at 20/min (Tier 2). Workers don't burst into throttling. `SLACK_RATE_MODE=non_marketplace` (or `--rate-mode`) drops history and replies to 1/min and 15 per page.
+- **Throttling is not failure:** a `429`, or an `ok:false` body with `error: "ratelimited"`, waits the full `Retry-After` (at least 1 s, at most 15 min) and retries with no attempt limit. It gives up only when one call has waited an hour in total, which means Slack is limiting harder than the rate mode assumes.
+- **Transient errors:** a `5xx`, a timeout, a connection reset or a DNS failure backs off 1, 2, 4, 8, 16, 32, 60 s, each randomly shortened by up to half (jitter) so workers don't retry in lockstep. It stops after 8 attempts.
+- **Real errors stop at once:** `invalid_auth`, `token_revoked`, `missing_scope` and other HTTP errors.
+
+### Progress and resume
+
+With `--output`, every page is appended to a part file under `<output>.parts/`, and a checkpoint is saved to `<output>.checkpoint.json` after it. If the run stops (crash, restart, `Ctrl+C`), run the same command with `--resume`, and it continues from the last saved page. The final JSONL is assembled at the end, in the same order as an uninterrupted run, with duplicates from the re-read page removed. Then the checkpoint and part files are deleted.
+
+- `--resume` with no checkpoint starts a fresh run, so it's safe to always pass it. The `slack-backfill` container does.
+- Without `--resume`, an existing checkpoint stops the run, so two different runs never mix.
+- A checkpoint only resumes with the same `--channel`, `--since` and `--include-archived`, and the same workspace token.
+- Without `--output` (JSONL to stdout), the pull runs in memory and can't resume.
 
 Slack reports most failures as HTTP 200 with `{"ok": false, "error": …}`:
 

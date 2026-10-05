@@ -1,0 +1,220 @@
+---
+# Everything in k8s/apps: nginx, the reverse proxy behind the public https://ember.<tailnet_domain>
+# (a Tailscale Funnel Ingress), and the GitHub webhook listener it routes /webhook/github to.
+# Run from the controller against the "homelab" kubeconfig context. The Ingress needs the Tailscale
+# operator (make ts-operator-up).
+# Use the make targets: apps-up (up, health), apps-health, apps-down. apps-diff previews apps-up.
+- name: Apps
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubectl: "kubectl --context {{ cluster_context }}"
+    k8s_dir: "{{ playbook_dir }}/../../k8s"
+    # Every app lives in this namespace, so rollout status runs there
+    apps_ns: ember
+    # The name the GitHub App posts to
+    ember_host: "ember.{{ tailnet_domain }}"
+    ember_url: "https://{{ ember_host }}"
+    webhook_url: "{{ ember_url }}/webhook/github"
+    # The A records (type 1) in the public DNS answer, which can list a CNAME before them
+    public_ips: >-
+      {{ (public_dns.content | default('{}') | from_json).Answer | default([])
+      | selectattr('type', 'equalto', 1) | map(attribute='data') | list }}
+  tasks:
+    - name: Up
+      tags: [up]
+      block:
+        - name: Apply k8s/infrastructure
+          ansible.builtin.command: "{{ kubectl }} apply -k {{ k8s_dir }}/infrastructure"
+          register: infra_apply
+          changed_when: infra_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+
+        - name: Apply k8s/apps
+          ansible.builtin.command: "{{ kubectl }} apply -k {{ k8s_dir }}/apps"
+          register: apps_apply
+          changed_when: apps_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+
+    # Both tags: up waits here for what it just applied, and health starts from the same check
+    - name: Rollout
+      tags: [up, health]
+      block:
+        # Fails with NotFound while the checkout is ahead of the cluster: a generated ConfigMap's
+        # name carries a hash of its content, so an edit that is not applied yet names one that is
+        # not there. make apps-diff shows the difference.
+        - name: List what k8s/apps defines
+          ansible.builtin.command: "{{ kubectl }} get -k {{ k8s_dir }}/apps -o name"
+          register: apps_objects
+          changed_when: false
+
+        - name: Wait for each workload to roll out
+          ansible.builtin.command: "{{ kubectl }} -n {{ apps_ns }} rollout status {{ item }} --timeout=180s"
+          loop: "{{ apps_objects.stdout_lines | select('match', '(deployment|statefulset|daemonset)\\.') | list }}"
+          changed_when: false
+
+    - name: Health
+      tags: [health]
+      block:
+        # The proxy has to join the tailnet before the Ingress gets its hostname
+        - name: Wait for the Ingress to get its tailnet hostname
+          ansible.builtin.command: >-
+            {{ kubectl }} -n {{ apps_ns }} get ingress ember
+            -o jsonpath={.status.loadBalancer.ingress[0].hostname}
+          register: ingress_host
+          until: ingress_host.stdout | length > 0
+          retries: 30
+          delay: 10
+          changed_when: false
+
+        - name: Require the hostname GitHub posts to
+          ansible.builtin.assert:
+            that: ingress_host.stdout == ember_host
+            fail_msg: >-
+              The Ingress is published as {{ ingress_host.stdout }}, not {{ ember_host }}, so nothing
+              answers GitHub at {{ webhook_url }}. A recreated Tailscale device comes back as ember-1
+              while an older device still holds the plain name (k8s/README.md).
+            quiet: true
+
+        # The first request waits on the Let's Encrypt certificate, hence the retries
+        - name: Request /healthz from nginx
+          ansible.builtin.uri:
+            url: "{{ ember_url }}/healthz"
+            status_code: 200
+            timeout: 60
+          register: healthz
+          until: healthz is succeeded
+          retries: 12
+          delay: 10
+
+        # nginx keeps the Service's address for 60s, so after the Service is recreated it can
+        # answer 502 for up to a minute. The delivery id marks these pings in the listener's log.
+        - name: Post a ping to the webhook
+          ansible.builtin.uri:
+            url: "{{ webhook_url }}"
+            method: POST
+            body_format: json
+            body:
+              zen: ember apps-health
+            headers:
+              X-GitHub-Event: ping
+              X-GitHub-Delivery: apps-health
+            status_code: 200
+            return_content: true
+          register: ping
+          until: ping is succeeded
+          retries: 12
+          delay: 10
+
+        # The routing proof: only the listener answers with this field, nginx on its own cannot
+        - name: Require the listener's answer
+          ansible.builtin.assert:
+            that: (ping.json | default({})).listener | default('') == 'placeholder'
+            fail_msg: >-
+              POST {{ webhook_url }} returned 200 but not the listener's {"listener": "placeholder"},
+              so the request did not reach Service github-webhook.
+              It answered: {{ ping.content | default('') }}
+            quiet: true
+
+        # Requests from the tailnet resolve through MagicDNS and never use Funnel, so everything
+        # above passes even when GitHub cannot get in. Ask a public resolver for the address and
+        # send the same ping there. After apps-down the public record can take minutes to return.
+        - name: Look the name up in public DNS
+          ansible.builtin.uri:
+            url: "https://cloudflare-dns.com/dns-query?name={{ ember_host }}&type=A"
+            headers:
+              accept: application/dns-json
+            return_content: true
+          register: public_dns
+          until: public_ips | length > 0
+          retries: 30
+          delay: 10
+          failed_when: false
+
+        - name: Require a public DNS record
+          ansible.builtin.assert:
+            that: public_ips | length > 0
+            fail_msg: >-
+              {{ ember_host }} still has no public DNS record, so only tailnet devices can reach it and
+              GitHub cannot. Most likely the proxy lacks the funnel attribute: make ts-operator-health
+              checks that and says how to fix it.
+              The resolver answered: {{ public_dns.content | default(public_dns.msg | default('nothing')) }}
+            quiet: true
+
+        # A tailnet address (100.64.0.0/10) would take the next request past Funnel and prove nothing
+        - name: Require that address to be outside the tailnet
+          ansible.builtin.assert:
+            that: public_ips[0] is not match('100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.')
+            fail_msg: "Public DNS gave the tailnet address {{ public_ips[0] }} for {{ ember_host }}"
+            quiet: true
+
+        # --resolve pins the name to the public address; --fail turns a 4xx or 5xx into an error
+        - name: Post a ping through Funnel
+          ansible.builtin.command:
+            argv:
+              - curl
+              - --silent
+              - --show-error
+              - --fail
+              - --max-time
+              - "30"
+              - --resolve
+              - "{{ ember_host }}:443:{{ public_ips[0] }}"
+              - --header
+              - "Content-Type: application/json"
+              - --header
+              - "X-GitHub-Event: ping"
+              - --header
+              - "X-GitHub-Delivery: apps-health"
+              - --data
+              - '{"zen": "ember apps-health"}'
+              - "{{ webhook_url }}"
+          register: via_funnel
+          until: via_funnel.rc == 0
+          retries: 6
+          delay: 10
+          changed_when: false
+
+        # The first condition keeps from_json away from a body that is not JSON
+        - name: Require the listener's answer through Funnel
+          ansible.builtin.assert:
+            that:
+              - via_funnel.stdout is match('\s*\{')
+              - (via_funnel.stdout | from_json).listener | default('') == 'placeholder'
+            fail_msg: >-
+              POST {{ webhook_url }} through Funnel ({{ public_ips[0] }}) did not return the listener's
+              {"listener": "placeholder"}, so the public request did not reach Service github-webhook.
+              It answered: {{ via_funnel.stdout }}
+            quiet: true
+
+        - name: Request a path nginx does not route
+          ansible.builtin.uri:
+            url: "{{ ember_url }}/ember-apps-health-no-such-path"
+            status_code: 404
+
+        - name: Show the endpoints
+          ansible.builtin.debug:
+            msg:
+              - "Webhook: {{ webhook_url }} (POST)"
+              - "Probe:   {{ ember_url }}/healthz"
+
+    # "never" keeps this out of untagged runs; only --tags down selects it
+    - name: Down
+      tags: [never, down]
+      block:
+        - name: Delete everything in k8s/apps
+          ansible.builtin.command: "{{ kubectl }} delete -k {{ k8s_dir }}/apps --ignore-not-found --wait"
+          register: apps_delete
+          changed_when: "'deleted' in apps_delete.stdout"
+
+        # delete -k only removes the ConfigMaps the checkout generates now. Each earlier version of
+        # a config was created under its own hash suffix and is still there.
+        - name: Delete the generated ConfigMaps of earlier versions
+          ansible.builtin.command: >-
+            {{ kubectl }} -n {{ apps_ns }} delete configmap -l ember.io/generated=true --ignore-not-found
+          register: cm_delete
+          changed_when: "'deleted' in cm_delete.stdout"
+
+        - name: Note what is kept and what is lost
+          ansible.builtin.debug:
+            msg: >-
+              Namespace {{ apps_ns }} and Neo4j are kept. Deleting the Ingress also deleted the
+              Tailscale proxy's state, so the next apps-up gets a new certificate for {{ ember_host }}.

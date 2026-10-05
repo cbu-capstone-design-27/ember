@@ -1,0 +1,61 @@
+# The reverse proxy for the public hostname. Routes live in default.conf.template.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: ember
+  labels:
+    app: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: nginx:1.28-alpine
+          env:
+            # Makes the entrypoint export NGINX_LOCAL_RESOLVERS (cluster DNS) for the template.
+            - name: NGINX_ENTRYPOINT_LOCAL_RESOLVERS
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 80
+          # Answered by nginx itself, so a listener outage is a 502 on its path, not a restart here.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          # No capability drops, runAsNonRoot or read-only root: the image starts as root and
+          # writes conf.d, its cache and its pid file.
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/nginx/templates/default.conf.template
+              subPath: default.conf.template
+              readOnly: true
+      volumes:
+        - name: conf
+          configMap:
+            name: nginx-conf
