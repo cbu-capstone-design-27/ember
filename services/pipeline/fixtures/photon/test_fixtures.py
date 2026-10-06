@@ -88,13 +88,20 @@ class PhotonFixtureTest(unittest.TestCase):
                 if b.get("type") == "message" and b.get("channel") == "C08PHOTONGH" and b.get("thread_ts", b["ts"]) == b["ts"]]
         self.assertEqual(len(feed), len(self.source["issues"]) + len(self.source["pulls"]))
 
-    def test_people_are_the_people_in_the_history(self):
+    def test_people_join_across_sources(self):
+        emails = sorted(person["email"] for person in generate.PEOPLE.values())
+        self.assertIn(self.source["repo"]["author"]["email"], emails)
         humans = [b for b in (env["body"] for env in self.slack)
                   if "profile" in b and "is_bot" in b and not b["is_bot"] and b["id"] != "USLACKBOT"]
-        self.assertEqual([h["profile"]["email"] for h in humans], [self.source["repo"]["author"]["email"]])
+        self.assertEqual(sorted(h["profile"]["email"] for h in humans), emails)
         authors = {b["author"]["emailAddress"] for b in (env["body"] for env in self.jira) if "author" in b}
-        self.assertEqual(authors, {self.source["repo"]["author"]["email"]})
+        self.assertEqual(sorted(authors), emails)
+        speakers = {b["user"] for b in (env["body"] for env in self.slack) if b.get("type") == "message" and "bot_id" not in b}
+        self.assertEqual(speakers, {person["slack"] for person in generate.PEOPLE.values()})
 
+    def test_pull_requests_stay_ryans(self):
+        issues = [env["body"] for env in self.jira if "fields" in env["body"] and env["body"].get("key", "").startswith("PHO-")]
+        self.assertEqual({i["fields"]["assignee"]["emailAddress"] for i in issues}, {self.source["repo"]["author"]["email"]})
 
 if __name__ == "__main__":
     unittest.main()

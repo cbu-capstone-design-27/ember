@@ -45,16 +45,25 @@ Derived from those:
 
 Written for this fixture:
 
-- Ryan's messages in `#general`, `#photon-dev`, and `#photon-bugs`, and a few Jira comments. Each one restates a decision or convention the GitHub history already shows (the GPUI rewrite and the rollback to Swift, the parity gate, branch names without dots, the Homebrew tap rename, the onboarding rewrite), placed at the time the history puts that work.
-- All ids, the `photon-synthetic` Slack and Atlassian domains, and Ryan's Jira account id.
+- Two teammates, Maya Okafor (design) and Daniel Reyes (QA and release testing). See People.
+- The human messages in `#general`, `#photon-dev`, `#photon-bugs`, and `#photon-releases`, and the Jira comments that are not copied from GitHub. Each one restates a decision, bug report, or verification the GitHub history already shows (the GPUI rewrite and the rollback to Swift, the parity gate, branch names without dots, the Homebrew tap rename, the onboarding rewrite), placed at the time the history puts that work.
+- All ids, the `photon-synthetic` Slack and Atlassian domains, and the Jira account ids.
 
 ## People
 
-Ryan Stoffel is the only person. Every commit, issue, and comment in photon is his; the other authors are dependabot and Cursor Bugbot. The fixture keeps it that way rather than inventing teammates. Ryan's email from the commit history is on his Slack profile and Jira user, so the pipeline can join him across GitHub, Slack, and Jira.
+The fixture is a three-person team:
 
-Slack members: Ryan, Slackbot, and the GitHub, Jira Cloud, and Ember bots. `#random` exists but Ember is not a member, so the pull skips it, the same as a real workspace.
+| Person | Role | Email (join key) |
+| --- | --- | --- |
+| Ryan Stoffel | Engineer. Writes every pull request | `stoffel.thomas.ryan@gmail.com`, from the commit history |
+| Maya Okafor | Design. Reports Stories for the launcher, clipboard, notes, Settings, and onboarding | `maya.okafor@example.com` |
+| Daniel Reyes | QA and release testing. Reports every Bug and verifies releases | `daniel.reyes@example.com` |
+
+Maya and Daniel are fictional. They exist only in Slack and Jira, because every commit, issue, and pull request in photon is Ryan's. Ryan stays the Jira assignee on every issue so Jira agrees with GitHub about who did the work. Maya and Daniel show up as reporters, commenters, watchers, and in Slack threads. The same email is on each person's Slack profile and Jira user, so the pipeline can join people across sources.
+
+Slack members: the three people, Slackbot, and the GitHub, Jira Cloud, and Ember bots. `#random` exists but Ember is not a member, so the pull skips it, the same as a real workspace.
 
 ## Counts
 
-- Slack: 613 envelopes. 1 workspace, 5 members, 5 channels, 602 messages and replies.
-- Jira: 705 envelopes. 1 project, 25 versions, 4 status sets, 112 issues (8 epics), 28 issue link views, 18 comments, 112 changelog pages, 2 attachments, 179 remote links, 112 watcher and 112 vote objects.
+- Slack: 650 envelopes. 1 workspace, 7 members, 5 channels, 637 messages and replies.
+- Jira: 716 envelopes. 1 project, 25 versions, 4 status sets, 112 issues (8 epics), 28 issue link views, 29 comments, 112 changelog pages, 2 attachments, 179 remote links, 112 watcher and 112 vote objects.

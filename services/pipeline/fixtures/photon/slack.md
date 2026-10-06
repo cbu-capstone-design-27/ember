@@ -5,6 +5,8 @@ Workspace `T08PHOTON01` at https://photon-synthetic.slack.com/. Generated for EM
 ## Members
 
 - Ryan Stoffel (`U08RSTOFFEL`, person, stoffel.thomas.ryan@gmail.com)
+- Maya Okafor (`U08MOKAFOR1`, person, maya.okafor@example.com)
+- Daniel Reyes (`U08DREYES01`, person, daniel.reyes@example.com)
 - Slackbot (`USLACKBOT`, person)
 - GitHub (`U08GITHUB01`, bot)
 - Jira Cloud (`U08JIRACLD1`, bot)
@@ -12,50 +14,72 @@ Workspace `T08PHOTON01` at https://photon-synthetic.slack.com/. Generated for EM
 
 ## #general
 
-_Workspace announcements._ 2 messages.
+_Workspace announcements._ 4 messages.
 
 - **Ryan Stoffel** 2026-09-13 19:31 PT: Setting this workspace up for Photon. Code is at https://github.com/ryan-stoffel/photon and tickets are on the PHO board. #photon-dev is for decisions and conventions, #photon-github and #photon-releases are bot feeds, and #photon-bugs is for regressions.
+    - **Maya Okafor** 2026-09-13 19:40 PT: Joined. Design notes and mocks will go in #photon-dev.
+    - **Daniel Reyes** 2026-09-13 19:41 PT: Here. I'll triage in #photon-bugs and test every release on a 14 and a 15 machine before it goes out.
 - **Ryan Stoffel** 2026-10-05 09:05 PT: Added @Ember to #general, #photon-dev, #photon-github, #photon-releases, and #photon-bugs. It reads only channels it is invited to, so #random stays out.
 
 ## #photon-dev
 
-_Decisions, conventions, and working notes for Photon._ 35 messages.
+_Decisions, conventions, and working notes for Photon._ 55 messages.
 
-- **Ryan Stoffel** 2026-09-13 19:35 PT: Scope for Photon, written down so I stop relitigating it: applications, clipboard history, notes, file search, and keybinds. No AI, no extensions, no account, no cloud sync, no telemetry. Swift 6 with AppKit for the panel and process behavior and SwiftUI for content. macOS 14 and later. :pushpin:
+- **Ryan Stoffel** 2026-09-13 19:35 PT: Scope for Photon, written down so we stop relitigating it: applications, clipboard history, notes, file search, and keybinds. No AI, no extensions, no account, no cloud sync, no telemetry. Swift 6 with AppKit for the panel and process behavior and SwiftUI for content. macOS 14 and later. :pushpin:
     - **Ryan Stoffel** 2026-09-13 19:37 PT: Branching is git-flow. `develop` is the default branch, `main` only takes release merges, and `main` is back-merged into `develop` after every tag.
     - **Ryan Stoffel** 2026-09-13 19:38 PT: Branch names: `feature/GH-<issue>-<slug>` and `bug/GH-<issue>-<slug>`. CI checks the name, so a PR on a bad branch fails before build.
+    - **Maya Okafor** 2026-09-13 19:45 PT: Agreed on no extensions. Raycast is the visual reference for the bar, not the feature list.
 - **Ryan Stoffel** 2026-09-13 20:55 PT: Clipboard and file search both take over the launcher panel, but through two paths: clipboard uses `LauncherSession.clipboard`, files use the `LauncherMode` protocol. Folding clipboard onto `LauncherMode` is the right end state, not now. Filed GH-17 so it does not happen as a side effect of the file search PR.
+    - **Daniel Reyes** 2026-09-13 21:00 PT: Fine by me as long as `Cmd+Shift+V` behaves the same when it lands. I'll keep a regression checklist for it.
 - **Ryan Stoffel** 2026-09-13 21:52 PT: v0.1.0 is out, ad-hoc signed. Developer ID signing and notarization are wired into the release workflow but wait on Apple secrets (GH-11). Until then Gatekeeper needs Open Anyway on first launch.
     - **Ryan Stoffel** 2026-09-13 21:55 PT: The README has the Control-click and `xattr -dr com.apple.quarantine` workaround for now.
+    - **Daniel Reyes** 2026-09-13 21:58 PT: Installed 0.1.0 from the cask. Open Anyway works on 15 and Control-click works on 14.
 - **Ryan Stoffel** 2026-09-14 06:26 PT: Lost a release PR to the branch-name check. Dots are not allowed in `chore/` slugs, so `chore/merge-main-into-develop-v0.1.1` fails. Use `chore/backmerge-main-0-2-0` style. Writing it here because I will forget. :pushpin:
     - **Ryan Stoffel** 2026-09-14 10:04 PT: Did it again with `chore/backmerge-main-0.2.0` (#60). Closed it and recreated as #61.
+    - **Daniel Reyes** 2026-09-14 10:06 PT: Could the check print the allowed pattern when it fails?
+    - **Ryan Stoffel** 2026-09-14 10:09 PT: Maybe later. Not touching CI on a release day.
     - **Ryan Stoffel** 2026-09-14 13:22 PT: And again with #74. Keeping the rule. It is the right rule, I just need to stop typing dots.
-- **Ryan Stoffel** 2026-09-14 14:30 PT: File search returned nothing from the launcher. Switched to Spotlight `mdfind` scoped to the home folder (GH-79) instead of walking the filesystem. The test case I keep using: typing `ember` should find `Ember_Individual_Pitch.pdf` in Documents.
+- **Ryan Stoffel** 2026-09-14 14:30 PT: Switched file search to Spotlight `mdfind` scoped to the home folder (GH-79) instead of walking the filesystem. Daniel's `ember` case is the test: it should find `Ember_Individual_Pitch.pdf` in Documents.
     - **Ryan Stoffel** 2026-09-14 16:24 PT: `mdfind -onlyin $HOME` still missed that file. Added an `mdfind -name` filename fallback and a timeout so Files cannot stick on Searching (GH-91).
+    - **Daniel Reyes** 2026-09-14 16:40 PT: 0.2.3 finds it now, from Files mode and from the main bar.
 - **Ryan Stoffel** 2026-09-14 23:53 PT: Going to try a Rust + GPUI rewrite (GH-100). The Swift UI keeps shipping clipped clipboard overlays and stuck file search, and I want layout and ranking in crates I can test. Same compact bar, same cask, no new visual language.
+    - **Maya Okafor** 2026-09-14 23:58 PT: If you do this, match the v0.2.3 stills exactly. I don't want to redesign the bar a second time.
     - **Ryan Stoffel** 2026-09-15 00:02 PT: CI has to build this on `macos-latest`. Linux cannot compile GPUI against AppKit.
-- **Ryan Stoffel** 2026-09-15 07:25 PT: v0.3.0 is bad. Photon shows up in the Dock, the launcher has a title bar with traffic lights, appearance is stuck on light, the panel moves when clicked, and app icons do not render. Filing it as GH-107 with the Dock screenshot. :pushpin:
-    - **Ryan Stoffel** 2026-09-15 07:34 PT: New rule: no release unless a parity harness launches the packaged Photon.app on `macos-latest` and checks panel style, activation policy, menu bar, appearance, frame, icons, and the `Cmd+Shift+V` clipboard session.
+- **Ryan Stoffel** 2026-09-15 07:34 PT: New rule after Daniel's 0.3.0 report: no release unless a parity harness launches the packaged Photon.app on `macos-latest` and checks panel style, activation policy, menu bar, appearance, frame, icons, and the `Cmd+Shift+V` clipboard session. :pushpin:
     - **Ryan Stoffel** 2026-09-15 07:36 PT: If GPUI cannot pass that, the v0.2.3 Swift tree comes back. I am not shipping known-broken GPUI to get the rewrite out.
+    - **Maya Okafor** 2026-09-15 07:38 PT: Appearance stuck on light is the one people will notice first. Please have the harness screenshot light and dark.
+    - **Daniel Reyes** 2026-09-15 07:45 PT: I'll keep my manual pass too. The harness can't tell me whether it feels right.
     - **Ryan Stoffel** 2026-09-15 09:05 PT: Decided. GPUI did not pass. v0.3.1 restores Swift 6 + SwiftUI/AppKit as the release stack. The rewrite stays in history as 0.3.0 and nowhere else.
 - **Ryan Stoffel** 2026-09-15 09:35 PT: Cleaned up the PR pile from the rollback. #108, #110, and #112 are closed as superseded by #109, #111, and #113. None of them had anything unique.
-- **Ryan Stoffel** 2026-09-16 21:15 PT: Cursor Bugbot posts "usage limit reached" on every PR now. I am not paying for more usage on a solo repo. Those comments are not reviews, ignore them.
+- **Ryan Stoffel** 2026-09-16 21:15 PT: Cursor Bugbot posts "usage limit reached" on every PR now. Not paying for more usage. Those comments are not reviews, ignore them.
+- **Maya Okafor** 2026-09-17 11:30 PT: Proposal for panel size: one frame for launcher Suggestions, Files, and expanded clipboard. 760 x 502, and drop the expansion animation. Three sizes look like three apps. :thumbsup:
+    - **Ryan Stoffel** 2026-09-17 12:05 PT: Done in #161 (GH-159). The parity gate compares the three frames for exact equality.
 - **Ryan Stoffel** 2026-09-17 11:47 PT: GitHub renamed my account from `RyanStoffel` to `ryan-stoffel`. Repo links redirect, but Homebrew records tap trust by name, so the old `ryanstoffel/homebrew-tap` breaks `brew trust`. Docs use `ryan-stoffel/taps` everywhere now (#158). :pushpin:
-- **Ryan Stoffel** 2026-09-17 12:05 PT: Settled the panel size: 760 x 502 for launcher Suggestions, Files, and expanded clipboard. One frame for all three and no expansion animation. The parity gate compares the three frames for exact equality (GH-159).
-- **Ryan Stoffel** 2026-09-17 16:45 PT: Note for later: issues do not auto-close when a release PR merges to `main`, because `develop` is the default branch. Close them by hand with a "Shipped in vX" comment. :pushpin:
-- **Ryan Stoffel** 2026-09-20 23:20 PT: Launched apps were not coming to the front (GH-178). Photon now hides itself first, then activates the target with `yieldActivation`. Doing the launcher perf pass on the same branch.
+    - **Daniel Reyes** 2026-09-17 11:55 PT: Re-tapped with `ryan-stoffel/taps` on both test machines. `brew trust` works again.
+- **Ryan Stoffel** 2026-09-17 16:45 PT: Issues do not auto-close when a release PR merges to `main`, because `develop` is the default branch. Close them by hand with a "Shipped in vX" comment. :pushpin:
+    - **Daniel Reyes** 2026-09-17 16:50 PT: I'll close them after I verify each release, so closed means tested.
+- **Ryan Stoffel** 2026-09-20 23:20 PT: For GH-178, Photon now hides itself first, then activates the target with `yieldActivation`. Doing the launcher perf pass on the same branch.
 - **Ryan Stoffel** 2026-09-21 09:45 PT: Caps Lock as Hyper was turning Caps Lock on (GH-194). The remap now swallows the lock-state change while Hyper is held. A tap can still be set to nothing, Escape, or Caps Lock.
+    - **Daniel Reyes** 2026-09-21 11:20 PT: Held Hyper through twenty window commands on 0.4.2. Caps Lock never latched.
 - **Ryan Stoffel** 2026-09-21 12:45 PT: Pinning running apps to the top of the launcher felt wrong after a day. 0.4.3 replaces it with Suggestions ranked by how often each app is opened on this Mac. The running dots stay.
+    - **Maya Okafor** 2026-09-21 12:50 PT: Agree. Running apps on top reordered the list every time I opened something.
     - **Ryan Stoffel** 2026-09-28 10:50 PT: Suggestions rank commands by open count too now (GH-232). Files, single notes, and Settings panes stay in the catalog below.
-- **Ryan Stoffel** 2026-09-22 09:00 PT: Onboarding has had three versions in two days: the 0.4.3 walkthrough, the interactive tour in 0.4.4, and the full-screen sequence in 0.4.5. The full-screen one covers everything, which is too much. 0.4.6 plays it in a window (GH-221).
+- **Maya Okafor** 2026-09-22 09:00 PT: Onboarding has had three versions in two days: the 0.4.3 walkthrough, the interactive tour in 0.4.4, and the full-screen sequence in 0.4.5. The full-screen one covers everything, which is too much. Can it play in a window?
+    - **Ryan Stoffel** 2026-09-22 09:05 PT: Yes. 0.4.6 will play it in a window (GH-221).
     - **Ryan Stoffel** 2026-09-22 11:30 PT: Splitting onboarding into phases (GH-226). Phase 1 is the arrival. Phase 2 is the feature tour and permission prompts.
-- **Ryan Stoffel** 2026-09-22 12:20 PT: Running a dev build kills my release Photon because they share a bundle id and hotkeys. Adding a Photon-Dev app with its own bundle id that can run beside it (GH-228).
+- **Ryan Stoffel** 2026-09-22 12:20 PT: Running a dev build kills the release Photon because they share a bundle id and hotkeys. Adding a Photon-Dev app with its own bundle id that can run beside it (GH-228).
+    - **Daniel Reyes** 2026-09-22 12:25 PT: That helps me too. I can keep the release build as my baseline while I test a branch.
 - **Ryan Stoffel** 2026-09-28 10:05 PT: Scrapping the cinematic Phase 1. No beam, flash, stars, full-screen veil, or Desktop 2 pin. It becomes one small native welcome window: how to open Photon, where Settings are, and one Continue. Phase 2 is not in this pass. :pushpin:
+    - **Maya Okafor** 2026-09-28 10:07 PT: Good. That is the small window I mocked last week.
     - **Ryan Stoffel** 2026-09-28 10:09 PT: Sora stays in `Resources/Fonts`, but the welcome window uses the system font.
 - **Ryan Stoffel** 2026-09-28 20:20 PT: v0.4.7 is the first notarized build. The tag workflow signed with Developer ID, notarized, stapled, and bumped the cask on its own. GH-11 is closed after two weeks. :tada:
+    - **Daniel Reyes** 2026-09-28 20:35 PT: Downloaded the zip on a clean account. No Gatekeeper prompt.
 - **Ryan Stoffel** 2026-09-29 09:55 PT: Tried an outlined Photon mark for the menu bar (GH-243). Not the direction. The current menu bar icon stays.
-- **Ryan Stoffel** 2026-10-03 19:45 PT: Audited 0.4.8 against Raycast. Root search fills with loose System Settings matches, `saf` never lists Safari, root queries flip into Files mode, there is no Cmd+K action panel, and Esc does not clear text first. The calculator crashes on `2^64` and gets `2*-3` wrong. All of it is GH-248.
+    - **Maya Okafor** 2026-09-29 09:58 PT: Agreed. The filled mark reads better at menu bar size.
+- **Daniel Reyes** 2026-10-03 19:30 PT: Audited 0.4.8 against Raycast. Root search fills with loose System Settings matches, `saf` never lists Safari, root queries flip into Files mode, there is no Cmd+K action panel, and Esc does not clear text first. The calculator crashes on `2^64` and gets `2*-3` wrong.
+    - **Ryan Stoffel** 2026-10-03 19:45 PT: Filed all of it as GH-248.
     - **Ryan Stoffel** 2026-10-03 20:10 PT: Still no AI and no extensions. Parity means the core interactions, not the store.
+    - **Maya Okafor** 2026-10-03 20:15 PT: I'll mock the Cmd+K action panel and the footer before you start on it.
 
 ## #photon-github
 
@@ -557,7 +581,7 @@ _GitHub activity for ryan-stoffel/photon._ 493 messages.
 
 ## #photon-releases
 
-_Published Photon releases._ 28 messages.
+_Published Photon releases._ 31 messages.
 
 - **GitHub** 2026-09-13 21:49 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.1.0|Photon 0.1.0> (pre-release). First public build. Photon is a menu-bar launcher for macOS 14 and later; it has no Dock icon, no account, no cloud sync, and no telemetry.
 - **GitHub** 2026-09-14 06:32 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.1.1|Photon 0.1.1> (pre-release). UI polish release: redesigned launcher, Appearance settings, real app icons, Notes sidebar, and a screenshot harness for visual QA on macOS.
@@ -566,9 +590,10 @@ _Published Photon releases._ 28 messages.
 - **GitHub** 2026-09-14 15:08 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.2.2|Photon 0.2.2> (pre-release). Patch release: clipboard arrow navigation, search-field mode pills removed, live launcher drag, and Spotlight `mdfind` file search.
 - **GitHub** 2026-09-14 16:35 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.2.3|Photon 0.2.3> (pre-release). Patch release: clipboard reopen/arrows, live-snap drag, Documents file search, and Down-to-recents.
 - **GitHub** 2026-09-15 01:32 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.0|Photon 0.3.0> (pre-release). Rust + GPUI rewrite. Superseded by v0.3.1 because the shipped app regressed native macOS panel, Dock/menu, appearance, positioning, icon, clipboard, and feature behavior.
-    - **Ryan Stoffel** 2026-09-15 01:40 PT: Shipped the GPUI rewrite. Testing on my own machine before I trust it.
+    - **Ryan Stoffel** 2026-09-15 01:40 PT: Shipped the GPUI rewrite. Daniel, give it a full pass before anyone else installs it.
 - **GitHub** 2026-09-15 09:16 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.1|Photon 0.3.1> (pre-release). Emergency rollback release: restore the v0.2.3 Swift/AppKit implementation after the v0.3.0 Rust/GPUI rewrite failed the native macOS parity gate.
     - **Ryan Stoffel** 2026-09-15 09:20 PT: Rollback to the v0.2.3 Swift tree. See #photon-dev for why.
+    - **Daniel Reyes** 2026-09-15 09:30 PT: Back out of the Dock, no title bar, light and dark both follow the system.
 - **GitHub** 2026-09-15 10:53 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.2|Photon 0.3.2> (pre-release). Runtime reliability release for real-account file search and clipboard keyboard navigation.
 - **GitHub** 2026-09-15 14:16 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.3|Photon 0.3.3> (pre-release). Workflow completion release for clipboard paste-back, guided file access, launcher dragging, and expanded Clipboard and Files detail views.
 - **GitHub** 2026-09-16 22:09 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.4|Photon 0.3.4> (pre-release). Regression fix release for Ryan's v0.3.3 file search, drag guides, main-bar Files layout, and clipboard Enter paste.
@@ -576,6 +601,7 @@ _Published Photon releases._ 28 messages.
 - **GitHub** 2026-09-17 11:29 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.6|Photon 0.3.6> (pre-release). Ryan layout, animation, clipboard selection, and smoke-harness release.
 - **GitHub** 2026-09-17 12:46 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.7|Photon 0.3.7> (pre-release). Ryan shared-panel sizing and instant expansion release.
 - **GitHub** 2026-09-17 16:33 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.8|Photon 0.3.8> (pre-release). Ryan Files footer, folder grants, panel drag, and center-snap release.
+    - **Daniel Reyes** 2026-09-17 16:42 PT: Verified on 14 and 15.
 - **GitHub** 2026-09-17 19:38 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.9|Photon 0.3.9> (pre-release). Ryan Notes chrome and launcher recs-scroll release.
 - **GitHub** 2026-09-21 00:59 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.0|Photon 0.4.0> (pre-release). Ryan foreground launch, snappy launcher, native Settings, and macOS 26/27 chrome release.
 - **GitHub** 2026-09-21 08:56 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.1|Photon 0.4.1> (pre-release). Ryan Dock-style running dots and trailing keybind chips release.
@@ -587,52 +613,63 @@ _Published Photon releases._ 28 messages.
 - **GitHub** 2026-09-28 20:11 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.7|Photon 0.4.7> (pre-release). Ryan minimal first-run welcome.
     - **Ryan Stoffel** 2026-09-28 20:16 PT: First release that is Developer ID signed and notarized.
 - **GitHub** 2026-09-29 13:37 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.8|Photon 0.4.8> (pre-release). Ryan welcome window, compact footer, and Settings click focus.
+    - **Daniel Reyes** 2026-09-29 13:50 PT: Welcome window shows the configured shortcut. Verified on 14 and 15.
 
 ## #photon-bugs
 
-_Regressions and bug triage._ 44 messages.
+_Regressions and bug triage._ 54 messages.
 
-- **Jira Cloud** 2026-09-13 21:34 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-20|PHO-20: Launcher panel throws NSInternalInconsistencyException at launch>
-- **Ryan Stoffel** 2026-09-13 21:37 PT: Launcher panel throws `NSInternalInconsistencyException` at launch (GH-22). `moveToActiveSpace` conflicts with the other collection behavior flags. Dropping it. :white_check_mark:
-    - **Ryan Stoffel** 2026-09-13 21:41 PT: Fixed in #24.
-- **Jira Cloud** 2026-09-13 22:34 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-21|PHO-21: Launcher shows a placeholder square instead of app icons>
-- **Jira Cloud** 2026-09-13 23:56 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-25|PHO-25: bug: notes sidebar is not full height and the toolbar title precedes the sidebar controls>
-- **Jira Cloud** 2026-09-14 14:16 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-36|PHO-36: Clipboard history: arrow keys do not cycle items>
-- **Jira Cloud** 2026-09-14 14:16 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-37|PHO-37: Remove Clipboard/Files mode pill from the search field>
-- **Jira Cloud** 2026-09-14 14:16 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-38|PHO-38: Launcher drag jitters and does not follow the pointer>
-- **Jira Cloud** 2026-09-14 14:16 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-39|PHO-39: File search returns nothing; use Spotlight mdfind in home>
-- **Jira Cloud** 2026-09-14 14:48 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-40|PHO-40: Files empty panel stays tall instead of compact>
-- **Jira Cloud** 2026-09-14 16:07 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-41|PHO-41: Clipboard reopen shows clipped overlay; arrows must expand and cycle>
-- **Jira Cloud** 2026-09-14 16:07 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-42|PHO-42: Launcher drag should live-snap X between the edge guides>
-- **Jira Cloud** 2026-09-14 16:07 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-43|PHO-43: Files: ember misses Documents PDFs; Searching sticks; mix into main launcher>
-- **Jira Cloud** 2026-09-14 16:07 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-44|PHO-44: Empty launcher Down should show recents; darken top of search hairline>
-- **Jira Cloud** 2026-09-15 07:32 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-48|PHO-48: Restore native macOS parity after the v0.3.0 GPUI rewrite>
-- **Jira Cloud** 2026-09-15 09:50 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-49|PHO-49: v0.3.2: fix real file search and clipboard key routing>
-- **Ryan Stoffel** 2026-09-15 09:52 PT: Real-account file search is still broken after 0.3.1, and Up/Down in clipboard history does nothing on hardware. The CI harness passed both, so it was testing the wrong thing (GH-114). :white_check_mark:
+- **Jira Cloud** 2026-09-13 21:34 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-20|PHO-20: Launcher panel throws NSInternalInconsistencyException at launch>
+- **Jira Cloud** 2026-09-13 22:34 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-21|PHO-21: Launcher shows a placeholder square instead of app icons>
+- **Jira Cloud** 2026-09-13 23:56 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-25|PHO-25: bug: notes sidebar is not full height and the toolbar title precedes the sidebar controls>
+- **Daniel Reyes** 2026-09-14 14:10 PT: File search returns nothing for me. Typing `ember` should find `Ember_Individual_Pitch.pdf` in Documents and the Files list stays empty.
+    - **Ryan Stoffel** 2026-09-14 14:17 PT: Reproduced. Filed GH-79.
+- **Jira Cloud** 2026-09-14 14:16 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-36|PHO-36: Clipboard history: arrow keys do not cycle items>
+- **Jira Cloud** 2026-09-14 14:16 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-37|PHO-37: Remove Clipboard/Files mode pill from the search field>
+- **Jira Cloud** 2026-09-14 14:16 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-38|PHO-38: Launcher drag jitters and does not follow the pointer>
+- **Jira Cloud** 2026-09-14 14:16 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-39|PHO-39: File search returns nothing; use Spotlight mdfind in home>
+- **Jira Cloud** 2026-09-14 14:48 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-40|PHO-40: Files empty panel stays tall instead of compact>
+- **Jira Cloud** 2026-09-14 16:07 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-41|PHO-41: Clipboard reopen shows clipped overlay; arrows must expand and cycle>
+- **Jira Cloud** 2026-09-14 16:07 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-42|PHO-42: Launcher drag should live-snap X between the edge guides>
+- **Jira Cloud** 2026-09-14 16:07 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-43|PHO-43: Files: ember misses Documents PDFs; Searching sticks; mix into main launcher>
+- **Jira Cloud** 2026-09-14 16:07 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-44|PHO-44: Empty launcher Down should show recents; darken top of search hairline>
+- **Daniel Reyes** 2026-09-15 07:20 PT: 0.3.0 is bad. Photon shows up in the Dock, the launcher has a title bar with traffic lights, appearance is stuck on light, the panel moves when clicked, and app icons do not render. Dock screenshot is going on the issue.
+    - **Ryan Stoffel** 2026-09-15 07:33 PT: Filed as GH-107.
+- **Jira Cloud** 2026-09-15 07:32 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-48|PHO-48: Restore native macOS parity after the v0.3.0 GPUI rewrite>
+- **Daniel Reyes** 2026-09-15 09:45 PT: On 0.3.1, file search still finds nothing on my real account, and Up/Down in clipboard history does nothing on hardware. :white_check_mark:
+    - **Ryan Stoffel** 2026-09-15 09:52 PT: Filing GH-114. The CI harness passed both, so it was testing the wrong thing.
     - **Ryan Stoffel** 2026-09-15 10:55 PT: 0.3.2 fixes both. The harness now seeds a real Documents PDF and four pasteboard entries and checks the displayed rows through Accessibility.
-- **Jira Cloud** 2026-09-15 11:33 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-50|PHO-50: Fix trusted clipboard paste and add expanded detail view>
-- **Jira Cloud** 2026-09-16 20:58 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-54|PHO-54: v0.3.4: Restore PDF file search and Files split UI from main bar>
-- **Jira Cloud** 2026-09-16 20:58 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-55|PHO-55: v0.3.4: Fix launcher drag guides to panel edges>
-- **Jira Cloud** 2026-09-16 20:58 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-56|PHO-56: v0.3.4: Fix clipboard Enter paste on real Mac>
-- **Jira Cloud** 2026-09-16 22:27 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-59|PHO-59: v0.3.5: Vertical-only panel expansion for Files and clipboard>
-- **Jira Cloud** 2026-09-16 22:27 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-60|PHO-60: v0.3.5: Fix real-world file search (ember PDF under Documents)>
-- **Jira Cloud** 2026-09-17 07:20 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-63|PHO-63: fix: Files and clipboard expanded UI should split side-by-side inside the compact launcher width>
-- **Jira Cloud** 2026-09-17 07:20 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-64|PHO-64: fix: snappy launcher height animation (~120-180ms) for Files and clipboard expand>
-- **Jira Cloud** 2026-09-17 07:20 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-65|PHO-65: fix: clipboard Up/Down must highlight the selected left-list row>
-- **Jira Cloud** 2026-09-17 07:20 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-66|PHO-66: fix: CI smoke native-parity SIGTERM after Files recents wait>
-- **Jira Cloud** 2026-09-17 13:28 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-70|PHO-70: Files metadata overlaps the command footer>
-- **Jira Cloud** 2026-09-17 13:28 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-71|PHO-71: Folder permission dialogs must keep the Files panel open>
-- **Jira Cloud** 2026-09-17 13:28 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-72|PHO-72: Drag the launcher from the entire panel with click slop>
-- **Jira Cloud** 2026-09-17 13:28 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-73|PHO-73: Horizontal center snap when the panel midpoint is between the edge guides>
-- **Ryan Stoffel** 2026-09-17 13:30 PT: Files metadata paints over the footer buttons, folder grant dialogs close the panel, and drag only works from the top edge (GH-164 through GH-167). One branch for all four. :white_check_mark:
+    - **Daniel Reyes** 2026-09-15 11:10 PT: Confirmed on 0.3.2.
+- **Jira Cloud** 2026-09-15 09:50 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-49|PHO-49: v0.3.2: fix real file search and clipboard key routing>
+- **Jira Cloud** 2026-09-15 11:33 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-50|PHO-50: Fix trusted clipboard paste and add expanded detail view>
+- **Jira Cloud** 2026-09-16 20:58 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-54|PHO-54: v0.3.4: Restore PDF file search and Files split UI from main bar>
+- **Jira Cloud** 2026-09-16 20:58 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-55|PHO-55: v0.3.4: Fix launcher drag guides to panel edges>
+- **Jira Cloud** 2026-09-16 20:58 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-56|PHO-56: v0.3.4: Fix clipboard Enter paste on real Mac>
+- **Jira Cloud** 2026-09-16 22:27 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-59|PHO-59: v0.3.5: Vertical-only panel expansion for Files and clipboard>
+- **Jira Cloud** 2026-09-16 22:27 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-60|PHO-60: v0.3.5: Fix real-world file search (ember PDF under Documents)>
+- **Jira Cloud** 2026-09-17 07:20 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-63|PHO-63: fix: Files and clipboard expanded UI should split side-by-side inside the compact launcher width>
+- **Jira Cloud** 2026-09-17 07:20 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-64|PHO-64: fix: snappy launcher height animation (~120-180ms) for Files and clipboard expand>
+- **Jira Cloud** 2026-09-17 07:20 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-65|PHO-65: fix: clipboard Up/Down must highlight the selected left-list row>
+- **Jira Cloud** 2026-09-17 07:20 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-66|PHO-66: fix: CI smoke native-parity SIGTERM after Files recents wait>
+- **Daniel Reyes** 2026-09-17 13:20 PT: Three in Files and drag on 0.3.7: metadata paints over the footer buttons, a folder grant dialog closes the panel, and drag only works from the top edge. Screenshot of the footer is on the ticket. :white_check_mark:
+    - **Ryan Stoffel** 2026-09-17 13:30 PT: Filed GH-164 through GH-167. One branch for all of them.
     - **Ryan Stoffel** 2026-09-17 16:10 PT: Merged in #169. Grants are a sheet on the launcher now, queued one at a time, and they survive relaunch.
-- **Jira Cloud** 2026-09-17 18:26 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-75|PHO-75: fix: launcher Down list must scroll the full catalog, not wrap>
-- **Jira Cloud** 2026-09-20 23:17 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-78|PHO-78: fix: launched apps must come to the foreground>
-- **Jira Cloud** 2026-09-21 09:41 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-87|PHO-87: fix: Caps Lock Hyper key must not toggle Caps Lock>
-- **Jira Cloud** 2026-09-21 11:33 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-93|PHO-93: fix: Settings sidebar focus ring stays stuck on one row>
-- **Jira Cloud** 2026-09-21 17:21 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-98|PHO-98: fix: Photon icon is tiny in the launcher and menus>
-- **Jira Cloud** 2026-09-28 10:22 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-107|PHO-107: fix: typing finder hides Finder.app behind file hits>
-- **Ryan Stoffel** 2026-09-28 10:25 PT: Typing `finder` shows file hits above Finder.app (GH-233). An application name match beats file hits now. :white_check_mark:
-- **Ryan Stoffel** 2026-09-29 09:50 PT: The Settings sidebar focus ring is stuck again, this time after a click (GH-238). Same symptom as GH-202, different trigger.
-- **Jira Cloud** 2026-09-29 09:50 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-108|PHO-108: fix: Settings sidebar focus ring stays on the previous row after a click>
-- **Jira Cloud** 2026-09-29 09:52 PT: Ryan Stoffel created Bug <https://photon-synthetic.atlassian.net/browse/PHO-109|PHO-109: fix: launcher footer gap while results load>
+    - **Daniel Reyes** 2026-09-17 16:40 PT: Verified on 0.3.8.
+- **Jira Cloud** 2026-09-17 13:28 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-70|PHO-70: Files metadata overlaps the command footer>
+- **Jira Cloud** 2026-09-17 13:28 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-71|PHO-71: Folder permission dialogs must keep the Files panel open>
+- **Jira Cloud** 2026-09-17 13:28 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-72|PHO-72: Drag the launcher from the entire panel with click slop>
+- **Jira Cloud** 2026-09-17 13:28 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-73|PHO-73: Horizontal center snap when the panel midpoint is between the edge guides>
+- **Jira Cloud** 2026-09-17 18:26 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-75|PHO-75: fix: launcher Down list must scroll the full catalog, not wrap>
+- **Daniel Reyes** 2026-09-20 23:10 PT: Apps launched from Photon open behind whatever window was in front.
+    - **Ryan Stoffel** 2026-09-20 23:17 PT: Filing GH-178.
+- **Jira Cloud** 2026-09-20 23:17 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-78|PHO-78: fix: launched apps must come to the foreground>
+- **Jira Cloud** 2026-09-21 09:41 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-87|PHO-87: fix: Caps Lock Hyper key must not toggle Caps Lock>
+- **Jira Cloud** 2026-09-21 11:33 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-93|PHO-93: fix: Settings sidebar focus ring stays stuck on one row>
+- **Jira Cloud** 2026-09-21 17:21 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-98|PHO-98: fix: Photon icon is tiny in the launcher and menus>
+- **Daniel Reyes** 2026-09-28 10:15 PT: Typing `finder` lists file hits above Finder.app. :white_check_mark:
+    - **Ryan Stoffel** 2026-09-28 10:25 PT: Filed GH-233. An application name match beats file hits now.
+- **Jira Cloud** 2026-09-28 10:22 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-107|PHO-107: fix: typing finder hides Finder.app behind file hits>
+- **Daniel Reyes** 2026-09-29 09:45 PT: The Settings sidebar focus ring is stuck again, this time after a click.
+    - **Ryan Stoffel** 2026-09-29 09:50 PT: Same symptom as GH-202, different trigger. Filing GH-238.
+- **Jira Cloud** 2026-09-29 09:50 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-108|PHO-108: fix: Settings sidebar focus ring stays on the previous row after a click>
+- **Jira Cloud** 2026-09-29 09:52 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-109|PHO-109: fix: launcher footer gap while results load>

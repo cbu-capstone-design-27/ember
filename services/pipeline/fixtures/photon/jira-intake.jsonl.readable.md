@@ -164,55 +164,66 @@
 
 ## Issue links (28)
 
-- 10608 Relates → PHO-19
-- 10609 Relates → PHO-19
-- 10608 Relates ← PHO-10
-- 10609 Relates ← PHO-12
-- 10607 Relates → PHO-48
-- 10607 Relates ← PHO-45
-- 10610 Blocks → PHO-58
-- 10611 Blocks → PHO-58
-- 10612 Blocks → PHO-58
-- 10613 Blocks → PHO-58
-- 10610 Blocks ← PHO-54
-- 10611 Blocks ← PHO-55
-- 10612 Blocks ← PHO-56
-- 10613 Blocks ← PHO-57
-- 10614 Blocks → PHO-62
-- 10615 Blocks → PHO-62
-- 10616 Blocks → PHO-62
-- 10614 Blocks ← PHO-59
-- 10615 Blocks ← PHO-60
-- 10616 Blocks ← PHO-61
-- 10620 Relates → PHO-108
-- 10617 Relates → PHO-104
-- 10618 Relates → PHO-104
-- 10617 Relates ← PHO-100
-- 10618 Relates ← PHO-102
-- 10619 Relates ← PHO-110
-- 10620 Relates ← PHO-93
-- 10619 Relates → PHO-104
+- 10619 Relates → PHO-19
+- 10620 Relates → PHO-19
+- 10619 Relates ← PHO-10
+- 10620 Relates ← PHO-12
+- 10618 Relates → PHO-48
+- 10618 Relates ← PHO-45
+- 10621 Blocks → PHO-58
+- 10622 Blocks → PHO-58
+- 10623 Blocks → PHO-58
+- 10624 Blocks → PHO-58
+- 10621 Blocks ← PHO-54
+- 10622 Blocks ← PHO-55
+- 10623 Blocks ← PHO-56
+- 10624 Blocks ← PHO-57
+- 10625 Blocks → PHO-62
+- 10626 Blocks → PHO-62
+- 10627 Blocks → PHO-62
+- 10625 Blocks ← PHO-59
+- 10626 Blocks ← PHO-60
+- 10627 Blocks ← PHO-61
+- 10631 Relates → PHO-108
+- 10628 Relates → PHO-104
+- 10629 Relates → PHO-104
+- 10628 Relates ← PHO-100
+- 10629 Relates ← PHO-102
+- 10630 Relates ← PHO-110
+- 10631 Relates ← PHO-93
+- 10630 Relates → PHO-104
 
-## Comments (18)
+## Comments (29)
 
 - 10136 Ryan Stoffel — CI jobs branch-name, lint, build, and test are green on macos-latest (see PR #15).
 - 10151 Ryan Stoffel — v0.1.0 shipped ad-hoc signed. The workflow is ready for Developer ID signing, notarization, and automatic cask bumps as…
 - 10152 Ryan Stoffel — v0.4.7 is the first notarized pre-release. The tag workflow reported signing=developer-id-notarized, published the GitH…
-- 10154 Ryan Stoffel — Deferred on purpose. Do this as its own change, not inside a file search fix. Clipboard stays on LauncherSession until…
-- 10285 Ryan Stoffel — Why: the Swift UI keeps regressing clipboard overlays and file search, and I want layout and ranking in crates I can te…
-- 10299 Ryan Stoffel — Parity gate before any further release: packaged Photon.app on macos-latest, borderless non-activating panels, no Dock…
-- 10300 Ryan Stoffel — Decision: GPUI failed the gate. v0.3.1 restores the v0.2.3 Swift tree and keeps the harness as a required release check.
-- 10338 Ryan Stoffel — Shipped in v0.3.4. Launcher drag guides mark the panel's left and right edges again, and horizontal snap uses a narrow…
-- 10343 Ryan Stoffel — Shipped in v0.3.4. Clipboard paste hides Photon, reactivates the prior app, and checks Accessibility at delivery time s…
-- 10348 Ryan Stoffel — Shipped in v0.3.4. The packaged macOS gate covers mixed-bar Files promotion, guide span, and a real paste sentinel. See…
-- 10376 Ryan Stoffel — Shipped as v0.3.5 (vertical expansion and the file-search fixes in that release). Later versions through v0.4.6 are on…
-- 10400 Ryan Stoffel — Shipped as v0.3.6: version on main, GitHub Release with zip and dmg, Homebrew cask bump, and the back-merge onto develo…
-- 10433 Ryan Stoffel — Shipped in [Photon v0.3.8](https://github.com/ryan-stoffel/photon/releases/tag/v0.3.8). Release PR #170 merged to main…
-- 10559 Ryan Stoffel — Phase 1 is the arrival. Phase 2 is the feature tour and permission prompts.
-- 10560 Ryan Stoffel — Ryan wants the Phase 1 arrival bigger, still on this screen only. The 2pt line and short tail read as too small. This p…
-- 10561 Ryan Stoffel — Ryan, 2026-09-28: the cinematic Phase 1 overlay is scratched. No beam, flash, stars, full-screen veil, or Desktop 2 pin…
-- 10599 Ryan Stoffel — Not doing the outlined menu bar icon. The current menu bar icon stays.
-- 10604 Ryan Stoffel — Scope stays the same: no AI and no extensions. This is about root search ranking, Esc order, an action panel, the calcu…
+- 10153 Daniel Reyes — Verified 0.4.7 on a clean account on macOS 15. No Gatekeeper prompt, and spctl -a -vv reports Notarized Developer ID.
+- 10155 Ryan Stoffel — Deferred on purpose. Do this as its own change, not inside a file search fix. Clipboard stays on LauncherSession until…
+- 10156 Daniel Reyes — When this lands, rerun the clipboard checklist: Cmd+Shift+V, cb prefix, paste, pin, delete, and the Accessibility fallb…
+- 10257 Daniel Reyes — Repro: put a PDF named Ember_Individual_Pitch.pdf in ~/Documents, open Photon, type ember. Files list stays empty.
+- 10288 Ryan Stoffel — Why: the Swift UI keeps regressing clipboard overlays and file search, and I want layout and ranking in crates I can te…
+- 10289 Maya Okafor — The v0.2.3 stills are the spec. Pill bar, footer, calculator card, clipboard and Files modes, Settings, and Notes.
+- 10303 Daniel Reyes — Screenshot attached. The clipboard hotkey also does nothing on 0.3.0.
+- 10304 Ryan Stoffel — Parity gate before any further release: packaged Photon.app on macos-latest, borderless non-activating panels, no Dock…
+- 10305 Ryan Stoffel — Decision: GPUI failed the gate. v0.3.1 restores the v0.2.3 Swift tree and keeps the harness as a required release check.
+- 10306 Daniel Reyes — Verified on 0.3.1 on 14 and 15. Out of the Dock, no title bar, appearance follows the system.
+- 10344 Ryan Stoffel — Shipped in v0.3.4. Launcher drag guides mark the panel's left and right edges again, and horizontal snap uses a narrow…
+- 10349 Ryan Stoffel — Shipped in v0.3.4. Clipboard paste hides Photon, reactivates the prior app, and checks Accessibility at delivery time s…
+- 10354 Ryan Stoffel — Shipped in v0.3.4. The packaged macOS gate covers mixed-bar Files promotion, guide span, and a real paste sentinel. See…
+- 10382 Ryan Stoffel — Shipped as v0.3.5 (vertical expansion and the file-search fixes in that release). Later versions through v0.4.6 are on…
+- 10406 Ryan Stoffel — Shipped as v0.3.6: version on main, GitHub Release with zip and dmg, Homebrew cask bump, and the back-merge onto develo…
+- 10412 Maya Okafor — Target: 760 x 502 for launcher Suggestions, Files, and expanded clipboard. No expansion animation.
+- 10422 Daniel Reyes — Screenshot attached. Created and Modified paint over Open and Reveal.
+- 10441 Ryan Stoffel — Shipped in [Photon v0.3.8](https://github.com/ryan-stoffel/photon/releases/tag/v0.3.8). Release PR #170 merged to main…
+- 10567 Ryan Stoffel — Phase 1 is the arrival. Phase 2 is the feature tour and permission prompts.
+- 10568 Ryan Stoffel — Ryan wants the Phase 1 arrival bigger, still on this screen only. The 2pt line and short tail read as too small. This p…
+- 10569 Maya Okafor — Small native window, system font, one Continue. Mock is in the design file.
+- 10570 Ryan Stoffel — Ryan, 2026-09-28: the cinematic Phase 1 overlay is scratched. No beam, flash, stars, full-screen veil, or Desktop 2 pin…
+- 10588 Daniel Reyes — Repro: type finder. Search Files and filename hits come before Finder.app.
+- 10609 Ryan Stoffel — Not doing the outlined menu bar icon. The current menu bar icon stays.
+- 10614 Daniel Reyes — Full audit notes are in #photon-dev.
+- 10615 Ryan Stoffel — Scope stays the same: no AI and no extensions. This is about root search ranking, Esc order, an action panel, the calcu…
 
 ## Changelog pages (112)
 
@@ -357,168 +368,168 @@
 - 10142 — ryan-stoffel/photon#21: ci(release): dry-run mode, launch smoke test, and release notes
 - 10143 — ryan-stoffel/photon#23: ci(release): dry-run mode, launch smoke test, and release notes
 - 10147 — ryan-stoffel/photon#10: Homebrew cask in ryanstoffel/taps
-- 10153 — ryan-stoffel/photon#11: Developer ID signing and notarization
-- 10155 — ryan-stoffel/photon#17: Unify clipboard session with LauncherMode protocol
-- 10159 — ryan-stoffel/photon#22: Launcher panel throws NSInternalInconsistencyException at launch
-- 10160 — ryan-stoffel/photon#24: fix(launcher): drop the conflicting moveToActiveSpace panel behaviour
-- 10164 — ryan-stoffel/photon#29: Launcher shows a placeholder square instead of app icons
-- 10165 — ryan-stoffel/photon#31: fix(launcher): show real icons for apps, panes, and provider rows
-- 10169 — ryan-stoffel/photon#30: Launcher visual redesign: search field, icon rows, compact by default, Appearance settings
-- 10170 — ryan-stoffel/photon#33: feat(launcher): redesign the panel, compact by default, Appearance settings
-- 10174 — ryan-stoffel/photon#32: feat: notes window with a native sidebar and standard toolbar
-- 10175 — ryan-stoffel/photon#36: feat(notes): native sidebar and unified toolbar for the notes window
-- 10179 — ryan-stoffel/photon#34: CI screenshot harness for UI scenarios
-- 10180 — ryan-stoffel/photon#35: feat(ci): UI scenario screenshot harness
-- 10184 — ryan-stoffel/photon#37: bug: notes sidebar is not full height and the toolbar title precedes the sidebar controls
-- 10185 — ryan-stoffel/photon#38: fix(notes): full-height sidebar and tracking separator need fullSizeContentView
-- 10189 — ryan-stoffel/photon#45: feat: System Settings panes searchable by human title
-- 10190 — ryan-stoffel/photon#48: feat(apps): searchable System Settings pane titles
-- 10194 — ryan-stoffel/photon#46: Inline calculator and unit conversions in launcher
-- 10195 — ryan-stoffel/photon#51: feat(launcher): inline calculator and unit conversions
-- 10199 — ryan-stoffel/photon#47: File search: default to home folder, fuzzy matching, launcher-style Files UI
-- 10200 — ryan-stoffel/photon#52: File search: home scope, fuzzy matching, launcher-style Files UI
-- 10204 — ryan-stoffel/photon#49: Restyle clipboard mode to match compact launcher
-- 10205 — ryan-stoffel/photon#53: Restyle clipboard mode to match compact launcher
-- 10209 — ryan-stoffel/photon#50: Launcher: drag to reposition with center snap guides
-- 10210 — ryan-stoffel/photon#54: Launcher: drag to reposition with center snap guides
-- 10214 — ryan-stoffel/photon#56: Raycast-style inline calculator result card
-- 10215 — ryan-stoffel/photon#57: Raycast-style inline calculator result card
-- 10219 — ryan-stoffel/photon#62: Calculator section sits too close to search hairline
-- 10220 — ryan-stoffel/photon#66: fix(launcher): calculator section spacing (GH-62)
-- 10224 — ryan-stoffel/photon#63: File search defaults to home scope and filters system paths
-- 10225 — ryan-stoffel/photon#67: fix(files): home-only Spotlight scope (GH-63)
-- 10229 — ryan-stoffel/photon#64: Cmd+Shift+V clipboard should use compact launcher bar
-- 10230 — ryan-stoffel/photon#68: fix(clipboard): compact hotkey panel (GH-64)
-- 10234 — ryan-stoffel/photon#65: Launcher drag guides and reliability
-- 10235 — ryan-stoffel/photon#69: fix(launcher): drag guides and file compact empty (GH-65)
-- 10236 — ryan-stoffel/photon#72: fix(launcher): file mode compact panel on enter
-- 10240 — ryan-stoffel/photon#76: Clipboard history: arrow keys do not cycle items
-- 10241 — ryan-stoffel/photon#80: fix(clipboard): move history with arrow keys
-- 10245 — ryan-stoffel/photon#77: Remove Clipboard/Files mode pill from the search field
-- 10246 — ryan-stoffel/photon#81: fix(launcher): drop Clipboard and Files search-field pills
-- 10250 — ryan-stoffel/photon#78: Launcher drag jitters and does not follow the pointer
-- 10251 — ryan-stoffel/photon#82: fix(launcher): track live drag in screen space
-- 10255 — ryan-stoffel/photon#79: File search returns nothing; use Spotlight mdfind in home
-- 10256 — ryan-stoffel/photon#83: fix(files): search home with Spotlight mdfind
-- 10260 — ryan-stoffel/photon#84: Files empty panel stays tall instead of compact
-- 10261 — ryan-stoffel/photon#85: fix(files): compact empty Files panel
-- 10265 — ryan-stoffel/photon#89: Clipboard reopen shows clipped overlay; arrows must expand and cycle
-- 10266 — ryan-stoffel/photon#94: fix(clipboard): reset compact panel on dismiss and cycle with arrows
-- 10270 — ryan-stoffel/photon#90: Launcher drag should live-snap X between the edge guides
-- 10271 — ryan-stoffel/photon#93: fix(launcher): live-snap drag X between edge guides
-- 10275 — ryan-stoffel/photon#91: Files: ember misses Documents PDFs; Searching sticks; mix into main launcher
-- 10276 — ryan-stoffel/photon#95: fix(files): match Documents filenames and mix hits into the launcher
-- 10280 — ryan-stoffel/photon#92: Empty launcher Down should show recents; darken top of search hairline
-- 10281 — ryan-stoffel/photon#96: fix(launcher): Down on empty bar shows recents; darker search hairline
-- 10286 — ryan-stoffel/photon#100: Rewrite Photon in Rust + GPUI (ship as Photon.app)
-- 10287 — ryan-stoffel/photon#103: feat: rewrite Photon in Rust + GPUI
-- 10291 — ryan-stoffel/photon#101: Clipboard compact bar: Down expands, dismiss restores compact (no overlay)
-- 10295 — ryan-stoffel/photon#102: File search: ember ranks Ember_Individual_Pitch.pdf; mix into launcher; no stuck Searching
-- 10302 — ryan-stoffel/photon#107: Restore native macOS parity after the v0.3.0 GPUI rewrite
-- 10303 — ryan-stoffel/photon#108: fix(mac): restore native parity after v0.3.0
-- 10304 — ryan-stoffel/photon#109: fix(mac): restore native parity after v0.3.0
-- 10308 — ryan-stoffel/photon#114: v0.3.2: fix real file search and clipboard key routing
-- 10309 — ryan-stoffel/photon#115: fix(runtime): restore file search and clipboard keys
-- 10313 — ryan-stoffel/photon#118: Fix trusted clipboard paste and add expanded detail view
-- 10314 — ryan-stoffel/photon#122: fix(clipboard): restore trusted paste and add detail view
-- 10318 — ryan-stoffel/photon#119: Replace protected-folder prompt cascade with guided file access
-- 10319 — ryan-stoffel/photon#123: fix(files): add guided persistent folder access
-- 10323 — ryan-stoffel/photon#120: Add Files recents and persistent preview metadata
-- 10324 — ryan-stoffel/photon#125: feat(files): add recents and persistent detail preview
-- 10328 — ryan-stoffel/photon#121: Expand safe launcher drag surface and snap behavior
-- 10329 — ryan-stoffel/photon#124: fix(launcher): expand safe drag chrome
-- 10333 — ryan-stoffel/photon#129: v0.3.4: Restore PDF file search and Files split UI from main bar
-- 10334 — ryan-stoffel/photon#133: fix: v0.3.4 regressions (files, drag, clipboard, parity)
-- 10339 — ryan-stoffel/photon#130: v0.3.4: Fix launcher drag guides to panel edges
-- 10344 — ryan-stoffel/photon#131: v0.3.4: Fix clipboard Enter paste on real Mac
-- 10349 — ryan-stoffel/photon#132: v0.3.4: Extend macOS parity harness for v0.3.4 gates
-- 10350 — ryan-stoffel/photon#137: fix(files): reset recents when reopening Files mode
-- 10351 — ryan-stoffel/photon#139: fix(parity): stabilize Files recents gate
-- 10355 — ryan-stoffel/photon#134: Release Photon v0.3.4
-- 10356 — ryan-stoffel/photon#135: Release v0.3.4
-- 10357 — ryan-stoffel/photon#136: Release v0.3.4
-- 10358 — ryan-stoffel/photon#138: chore: back-merge main after v0.3.4
-- 10359 — ryan-stoffel/photon#140: chore: back-merge main after v0.3.4 hotfix
-- 10363 — ryan-stoffel/photon#141: v0.3.5: Vertical-only panel expansion for Files and clipboard
-- 10364 — ryan-stoffel/photon#144: fix: v0.3.5 vertical expansion and real-world file search
-- 10368 — ryan-stoffel/photon#142: v0.3.5: Fix real-world file search (ember PDF under Documents)
-- 10372 — ryan-stoffel/photon#143: v0.3.5: Extend macOS parity for Ryan-like Documents path
-- 10377 — ryan-stoffel/photon#145: Release v0.3.5
-- 10378 — ryan-stoffel/photon#146: Release v0.3.5
-- 10379 — ryan-stoffel/photon#147: Release v0.3.5
-- 10383 — ryan-stoffel/photon#149: fix: Files and clipboard expanded UI should split side-by-side inside the compact launcher width
-- 10384 — ryan-stoffel/photon#153: fix: compact side-by-side Files and clipboard split
-- 10388 — ryan-stoffel/photon#150: fix: snappy launcher height animation (~120-180ms) for Files and clipboard expand
-- 10392 — ryan-stoffel/photon#151: fix: clipboard Up/Down must highlight the selected left-list row
-- 10396 — ryan-stoffel/photon#152: fix: CI smoke native-parity SIGTERM after Files recents wait
-- 10401 — ryan-stoffel/photon#154: chore: release Photon v0.3.6
-- 10402 — ryan-stoffel/photon#155: chore(release): 0.3.6
-- 10406 — ryan-stoffel/photon#159: Unify expanded launcher, Files, and clipboard dimensions
-- 10407 — ryan-stoffel/photon#161: fix(layout): unify expanded panel dimensions
-- 10411 — ryan-stoffel/photon#160: Release Photon v0.3.7
-- 10416 — ryan-stoffel/photon#164: Files metadata overlaps the command footer
-- 10417 — ryan-stoffel/photon#169: fix(launcher): keep Files footer, grants, drag, and snap usable
-- 10421 — ryan-stoffel/photon#165: Folder permission dialogs must keep the Files panel open
-- 10425 — ryan-stoffel/photon#166: Drag the launcher from the entire panel with click slop
-- 10429 — ryan-stoffel/photon#167: Horizontal center snap when the panel midpoint is between the edge guides
-- 10434 — ryan-stoffel/photon#168: Release Photon v0.3.8
-- 10438 — ryan-stoffel/photon#172: fix: launcher Down list must scroll the full catalog, not wrap
-- 10439 — ryan-stoffel/photon#175: feat(notes): match Raycast chrome and scroll launcher recs
-- 10443 — ryan-stoffel/photon#173: feat: revamp Notes to match Raycast Notes chrome
-- 10447 — ryan-stoffel/photon#174: chore: release Photon v0.3.9
-- 10451 — ryan-stoffel/photon#178: fix: launched apps must come to the foreground
-- 10452 — ryan-stoffel/photon#183: feat(launcher): foreground launch, snappy panel, native Settings
-- 10456 — ryan-stoffel/photon#179: feat: make launcher show, search, recs, Files, and clipboard snappy
-- 10460 — ryan-stoffel/photon#180: feat: Command-comma opens Settings from Photon and the launcher
-- 10464 — ryan-stoffel/photon#181: feat: native macOS 27 Settings and Liquid Glass chrome
-- 10468 — ryan-stoffel/photon#182: chore: release Photon v0.4.0
-- 10469 — ryan-stoffel/photon#185: fix: keep launcher visible during packaged drag checks
-- 10473 — ryan-stoffel/photon#187: feat: Dock-style running indicator under open app icons
-- 10474 — ryan-stoffel/photon#190: feat(launcher): Dock-style running dots and keybind chips
-- 10478 — ryan-stoffel/photon#188: feat: show assigned shortcuts as trailing keybind chips
-- 10482 — ryan-stoffel/photon#189: chore: release Photon v0.4.1
-- 10486 — ryan-stoffel/photon#193: feat: restyle Settings to match the Photon launcher
-- 10487 — ryan-stoffel/photon#198: feat(settings): Photon chrome, Caps Lock Hyper, app list, running apps first
-- 10491 — ryan-stoffel/photon#194: fix: Caps Lock Hyper key must not toggle Caps Lock
-- 10495 — ryan-stoffel/photon#195: feat: list installed apps then assign app shortcuts
-- 10499 — ryan-stoffel/photon#196: feat: currently open applications at the top of the launcher
-- 10503 — ryan-stoffel/photon#197: chore: release Photon v0.4.2
-- 10507 — ryan-stoffel/photon#201: feat: Suggestions of most-used apps at the top of the launcher
-- 10508 — ryan-stoffel/photon#206: feat(launcher): most-used Suggestions, Settings focus, first-run walkthrough
-- 10512 — ryan-stoffel/photon#202: fix: Settings sidebar focus ring stays stuck on one row
-- 10516 — ryan-stoffel/photon#203: feat: request Accessibility permissions on first launch
-- 10520 — ryan-stoffel/photon#204: feat: first-run walkthrough for how to use Photon
-- 10524 — ryan-stoffel/photon#205: chore: release Photon v0.4.3
-- 10528 — ryan-stoffel/photon#210: feat: interactive first-run walkthrough
-- 10529 — ryan-stoffel/photon#212: feat(onboarding): interactive tour and full app icon
-- 10533 — ryan-stoffel/photon#211: fix: Photon icon is tiny in the launcher and menus
-- 10537 — ryan-stoffel/photon#213: chore: release Photon v0.4.4
-- 10541 — ryan-stoffel/photon#216: feat: cinematic full-screen onboarding
-- 10542 — ryan-stoffel/photon#217: feat(onboarding): full-screen first-run sequence
-- 10546 — ryan-stoffel/photon#218: chore: release Photon v0.4.5
-- 10550 — ryan-stoffel/photon#221: feat: windowed first-run sequence
-- 10551 — ryan-stoffel/photon#222: feat(onboarding): play the sequence in a window
-- 10555 — ryan-stoffel/photon#223: chore: release Photon v0.4.6
-- 10562 — ryan-stoffel/photon#226: Rebuild onboarding (phased)
-- 10563 — ryan-stoffel/photon#227: Phase 1 onboarding overlay
-- 10564 — ryan-stoffel/photon#230: Make the Phase 1 arrival cinematic
-- 10565 — ryan-stoffel/photon#231: Replace the Phase 1 overlay with a short welcome
-- 10569 — ryan-stoffel/photon#228: Add a Photon-Dev app that can run beside the release build
-- 10570 — ryan-stoffel/photon#229: Add a Photon-Dev app that can run beside the release build
-- 10574 — ryan-stoffel/photon#232: Rank empty-launcher Suggestions by use count for apps and commands
-- 10575 — ryan-stoffel/photon#234: feat(launcher): rank Suggestions by use count
-- 10579 — ryan-stoffel/photon#233: fix: typing finder hides Finder.app behind file hits
-- 10580 — ryan-stoffel/photon#235: fix(launcher): keep Finder.app above file hits
-- 10584 — ryan-stoffel/photon#238: fix: Settings sidebar focus ring stays on the previous row after a click
-- 10585 — ryan-stoffel/photon#239: fix(settings): move the sidebar focus ring on click
-- 10589 — ryan-stoffel/photon#240: fix: launcher footer gap while results load
-- 10590 — ryan-stoffel/photon#241: fix(launcher): keep the footer against the result rows
-- 10594 — ryan-stoffel/photon#242: feat: windowed welcome with the launcher shortcut
-- 10595 — ryan-stoffel/photon#245: feat(onboarding): show the launcher shortcut in a welcome window
-- 10600 — ryan-stoffel/photon#243: feat: outlined Photon mark for the menu bar
-- 10601 — ryan-stoffel/photon#244: feat(menu-bar): draw an outlined Photon mark
-- 10605 — ryan-stoffel/photon#248: feat(launcher): Raycast parity pass
-- 10606 — ryan-stoffel/photon#249: feat(launcher): Raycast parity pass
+- 10154 — ryan-stoffel/photon#11: Developer ID signing and notarization
+- 10157 — ryan-stoffel/photon#17: Unify clipboard session with LauncherMode protocol
+- 10161 — ryan-stoffel/photon#22: Launcher panel throws NSInternalInconsistencyException at launch
+- 10162 — ryan-stoffel/photon#24: fix(launcher): drop the conflicting moveToActiveSpace panel behaviour
+- 10166 — ryan-stoffel/photon#29: Launcher shows a placeholder square instead of app icons
+- 10167 — ryan-stoffel/photon#31: fix(launcher): show real icons for apps, panes, and provider rows
+- 10171 — ryan-stoffel/photon#30: Launcher visual redesign: search field, icon rows, compact by default, Appearance settings
+- 10172 — ryan-stoffel/photon#33: feat(launcher): redesign the panel, compact by default, Appearance settings
+- 10176 — ryan-stoffel/photon#32: feat: notes window with a native sidebar and standard toolbar
+- 10177 — ryan-stoffel/photon#36: feat(notes): native sidebar and unified toolbar for the notes window
+- 10181 — ryan-stoffel/photon#34: CI screenshot harness for UI scenarios
+- 10182 — ryan-stoffel/photon#35: feat(ci): UI scenario screenshot harness
+- 10186 — ryan-stoffel/photon#37: bug: notes sidebar is not full height and the toolbar title precedes the sidebar controls
+- 10187 — ryan-stoffel/photon#38: fix(notes): full-height sidebar and tracking separator need fullSizeContentView
+- 10191 — ryan-stoffel/photon#45: feat: System Settings panes searchable by human title
+- 10192 — ryan-stoffel/photon#48: feat(apps): searchable System Settings pane titles
+- 10196 — ryan-stoffel/photon#46: Inline calculator and unit conversions in launcher
+- 10197 — ryan-stoffel/photon#51: feat(launcher): inline calculator and unit conversions
+- 10201 — ryan-stoffel/photon#47: File search: default to home folder, fuzzy matching, launcher-style Files UI
+- 10202 — ryan-stoffel/photon#52: File search: home scope, fuzzy matching, launcher-style Files UI
+- 10206 — ryan-stoffel/photon#49: Restyle clipboard mode to match compact launcher
+- 10207 — ryan-stoffel/photon#53: Restyle clipboard mode to match compact launcher
+- 10211 — ryan-stoffel/photon#50: Launcher: drag to reposition with center snap guides
+- 10212 — ryan-stoffel/photon#54: Launcher: drag to reposition with center snap guides
+- 10216 — ryan-stoffel/photon#56: Raycast-style inline calculator result card
+- 10217 — ryan-stoffel/photon#57: Raycast-style inline calculator result card
+- 10221 — ryan-stoffel/photon#62: Calculator section sits too close to search hairline
+- 10222 — ryan-stoffel/photon#66: fix(launcher): calculator section spacing (GH-62)
+- 10226 — ryan-stoffel/photon#63: File search defaults to home scope and filters system paths
+- 10227 — ryan-stoffel/photon#67: fix(files): home-only Spotlight scope (GH-63)
+- 10231 — ryan-stoffel/photon#64: Cmd+Shift+V clipboard should use compact launcher bar
+- 10232 — ryan-stoffel/photon#68: fix(clipboard): compact hotkey panel (GH-64)
+- 10236 — ryan-stoffel/photon#65: Launcher drag guides and reliability
+- 10237 — ryan-stoffel/photon#69: fix(launcher): drag guides and file compact empty (GH-65)
+- 10238 — ryan-stoffel/photon#72: fix(launcher): file mode compact panel on enter
+- 10242 — ryan-stoffel/photon#76: Clipboard history: arrow keys do not cycle items
+- 10243 — ryan-stoffel/photon#80: fix(clipboard): move history with arrow keys
+- 10247 — ryan-stoffel/photon#77: Remove Clipboard/Files mode pill from the search field
+- 10248 — ryan-stoffel/photon#81: fix(launcher): drop Clipboard and Files search-field pills
+- 10252 — ryan-stoffel/photon#78: Launcher drag jitters and does not follow the pointer
+- 10253 — ryan-stoffel/photon#82: fix(launcher): track live drag in screen space
+- 10258 — ryan-stoffel/photon#79: File search returns nothing; use Spotlight mdfind in home
+- 10259 — ryan-stoffel/photon#83: fix(files): search home with Spotlight mdfind
+- 10263 — ryan-stoffel/photon#84: Files empty panel stays tall instead of compact
+- 10264 — ryan-stoffel/photon#85: fix(files): compact empty Files panel
+- 10268 — ryan-stoffel/photon#89: Clipboard reopen shows clipped overlay; arrows must expand and cycle
+- 10269 — ryan-stoffel/photon#94: fix(clipboard): reset compact panel on dismiss and cycle with arrows
+- 10273 — ryan-stoffel/photon#90: Launcher drag should live-snap X between the edge guides
+- 10274 — ryan-stoffel/photon#93: fix(launcher): live-snap drag X between edge guides
+- 10278 — ryan-stoffel/photon#91: Files: ember misses Documents PDFs; Searching sticks; mix into main launcher
+- 10279 — ryan-stoffel/photon#95: fix(files): match Documents filenames and mix hits into the launcher
+- 10283 — ryan-stoffel/photon#92: Empty launcher Down should show recents; darken top of search hairline
+- 10284 — ryan-stoffel/photon#96: fix(launcher): Down on empty bar shows recents; darker search hairline
+- 10290 — ryan-stoffel/photon#100: Rewrite Photon in Rust + GPUI (ship as Photon.app)
+- 10291 — ryan-stoffel/photon#103: feat: rewrite Photon in Rust + GPUI
+- 10295 — ryan-stoffel/photon#101: Clipboard compact bar: Down expands, dismiss restores compact (no overlay)
+- 10299 — ryan-stoffel/photon#102: File search: ember ranks Ember_Individual_Pitch.pdf; mix into launcher; no stuck Searching
+- 10308 — ryan-stoffel/photon#107: Restore native macOS parity after the v0.3.0 GPUI rewrite
+- 10309 — ryan-stoffel/photon#108: fix(mac): restore native parity after v0.3.0
+- 10310 — ryan-stoffel/photon#109: fix(mac): restore native parity after v0.3.0
+- 10314 — ryan-stoffel/photon#114: v0.3.2: fix real file search and clipboard key routing
+- 10315 — ryan-stoffel/photon#115: fix(runtime): restore file search and clipboard keys
+- 10319 — ryan-stoffel/photon#118: Fix trusted clipboard paste and add expanded detail view
+- 10320 — ryan-stoffel/photon#122: fix(clipboard): restore trusted paste and add detail view
+- 10324 — ryan-stoffel/photon#119: Replace protected-folder prompt cascade with guided file access
+- 10325 — ryan-stoffel/photon#123: fix(files): add guided persistent folder access
+- 10329 — ryan-stoffel/photon#120: Add Files recents and persistent preview metadata
+- 10330 — ryan-stoffel/photon#125: feat(files): add recents and persistent detail preview
+- 10334 — ryan-stoffel/photon#121: Expand safe launcher drag surface and snap behavior
+- 10335 — ryan-stoffel/photon#124: fix(launcher): expand safe drag chrome
+- 10339 — ryan-stoffel/photon#129: v0.3.4: Restore PDF file search and Files split UI from main bar
+- 10340 — ryan-stoffel/photon#133: fix: v0.3.4 regressions (files, drag, clipboard, parity)
+- 10345 — ryan-stoffel/photon#130: v0.3.4: Fix launcher drag guides to panel edges
+- 10350 — ryan-stoffel/photon#131: v0.3.4: Fix clipboard Enter paste on real Mac
+- 10355 — ryan-stoffel/photon#132: v0.3.4: Extend macOS parity harness for v0.3.4 gates
+- 10356 — ryan-stoffel/photon#137: fix(files): reset recents when reopening Files mode
+- 10357 — ryan-stoffel/photon#139: fix(parity): stabilize Files recents gate
+- 10361 — ryan-stoffel/photon#134: Release Photon v0.3.4
+- 10362 — ryan-stoffel/photon#135: Release v0.3.4
+- 10363 — ryan-stoffel/photon#136: Release v0.3.4
+- 10364 — ryan-stoffel/photon#138: chore: back-merge main after v0.3.4
+- 10365 — ryan-stoffel/photon#140: chore: back-merge main after v0.3.4 hotfix
+- 10369 — ryan-stoffel/photon#141: v0.3.5: Vertical-only panel expansion for Files and clipboard
+- 10370 — ryan-stoffel/photon#144: fix: v0.3.5 vertical expansion and real-world file search
+- 10374 — ryan-stoffel/photon#142: v0.3.5: Fix real-world file search (ember PDF under Documents)
+- 10378 — ryan-stoffel/photon#143: v0.3.5: Extend macOS parity for Ryan-like Documents path
+- 10383 — ryan-stoffel/photon#145: Release v0.3.5
+- 10384 — ryan-stoffel/photon#146: Release v0.3.5
+- 10385 — ryan-stoffel/photon#147: Release v0.3.5
+- 10389 — ryan-stoffel/photon#149: fix: Files and clipboard expanded UI should split side-by-side inside the compact launcher width
+- 10390 — ryan-stoffel/photon#153: fix: compact side-by-side Files and clipboard split
+- 10394 — ryan-stoffel/photon#150: fix: snappy launcher height animation (~120-180ms) for Files and clipboard expand
+- 10398 — ryan-stoffel/photon#151: fix: clipboard Up/Down must highlight the selected left-list row
+- 10402 — ryan-stoffel/photon#152: fix: CI smoke native-parity SIGTERM after Files recents wait
+- 10407 — ryan-stoffel/photon#154: chore: release Photon v0.3.6
+- 10408 — ryan-stoffel/photon#155: chore(release): 0.3.6
+- 10413 — ryan-stoffel/photon#159: Unify expanded launcher, Files, and clipboard dimensions
+- 10414 — ryan-stoffel/photon#161: fix(layout): unify expanded panel dimensions
+- 10418 — ryan-stoffel/photon#160: Release Photon v0.3.7
+- 10424 — ryan-stoffel/photon#164: Files metadata overlaps the command footer
+- 10425 — ryan-stoffel/photon#169: fix(launcher): keep Files footer, grants, drag, and snap usable
+- 10429 — ryan-stoffel/photon#165: Folder permission dialogs must keep the Files panel open
+- 10433 — ryan-stoffel/photon#166: Drag the launcher from the entire panel with click slop
+- 10437 — ryan-stoffel/photon#167: Horizontal center snap when the panel midpoint is between the edge guides
+- 10442 — ryan-stoffel/photon#168: Release Photon v0.3.8
+- 10446 — ryan-stoffel/photon#172: fix: launcher Down list must scroll the full catalog, not wrap
+- 10447 — ryan-stoffel/photon#175: feat(notes): match Raycast chrome and scroll launcher recs
+- 10451 — ryan-stoffel/photon#173: feat: revamp Notes to match Raycast Notes chrome
+- 10455 — ryan-stoffel/photon#174: chore: release Photon v0.3.9
+- 10459 — ryan-stoffel/photon#178: fix: launched apps must come to the foreground
+- 10460 — ryan-stoffel/photon#183: feat(launcher): foreground launch, snappy panel, native Settings
+- 10464 — ryan-stoffel/photon#179: feat: make launcher show, search, recs, Files, and clipboard snappy
+- 10468 — ryan-stoffel/photon#180: feat: Command-comma opens Settings from Photon and the launcher
+- 10472 — ryan-stoffel/photon#181: feat: native macOS 27 Settings and Liquid Glass chrome
+- 10476 — ryan-stoffel/photon#182: chore: release Photon v0.4.0
+- 10477 — ryan-stoffel/photon#185: fix: keep launcher visible during packaged drag checks
+- 10481 — ryan-stoffel/photon#187: feat: Dock-style running indicator under open app icons
+- 10482 — ryan-stoffel/photon#190: feat(launcher): Dock-style running dots and keybind chips
+- 10486 — ryan-stoffel/photon#188: feat: show assigned shortcuts as trailing keybind chips
+- 10490 — ryan-stoffel/photon#189: chore: release Photon v0.4.1
+- 10494 — ryan-stoffel/photon#193: feat: restyle Settings to match the Photon launcher
+- 10495 — ryan-stoffel/photon#198: feat(settings): Photon chrome, Caps Lock Hyper, app list, running apps first
+- 10499 — ryan-stoffel/photon#194: fix: Caps Lock Hyper key must not toggle Caps Lock
+- 10503 — ryan-stoffel/photon#195: feat: list installed apps then assign app shortcuts
+- 10507 — ryan-stoffel/photon#196: feat: currently open applications at the top of the launcher
+- 10511 — ryan-stoffel/photon#197: chore: release Photon v0.4.2
+- 10515 — ryan-stoffel/photon#201: feat: Suggestions of most-used apps at the top of the launcher
+- 10516 — ryan-stoffel/photon#206: feat(launcher): most-used Suggestions, Settings focus, first-run walkthrough
+- 10520 — ryan-stoffel/photon#202: fix: Settings sidebar focus ring stays stuck on one row
+- 10524 — ryan-stoffel/photon#203: feat: request Accessibility permissions on first launch
+- 10528 — ryan-stoffel/photon#204: feat: first-run walkthrough for how to use Photon
+- 10532 — ryan-stoffel/photon#205: chore: release Photon v0.4.3
+- 10536 — ryan-stoffel/photon#210: feat: interactive first-run walkthrough
+- 10537 — ryan-stoffel/photon#212: feat(onboarding): interactive tour and full app icon
+- 10541 — ryan-stoffel/photon#211: fix: Photon icon is tiny in the launcher and menus
+- 10545 — ryan-stoffel/photon#213: chore: release Photon v0.4.4
+- 10549 — ryan-stoffel/photon#216: feat: cinematic full-screen onboarding
+- 10550 — ryan-stoffel/photon#217: feat(onboarding): full-screen first-run sequence
+- 10554 — ryan-stoffel/photon#218: chore: release Photon v0.4.5
+- 10558 — ryan-stoffel/photon#221: feat: windowed first-run sequence
+- 10559 — ryan-stoffel/photon#222: feat(onboarding): play the sequence in a window
+- 10563 — ryan-stoffel/photon#223: chore: release Photon v0.4.6
+- 10571 — ryan-stoffel/photon#226: Rebuild onboarding (phased)
+- 10572 — ryan-stoffel/photon#227: Phase 1 onboarding overlay
+- 10573 — ryan-stoffel/photon#230: Make the Phase 1 arrival cinematic
+- 10574 — ryan-stoffel/photon#231: Replace the Phase 1 overlay with a short welcome
+- 10578 — ryan-stoffel/photon#228: Add a Photon-Dev app that can run beside the release build
+- 10579 — ryan-stoffel/photon#229: Add a Photon-Dev app that can run beside the release build
+- 10583 — ryan-stoffel/photon#232: Rank empty-launcher Suggestions by use count for apps and commands
+- 10584 — ryan-stoffel/photon#234: feat(launcher): rank Suggestions by use count
+- 10589 — ryan-stoffel/photon#233: fix: typing finder hides Finder.app behind file hits
+- 10590 — ryan-stoffel/photon#235: fix(launcher): keep Finder.app above file hits
+- 10594 — ryan-stoffel/photon#238: fix: Settings sidebar focus ring stays on the previous row after a click
+- 10595 — ryan-stoffel/photon#239: fix(settings): move the sidebar focus ring on click
+- 10599 — ryan-stoffel/photon#240: fix: launcher footer gap while results load
+- 10600 — ryan-stoffel/photon#241: fix(launcher): keep the footer against the result rows
+- 10604 — ryan-stoffel/photon#242: feat: windowed welcome with the launcher shortcut
+- 10605 — ryan-stoffel/photon#245: feat(onboarding): show the launcher shortcut in a welcome window
+- 10610 — ryan-stoffel/photon#243: feat: outlined Photon mark for the menu bar
+- 10611 — ryan-stoffel/photon#244: feat(menu-bar): draw an outlined Photon mark
+- 10616 — ryan-stoffel/photon#248: feat(launcher): Raycast parity pass
+- 10617 — ryan-stoffel/photon#249: feat(launcher): Raycast parity pass
 
 ## Watchers (112)
 
@@ -529,111 +540,111 @@
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 - watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
-- watchCount 1 — Ryan Stoffel
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Daniel Reyes
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
+- watchCount 2 — Ryan Stoffel, Maya Okafor
 
 ## Votes (112)
 

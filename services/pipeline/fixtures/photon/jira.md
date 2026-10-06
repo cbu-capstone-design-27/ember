@@ -53,7 +53,7 @@ History: 2026-09-13 19:51 PT: status To Do to In Progress
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.1.0. Labels: github, launcher.
 
-Created 2026-09-13 19:50 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-13 19:56 PT.
+Created 2026-09-13 19:50 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-13 19:56 PT.
 - GitHub: [ryan-stoffel/photon#1: Launcher hotkey (Cmd+Space) with Spotlight conflict guidance](https://github.com/ryan-stoffel/photon/issues/1)
 - GitHub: [ryan-stoffel/photon#15: feat(launcher): add hotkey, panel, app provider, and settings](https://github.com/ryan-stoffel/photon/pull/15)
 
@@ -74,7 +74,7 @@ History: 2026-09-13 19:50 PT: Sprint PHO Sprint 1 | 2026-09-13 19:51 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.1.0. Labels: github, launcher.
 
-Created 2026-09-13 19:50 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-13 19:56 PT.
+Created 2026-09-13 19:50 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-13 19:56 PT.
 - GitHub: [ryan-stoffel/photon#2: Launch applications via fuzzy search and frecency](https://github.com/ryan-stoffel/photon/issues/2)
 
 **Summary**
@@ -122,11 +122,13 @@ They work side by side on purpose. Do not fold clipboard onto `LauncherMode` as 
 
 > **Ryan Stoffel** 2026-09-13 21:05 PT: Deferred on purpose. Do this as its own change, not inside a file search fix. Clipboard stays on LauncherSession until then.
 
+> **Daniel Reyes** 2026-09-13 21:10 PT: When this lands, rerun the clipboard checklist: `Cmd+Shift+V`, `cb ` prefix, paste, pin, delete, and the Accessibility fallback.
+
 ### PHO-20: Launcher panel throws NSInternalInconsistencyException at launch
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.1.0. Labels: github, launcher.
 
-Created 2026-09-13 21:34 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-13 21:40 PT.
+Created 2026-09-13 21:34 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-13 21:40 PT.
 - GitHub: [ryan-stoffel/photon#22: Launcher panel throws NSInternalInconsistencyException at launch](https://github.com/ryan-stoffel/photon/issues/22)
 - GitHub: [ryan-stoffel/photon#24: fix(launcher): drop the conflicting moveToActiveSpace panel behaviour](https://github.com/ryan-stoffel/photon/pull/24)
 
@@ -156,7 +158,7 @@ History: 2026-09-13 21:35 PT: Sprint PHO Sprint 1 | 2026-09-13 21:38 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.1.1. Labels: github, launcher.
 
-Created 2026-09-13 22:34 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-13 22:53 PT.
+Created 2026-09-13 22:34 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-13 22:53 PT.
 - GitHub: [ryan-stoffel/photon#29: Launcher shows a placeholder square instead of app icons](https://github.com/ryan-stoffel/photon/issues/29)
 - GitHub: [ryan-stoffel/photon#31: fix(launcher): show real icons for apps, panes, and provider rows](https://github.com/ryan-stoffel/photon/pull/31)
 
@@ -187,7 +189,7 @@ History: 2026-09-13 22:35 PT: Sprint PHO Sprint 1 | 2026-09-13 22:41 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.1.1. Labels: github, launcher, settings.
 
-Created 2026-09-13 22:34 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-13 23:45 PT.
+Created 2026-09-13 22:34 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-13 23:45 PT.
 - GitHub: [ryan-stoffel/photon#30: Launcher visual redesign: search field, icon rows, compact by default, Appearance settings](https://github.com/ryan-stoffel/photon/issues/30)
 - GitHub: [ryan-stoffel/photon#33: feat(launcher): redesign the panel, compact by default, Appearance settings](https://github.com/ryan-stoffel/photon/pull/33)
 
@@ -243,7 +245,7 @@ History: 2026-09-13 22:35 PT: Sprint PHO Sprint 1 | 2026-09-13 22:54 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.2.0. Labels: github, launcher.
 
-Created 2026-09-14 07:48 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 07:57 PT.
+Created 2026-09-14 07:48 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-14 07:57 PT.
 - GitHub: [ryan-stoffel/photon#45: feat: System Settings panes searchable by human title](https://github.com/ryan-stoffel/photon/issues/45)
 - GitHub: [ryan-stoffel/photon#48: feat(apps): searchable System Settings pane titles](https://github.com/ryan-stoffel/photon/pull/48)
 
@@ -270,7 +272,7 @@ History: 2026-09-14 07:49 PT: Sprint PHO Sprint 1 | 2026-09-14 07:49 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.2.0. Labels: github.
 
-Created 2026-09-14 07:48 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 08:27 PT.
+Created 2026-09-14 07:48 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-14 08:27 PT.
 - GitHub: [ryan-stoffel/photon#46: Inline calculator and unit conversions in launcher](https://github.com/ryan-stoffel/photon/issues/46)
 - GitHub: [ryan-stoffel/photon#51: feat(launcher): inline calculator and unit conversions](https://github.com/ryan-stoffel/photon/pull/51)
 
@@ -282,7 +284,7 @@ History: 2026-09-14 07:49 PT: Sprint PHO Sprint 1 | 2026-09-14 07:50 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.2.0. Labels: github.
 
-Created 2026-09-14 07:50 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 08:54 PT.
+Created 2026-09-14 07:50 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-14 08:54 PT.
 - GitHub: [ryan-stoffel/photon#50: Launcher: drag to reposition with center snap guides](https://github.com/ryan-stoffel/photon/issues/50)
 - GitHub: [ryan-stoffel/photon#54: Launcher: drag to reposition with center snap guides](https://github.com/ryan-stoffel/photon/pull/54)
 
@@ -320,7 +322,7 @@ History: 2026-09-14 07:50 PT: Sprint PHO Sprint 1 | 2026-09-14 07:52 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.2.0. Labels: github.
 
-Created 2026-09-14 09:26 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 09:49 PT.
+Created 2026-09-14 09:26 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-14 09:49 PT.
 - GitHub: [ryan-stoffel/photon#56: Raycast-style inline calculator result card](https://github.com/ryan-stoffel/photon/issues/56)
 - GitHub: [ryan-stoffel/photon#57: Raycast-style inline calculator result card](https://github.com/ryan-stoffel/photon/pull/57)
 
@@ -332,7 +334,7 @@ History: 2026-09-14 09:27 PT: Sprint PHO Sprint 1 | 2026-09-14 09:27 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.2.1. Labels: github.
 
-Created 2026-09-14 11:20 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 11:26 PT.
+Created 2026-09-14 11:20 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-14 11:26 PT.
 - GitHub: [ryan-stoffel/photon#62: Calculator section sits too close to search hairline](https://github.com/ryan-stoffel/photon/issues/62)
 - GitHub: [ryan-stoffel/photon#66: fix(launcher): calculator section spacing (GH-62)](https://github.com/ryan-stoffel/photon/pull/66)
 
@@ -344,7 +346,7 @@ History: 2026-09-14 11:20 PT: Sprint PHO Sprint 1 | 2026-09-14 11:20 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.2.1. Labels: github.
 
-Created 2026-09-14 11:20 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 12:43 PT.
+Created 2026-09-14 11:20 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-14 12:43 PT.
 - GitHub: [ryan-stoffel/photon#65: Launcher drag guides and reliability](https://github.com/ryan-stoffel/photon/issues/65)
 - GitHub: [ryan-stoffel/photon#69: fix(launcher): drag guides and file compact empty (GH-65)](https://github.com/ryan-stoffel/photon/pull/69)
 - GitHub: [ryan-stoffel/photon#72: fix(launcher): file mode compact panel on enter](https://github.com/ryan-stoffel/photon/pull/72)
@@ -357,7 +359,7 @@ History: 2026-09-14 11:20 PT: Sprint PHO Sprint 1 | 2026-09-14 11:32 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.2.2. Labels: clipboard, github, launcher.
 
-Created 2026-09-14 14:16 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 14:34 PT.
+Created 2026-09-14 14:16 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-14 14:34 PT.
 - GitHub: [ryan-stoffel/photon#76: Clipboard history: arrow keys do not cycle items](https://github.com/ryan-stoffel/photon/issues/76)
 - GitHub: [ryan-stoffel/photon#80: fix(clipboard): move history with arrow keys](https://github.com/ryan-stoffel/photon/pull/80)
 
@@ -387,7 +389,7 @@ History: 2026-09-14 14:16 PT: Sprint PHO Sprint 1 | 2026-09-14 14:17 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.2.2. Labels: clipboard, files, github, launcher.
 
-Created 2026-09-14 14:16 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 14:25 PT.
+Created 2026-09-14 14:16 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-14 14:25 PT.
 - GitHub: [ryan-stoffel/photon#77: Remove Clipboard/Files mode pill from the search field](https://github.com/ryan-stoffel/photon/issues/77)
 - GitHub: [ryan-stoffel/photon#81: fix(launcher): drop Clipboard and Files search-field pills](https://github.com/ryan-stoffel/photon/pull/81)
 
@@ -412,7 +414,7 @@ History: 2026-09-14 14:16 PT: Sprint PHO Sprint 1 | 2026-09-14 14:18 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.2.2. Labels: github, launcher.
 
-Created 2026-09-14 14:16 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 14:42 PT.
+Created 2026-09-14 14:16 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-14 14:42 PT.
 - GitHub: [ryan-stoffel/photon#78: Launcher drag jitters and does not follow the pointer](https://github.com/ryan-stoffel/photon/issues/78)
 - GitHub: [ryan-stoffel/photon#82: fix(launcher): track live drag in screen space](https://github.com/ryan-stoffel/photon/pull/82)
 
@@ -438,7 +440,7 @@ History: 2026-09-14 14:16 PT: Sprint PHO Sprint 1 | 2026-09-14 14:20 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.2.2. Labels: files, github, launcher.
 
-Created 2026-09-14 14:48 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 14:52 PT.
+Created 2026-09-14 14:48 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-14 14:52 PT.
 - GitHub: [ryan-stoffel/photon#84: Files empty panel stays tall instead of compact](https://github.com/ryan-stoffel/photon/issues/84)
 - GitHub: [ryan-stoffel/photon#85: fix(files): compact empty Files panel](https://github.com/ryan-stoffel/photon/pull/85)
 
@@ -462,7 +464,7 @@ History: 2026-09-14 14:48 PT: Sprint PHO Sprint 1 | 2026-09-14 14:48 PT: status 
 
 Bug, Done (Done), priority Highest. Sprint: PHO Sprint 1. Fix version: 0.2.3. Labels: clipboard, github, launcher.
 
-Created 2026-09-14 16:06 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 16:21 PT.
+Created 2026-09-14 16:06 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-14 16:21 PT.
 - GitHub: [ryan-stoffel/photon#89: Clipboard reopen shows clipped overlay; arrows must expand and cycle](https://github.com/ryan-stoffel/photon/issues/89)
 - GitHub: [ryan-stoffel/photon#94: fix(clipboard): reset compact panel on dismiss and cycle with arrows](https://github.com/ryan-stoffel/photon/pull/94)
 
@@ -498,7 +500,7 @@ History: 2026-09-14 16:07 PT: Sprint PHO Sprint 1 | 2026-09-14 16:12 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.2.3. Labels: github, launcher.
 
-Created 2026-09-14 16:07 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 16:17 PT.
+Created 2026-09-14 16:07 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-14 16:17 PT.
 - GitHub: [ryan-stoffel/photon#90: Launcher drag should live-snap X between the edge guides](https://github.com/ryan-stoffel/photon/issues/90)
 - GitHub: [ryan-stoffel/photon#93: fix(launcher): live-snap drag X between edge guides](https://github.com/ryan-stoffel/photon/pull/93)
 
@@ -520,7 +522,7 @@ History: 2026-09-14 16:07 PT: Sprint PHO Sprint 1 | 2026-09-14 16:10 PT: status 
 
 Bug, Done (Done), priority Highest. Sprint: PHO Sprint 1. Fix version: 0.2.3. Labels: files, github, launcher.
 
-Created 2026-09-14 16:07 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 16:23 PT.
+Created 2026-09-14 16:07 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-14 16:23 PT.
 - GitHub: [ryan-stoffel/photon#91: Files: ember misses Documents PDFs; Searching sticks; mix into main launcher](https://github.com/ryan-stoffel/photon/issues/91)
 - GitHub: [ryan-stoffel/photon#95: fix(files): match Documents filenames and mix hits into the launcher](https://github.com/ryan-stoffel/photon/pull/95)
 
@@ -553,7 +555,7 @@ History: 2026-09-14 16:07 PT: Sprint PHO Sprint 1 | 2026-09-14 16:16 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.2.3. Labels: github, launcher.
 
-Created 2026-09-14 16:07 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 16:26 PT.
+Created 2026-09-14 16:07 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-14 16:26 PT.
 - GitHub: [ryan-stoffel/photon#92: Empty launcher Down should show recents; darken top of search hairline](https://github.com/ryan-stoffel/photon/issues/92)
 - GitHub: [ryan-stoffel/photon#96: fix(launcher): Down on empty bar shows recents; darker search hairline](https://github.com/ryan-stoffel/photon/pull/96)
 
@@ -575,7 +577,7 @@ History: 2026-09-14 16:07 PT: Sprint PHO Sprint 1 | 2026-09-14 16:17 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.3.0. Labels: github.
 
-Created 2026-09-14 23:51 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-15 00:52 PT.
+Created 2026-09-14 23:51 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-15 00:52 PT.
 - relates to PHO-48
 - GitHub: [ryan-stoffel/photon#100: Rewrite Photon in Rust + GPUI (ship as Photon.app)](https://github.com/ryan-stoffel/photon/issues/100)
 - GitHub: [ryan-stoffel/photon#103: feat: rewrite Photon in Rust + GPUI](https://github.com/ryan-stoffel/photon/pull/103)
@@ -602,13 +604,15 @@ Do not invent a new visual language. Port behavior from the Swift tree.
 
 > **Ryan Stoffel** 2026-09-14 23:58 PT: Why: the Swift UI keeps regressing clipboard overlays and file search, and I want layout and ranking in crates I can test. If the port cannot match the v0.2.3 compact stills, it does not ship.
 
+> **Maya Okafor** 2026-09-15 00:00 PT: The v0.2.3 stills are the spec. Pill bar, footer, calculator card, clipboard and Files modes, Settings, and Notes.
+
 History: 2026-09-14 23:52 PT: Sprint PHO Sprint 1 | 2026-09-15 00:07 PT: status To Do to In Progress | 2026-09-15 00:52 PT: resolution Done; status In Progress to Done; Fix Version 0.3.0
 
 ### PHO-48: Restore native macOS parity after the v0.3.0 GPUI rewrite
 
 Bug, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.3.1. Labels: clipboard, github, launcher, release.
 
-Created 2026-09-15 07:32 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-15 09:03 PT.
+Created 2026-09-15 07:32 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-15 09:03 PT.
 - relates to PHO-45
 - GitHub: [ryan-stoffel/photon#107: Restore native macOS parity after the v0.3.0 GPUI rewrite](https://github.com/ryan-stoffel/photon/issues/107)
 - GitHub: [ryan-stoffel/photon#108: fix(mac): restore native parity after v0.3.0](https://github.com/ryan-stoffel/photon/pull/108)
@@ -644,9 +648,13 @@ If GPUI cannot pass every required check on actual macOS, restore the v0.2.3 Swi
 - Homebrew cask points to the release
 - Release branch is back-merged to `develop`
 
+> **Daniel Reyes** 2026-09-15 07:33 PT: Screenshot attached. The clipboard hotkey also does nothing on 0.3.0.
+
 > **Ryan Stoffel** 2026-09-15 07:40 PT: Parity gate before any further release: packaged Photon.app on macos-latest, borderless non-activating panels, no Dock icon, live appearance, stable frame, bundle icons, and the clipboard hotkey session.
 
 > **Ryan Stoffel** 2026-09-15 09:06 PT: Decision: GPUI failed the gate. v0.3.1 restores the v0.2.3 Swift tree and keeps the harness as a required release check.
+
+> **Daniel Reyes** 2026-09-15 09:32 PT: Verified on 0.3.1 on 14 and 15. Out of the Dock, no title bar, appearance follows the system.
 
 History: 2026-09-15 07:32 PT: Sprint PHO Sprint 1 | 2026-09-15 07:40 PT: status To Do to In Progress | 2026-09-15 09:03 PT: resolution Done; status In Progress to Done; Fix Version 0.3.1
 
@@ -654,7 +662,7 @@ History: 2026-09-15 07:32 PT: Sprint PHO Sprint 1 | 2026-09-15 07:40 PT: status 
 
 Bug, Done (Done), priority Highest. Sprint: PHO Sprint 1. Fix version: 0.3.2. Labels: clipboard, files, github, launcher.
 
-Created 2026-09-15 09:50 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-15 10:45 PT.
+Created 2026-09-15 09:50 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-15 10:45 PT.
 - GitHub: [ryan-stoffel/photon#114: v0.3.2: fix real file search and clipboard key routing](https://github.com/ryan-stoffel/photon/issues/114)
 - GitHub: [ryan-stoffel/photon#115: fix(runtime): restore file search and clipboard keys](https://github.com/ryan-stoffel/photon/pull/115)
 
@@ -687,7 +695,7 @@ History: 2026-09-15 09:50 PT: Sprint PHO Sprint 1 | 2026-09-15 09:55 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.3.3. Labels: github.
 
-Created 2026-09-15 11:32 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-15 12:34 PT.
+Created 2026-09-15 11:32 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-15 12:34 PT.
 - GitHub: [ryan-stoffel/photon#121: Expand safe launcher drag surface and snap behavior](https://github.com/ryan-stoffel/photon/issues/121)
 - GitHub: [ryan-stoffel/photon#124: fix(launcher): expand safe drag chrome](https://github.com/ryan-stoffel/photon/pull/124)
 
@@ -699,7 +707,7 @@ History: 2026-09-15 11:33 PT: Sprint PHO Sprint 1 | 2026-09-15 11:33 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.4.7. Labels: github, launcher.
 
-Created 2026-09-16 20:58 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-28 10:08 PT.
+Created 2026-09-16 20:58 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-28 10:08 PT.
 - blocks PHO-58
 - GitHub: [ryan-stoffel/photon#130: v0.3.4: Fix launcher drag guides to panel edges](https://github.com/ryan-stoffel/photon/issues/130)
 
@@ -713,7 +721,7 @@ History: 2026-09-16 20:58 PT: Sprint PHO Sprint 1 | 2026-09-16 21:00 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.3.5. Labels: github, launcher.
 
-Created 2026-09-16 22:26 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-16 23:16 PT.
+Created 2026-09-16 22:26 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-16 23:16 PT.
 - blocks PHO-62
 - GitHub: [ryan-stoffel/photon#141: v0.3.5: Vertical-only panel expansion for Files and clipboard](https://github.com/ryan-stoffel/photon/issues/141)
 - GitHub: [ryan-stoffel/photon#144: fix: v0.3.5 vertical expansion and real-world file search](https://github.com/ryan-stoffel/photon/pull/144)
@@ -726,7 +734,7 @@ History: 2026-09-16 22:27 PT: Sprint PHO Sprint 1 | 2026-09-16 22:28 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.3.6. Labels: clipboard, files, github, launcher.
 
-Created 2026-09-17 07:20 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 07:48 PT.
+Created 2026-09-17 07:20 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-17 07:48 PT.
 - GitHub: [ryan-stoffel/photon#149: fix: Files and clipboard expanded UI should split side-by-side inside the compact launcher width](https://github.com/ryan-stoffel/photon/issues/149)
 - GitHub: [ryan-stoffel/photon#153: fix: compact side-by-side Files and clipboard split](https://github.com/ryan-stoffel/photon/pull/153)
 
@@ -774,7 +782,7 @@ History: 2026-09-17 07:21 PT: Sprint PHO Sprint 1 | 2026-09-17 07:30 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.3.6. Labels: github, launcher.
 
-Created 2026-09-17 07:20 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 07:48 PT.
+Created 2026-09-17 07:20 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-17 07:48 PT.
 - GitHub: [ryan-stoffel/photon#150: fix: snappy launcher height animation (~120-180ms) for Files and clipboard expand](https://github.com/ryan-stoffel/photon/issues/150)
 
 **Area**
@@ -815,7 +823,7 @@ History: 2026-09-17 07:21 PT: Sprint PHO Sprint 1 | 2026-09-17 07:22 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.3.6. Labels: clipboard, github, launcher.
 
-Created 2026-09-17 07:20 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 07:48 PT.
+Created 2026-09-17 07:20 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-17 07:48 PT.
 - GitHub: [ryan-stoffel/photon#151: fix: clipboard Up/Down must highlight the selected left-list row](https://github.com/ryan-stoffel/photon/issues/151)
 
 **Area**
@@ -856,7 +864,7 @@ History: 2026-09-17 07:21 PT: Sprint PHO Sprint 1 | 2026-09-17 07:22 PT: status 
 
 Bug, Done (Done), priority Highest. Sprint: PHO Sprint 1. Fix version: 0.3.8. Labels: clipboard, files, github, launcher.
 
-Created 2026-09-17 13:28 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 16:06 PT.
+Created 2026-09-17 13:28 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-17 16:06 PT.
 - GitHub: [ryan-stoffel/photon#164: Files metadata overlaps the command footer](https://github.com/ryan-stoffel/photon/issues/164)
 - GitHub: [ryan-stoffel/photon#169: fix(launcher): keep Files footer, grants, drag, and snap usable](https://github.com/ryan-stoffel/photon/pull/169)
 - Attachment: files-metadata-over-footer.png (image/png, 288904 bytes)
@@ -876,13 +884,15 @@ Keep the shared 760 x 502 expanded size, instant resize, and side-by-side split.
 - Clipboard Information stays inside the detail pane.
 - Ember, paste, and arrow-key checks stay green.
 
+> **Daniel Reyes** 2026-09-17 13:29 PT: Screenshot attached. Created and Modified paint over Open and Reveal.
+
 History: 2026-09-17 13:28 PT: Sprint PHO Sprint 1 | 2026-09-17 13:36 PT: status To Do to In Progress | 2026-09-17 16:06 PT: resolution Done; status In Progress to Done; Fix Version 0.3.8
 
 ### PHO-71: Folder permission dialogs must keep the Files panel open
 
 Bug, Done (Done), priority Highest. Sprint: PHO Sprint 1. Fix version: 0.3.8. Labels: files, github, launcher.
 
-Created 2026-09-17 13:28 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 16:06 PT.
+Created 2026-09-17 13:28 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-17 16:06 PT.
 - GitHub: [ryan-stoffel/photon#165: Folder permission dialogs must keep the Files panel open](https://github.com/ryan-stoffel/photon/issues/165)
 
 **Request**
@@ -911,7 +921,7 @@ History: 2026-09-17 13:28 PT: Sprint PHO Sprint 1 | 2026-09-17 13:30 PT: status 
 
 Bug, Done (Done), priority Highest. Sprint: PHO Sprint 1. Fix version: 0.3.8. Labels: github, launcher.
 
-Created 2026-09-17 13:28 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 16:06 PT.
+Created 2026-09-17 13:28 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-17 16:06 PT.
 - GitHub: [ryan-stoffel/photon#166: Drag the launcher from the entire panel with click slop](https://github.com/ryan-stoffel/photon/issues/166)
 
 **Request**
@@ -934,7 +944,7 @@ History: 2026-09-17 13:28 PT: Sprint PHO Sprint 1 | 2026-09-17 13:30 PT: status 
 
 Bug, Done (Done), priority Highest. Sprint: PHO Sprint 1. Fix version: 0.3.8. Labels: github, launcher.
 
-Created 2026-09-17 13:28 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 16:06 PT.
+Created 2026-09-17 13:28 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-17 16:06 PT.
 - GitHub: [ryan-stoffel/photon#167: Horizontal center snap when the panel midpoint is between the edge guides](https://github.com/ryan-stoffel/photon/issues/167)
 
 **Request**
@@ -957,7 +967,7 @@ History: 2026-09-17 13:28 PT: Sprint PHO Sprint 1 | 2026-09-17 13:30 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.3.9. Labels: github, launcher.
 
-Created 2026-09-17 18:25 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 19:27 PT.
+Created 2026-09-17 18:25 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-17 19:27 PT.
 - GitHub: [ryan-stoffel/photon#172: fix: launcher Down list must scroll the full catalog, not wrap](https://github.com/ryan-stoffel/photon/issues/172)
 - GitHub: [ryan-stoffel/photon#175: feat(notes): match Raycast chrome and scroll launcher recs](https://github.com/ryan-stoffel/photon/pull/175)
 
@@ -983,7 +993,7 @@ History: 2026-09-17 18:26 PT: Sprint PHO Sprint 1 | 2026-09-17 18:40 PT: status 
 
 Bug, Done (Done), priority Highest. Sprint: PHO Sprint 2. Fix version: 0.4.0. Labels: github, launcher.
 
-Created 2026-09-20 23:17 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 00:01 PT.
+Created 2026-09-20 23:17 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-21 00:01 PT.
 - GitHub: [ryan-stoffel/photon#178: fix: launched apps must come to the foreground](https://github.com/ryan-stoffel/photon/issues/178)
 - GitHub: [ryan-stoffel/photon#183: feat(launcher): foreground launch, snappy panel, native Settings](https://github.com/ryan-stoffel/photon/pull/183)
 
@@ -1007,7 +1017,7 @@ History: 2026-09-20 23:17 PT: Sprint PHO Sprint 2 | 2026-09-20 23:25 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.0. Labels: clipboard, files, github, launcher.
 
-Created 2026-09-20 23:17 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 00:01 PT.
+Created 2026-09-20 23:17 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 00:01 PT.
 - GitHub: [ryan-stoffel/photon#179: feat: make launcher show, search, recs, Files, and clipboard snappy](https://github.com/ryan-stoffel/photon/issues/179)
 
 **Summary**
@@ -1032,7 +1042,7 @@ History: 2026-09-20 23:17 PT: Sprint PHO Sprint 2 | 2026-09-20 23:19 PT: status 
 
 Story, Done (Done), priority Highest. Sprint: PHO Sprint 2. Fix version: 0.4.0. Labels: github, launcher, settings.
 
-Created 2026-09-20 23:17 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 00:01 PT.
+Created 2026-09-20 23:17 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 00:01 PT.
 - GitHub: [ryan-stoffel/photon#180: feat: Command-comma opens Settings from Photon and the launcher](https://github.com/ryan-stoffel/photon/issues/180)
 
 **Summary**
@@ -1055,7 +1065,7 @@ History: 2026-09-20 23:17 PT: Sprint PHO Sprint 2 | 2026-09-20 23:19 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.0. Labels: ci, github, launcher, notes, settings.
 
-Created 2026-09-20 23:17 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 00:01 PT.
+Created 2026-09-20 23:17 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 00:01 PT.
 - GitHub: [ryan-stoffel/photon#181: feat: native macOS 27 Settings and Liquid Glass chrome](https://github.com/ryan-stoffel/photon/issues/181)
 
 **Summary**
@@ -1079,7 +1089,7 @@ History: 2026-09-20 23:17 PT: Sprint PHO Sprint 2 | 2026-09-20 23:19 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.1. Labels: github, launcher.
 
-Created 2026-09-21 07:28 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 08:16 PT.
+Created 2026-09-21 07:28 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 08:16 PT.
 - GitHub: [ryan-stoffel/photon#187: feat: Dock-style running indicator under open app icons](https://github.com/ryan-stoffel/photon/issues/187)
 - GitHub: [ryan-stoffel/photon#190: feat(launcher): Dock-style running dots and keybind chips](https://github.com/ryan-stoffel/photon/pull/190)
 
@@ -1104,7 +1114,7 @@ History: 2026-09-21 07:29 PT: Sprint PHO Sprint 2 | 2026-09-21 07:36 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.1. Labels: github, keybinds, launcher.
 
-Created 2026-09-21 07:28 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 08:16 PT.
+Created 2026-09-21 07:28 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 08:16 PT.
 - GitHub: [ryan-stoffel/photon#188: feat: show assigned shortcuts as trailing keybind chips](https://github.com/ryan-stoffel/photon/issues/188)
 
 **Summary**
@@ -1128,7 +1138,7 @@ History: 2026-09-21 07:29 PT: Sprint PHO Sprint 2 | 2026-09-21 07:30 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.2. Labels: github, launcher.
 
-Created 2026-09-21 09:41 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 10:58 PT.
+Created 2026-09-21 09:41 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 10:58 PT.
 - GitHub: [ryan-stoffel/photon#196: feat: currently open applications at the top of the launcher](https://github.com/ryan-stoffel/photon/issues/196)
 
 **Summary**
@@ -1152,7 +1162,7 @@ History: 2026-09-21 09:41 PT: Sprint PHO Sprint 2 | 2026-09-21 09:43 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.3. Labels: github, launcher.
 
-Created 2026-09-21 11:33 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 12:08 PT.
+Created 2026-09-21 11:33 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 12:08 PT.
 - GitHub: [ryan-stoffel/photon#201: feat: Suggestions of most-used apps at the top of the launcher](https://github.com/ryan-stoffel/photon/issues/201)
 - GitHub: [ryan-stoffel/photon#206: feat(launcher): most-used Suggestions, Settings focus, first-run walkthrough](https://github.com/ryan-stoffel/photon/pull/206)
 
@@ -1178,7 +1188,7 @@ History: 2026-09-21 11:33 PT: Sprint PHO Sprint 2 | 2026-09-21 11:42 PT: status 
 
 Bug, Done (Done), priority Medium. Sprint: PHO Sprint 2. Fix version: 0.4.4. Labels: github.
 
-Created 2026-09-21 17:21 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 17:43 PT.
+Created 2026-09-21 17:21 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-21 17:43 PT.
 - GitHub: [ryan-stoffel/photon#211: fix: Photon icon is tiny in the launcher and menus](https://github.com/ryan-stoffel/photon/issues/211)
 
 **Area**
@@ -1215,7 +1225,7 @@ History: 2026-09-21 17:21 PT: Sprint PHO Sprint 2 | 2026-09-21 17:23 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 3. Fix version: 0.4.7. Labels: github.
 
-Created 2026-09-28 10:21 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-28 10:48 PT.
+Created 2026-09-28 10:21 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-28 10:48 PT.
 - GitHub: [ryan-stoffel/photon#232: Rank empty-launcher Suggestions by use count for apps and commands](https://github.com/ryan-stoffel/photon/issues/232)
 - GitHub: [ryan-stoffel/photon#234: feat(launcher): rank Suggestions by use count](https://github.com/ryan-stoffel/photon/pull/234)
 
@@ -1231,7 +1241,7 @@ History: 2026-09-28 10:22 PT: Sprint PHO Sprint 3 | 2026-09-28 10:22 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 3. Fix version: 0.4.7. Labels: files, github, launcher.
 
-Created 2026-09-28 10:22 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-28 10:36 PT.
+Created 2026-09-28 10:22 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-28 10:36 PT.
 - GitHub: [ryan-stoffel/photon#233: fix: typing finder hides Finder.app behind file hits](https://github.com/ryan-stoffel/photon/issues/233)
 - GitHub: [ryan-stoffel/photon#235: fix(launcher): keep Finder.app above file hits](https://github.com/ryan-stoffel/photon/pull/235)
 
@@ -1263,13 +1273,15 @@ The query promotes the launcher into Files mode as soon as filename hits arrive.
 
 Do not leave Finder.app behind a files-only list for this query.
 
+> **Daniel Reyes** 2026-09-28 10:23 PT: Repro: type `finder`. Search Files and filename hits come before Finder.app.
+
 History: 2026-09-28 10:22 PT: Sprint PHO Sprint 3 | 2026-09-28 10:27 PT: status To Do to In Progress | 2026-09-28 10:36 PT: resolution Done; status In Progress to Done; Fix Version 0.4.7
 
 ### PHO-109: fix: launcher footer gap while results load
 
 Bug, Done (Done), priority Medium. Sprint: PHO Sprint 3. Fix version: 0.4.8. Labels: github, launcher.
 
-Created 2026-09-29 09:51 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-29 12:47 PT.
+Created 2026-09-29 09:51 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-29 12:47 PT.
 - GitHub: [ryan-stoffel/photon#240: fix: launcher footer gap while results load](https://github.com/ryan-stoffel/photon/issues/240)
 - GitHub: [ryan-stoffel/photon#241: fix(launcher): keep the footer against the result rows](https://github.com/ryan-stoffel/photon/pull/241)
 
@@ -1305,7 +1317,7 @@ History: 2026-09-29 09:52 PT: Sprint PHO Sprint 3 | 2026-09-29 09:52 PT: status 
 
 Story, Done (Won't Do), priority Medium. Sprint: PHO Sprint 3. Fix version: none. Labels: github.
 
-Created 2026-09-29 09:52 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-29 09:54 PT.
+Created 2026-09-29 09:52 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-29 09:54 PT.
 - GitHub: [ryan-stoffel/photon#243: feat: outlined Photon mark for the menu bar](https://github.com/ryan-stoffel/photon/issues/243)
 - GitHub: [ryan-stoffel/photon#244: feat(menu-bar): draw an outlined Photon mark](https://github.com/ryan-stoffel/photon/pull/244)
 
@@ -1335,7 +1347,7 @@ History: 2026-09-29 09:53 PT: Sprint PHO Sprint 3 | 2026-09-29 09:52 PT: status 
 
 Story, In Progress, priority Medium. Sprint: PHO Sprint 3. Fix version: none. Labels: github, launcher.
 
-Created 2026-10-03 19:42 PT by Ryan Stoffel, assigned to Ryan Stoffel.
+Created 2026-10-03 19:42 PT by Maya Okafor, assigned to Ryan Stoffel.
 - GitHub: [ryan-stoffel/photon#248: feat(launcher): Raycast parity pass](https://github.com/ryan-stoffel/photon/issues/248)
 - GitHub: [ryan-stoffel/photon#249: feat(launcher): Raycast parity pass](https://github.com/ryan-stoffel/photon/pull/249)
 
@@ -1364,6 +1376,8 @@ Photon should behave like a minimal Raycast: no AI and no extensions, with the c
 - Notes, keybinds, and Settings defects from the audit are fixed.
 - CI is green.
 
+> **Daniel Reyes** 2026-10-03 19:43 PT: Full audit notes are in #photon-dev.
+
 > **Ryan Stoffel** 2026-10-03 20:12 PT: Scope stays the same: no AI and no extensions. This is about root search ranking, Esc order, an action panel, the calculator, and clipboard reliability.
 
 History: 2026-10-03 19:43 PT: Sprint PHO Sprint 3 | 2026-10-03 20:09 PT: status To Do to In Progress
@@ -1384,7 +1398,7 @@ History: 2026-09-13 19:51 PT: status To Do to In Progress | 2026-09-28 10:13 PT:
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.1.0. Labels: clipboard, github.
 
-Created 2026-09-13 19:50 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-13 20:42 PT.
+Created 2026-09-13 19:50 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-13 20:42 PT.
 - relates to PHO-19
 - GitHub: [ryan-stoffel/photon#3: Clipboard history](https://github.com/ryan-stoffel/photon/issues/3)
 - GitHub: [ryan-stoffel/photon#16: feat(clipboard): add clipboard history](https://github.com/ryan-stoffel/photon/pull/16)
@@ -1406,7 +1420,7 @@ History: 2026-09-13 19:50 PT: Sprint PHO Sprint 1 | 2026-09-13 20:40 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.2.0. Labels: github.
 
-Created 2026-09-14 07:49 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 08:08 PT.
+Created 2026-09-14 07:49 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-14 08:08 PT.
 - GitHub: [ryan-stoffel/photon#49: Restyle clipboard mode to match compact launcher](https://github.com/ryan-stoffel/photon/issues/49)
 - GitHub: [ryan-stoffel/photon#53: Restyle clipboard mode to match compact launcher](https://github.com/ryan-stoffel/photon/pull/53)
 
@@ -1433,7 +1447,7 @@ History: 2026-09-14 07:50 PT: Sprint PHO Sprint 1 | 2026-09-14 07:51 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.2.1. Labels: github.
 
-Created 2026-09-14 11:20 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 12:12 PT.
+Created 2026-09-14 11:20 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-14 12:12 PT.
 - GitHub: [ryan-stoffel/photon#64: Cmd+Shift+V clipboard should use compact launcher bar](https://github.com/ryan-stoffel/photon/issues/64)
 - GitHub: [ryan-stoffel/photon#68: fix(clipboard): compact hotkey panel (GH-64)](https://github.com/ryan-stoffel/photon/pull/68)
 
@@ -1445,7 +1459,7 @@ History: 2026-09-14 11:20 PT: Sprint PHO Sprint 1 | 2026-09-14 11:27 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.3.0. Labels: github.
 
-Created 2026-09-14 23:51 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-15 00:52 PT.
+Created 2026-09-14 23:51 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-15 00:52 PT.
 - GitHub: [ryan-stoffel/photon#101: Clipboard compact bar: Down expands, dismiss restores compact (no overlay)](https://github.com/ryan-stoffel/photon/issues/101)
 
 **Summary**
@@ -1471,7 +1485,7 @@ History: 2026-09-14 23:52 PT: Sprint PHO Sprint 1 | 2026-09-14 23:53 PT: status 
 
 Bug, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.3.3. Labels: github.
 
-Created 2026-09-15 11:32 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-15 12:41 PT.
+Created 2026-09-15 11:32 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-15 12:41 PT.
 - GitHub: [ryan-stoffel/photon#118: Fix trusted clipboard paste and add expanded detail view](https://github.com/ryan-stoffel/photon/issues/118)
 - GitHub: [ryan-stoffel/photon#122: fix(clipboard): restore trusted paste and add detail view](https://github.com/ryan-stoffel/photon/pull/122)
 
@@ -1483,7 +1497,7 @@ History: 2026-09-15 11:33 PT: Sprint PHO Sprint 1 | 2026-09-15 11:33 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.4.7. Labels: clipboard, github.
 
-Created 2026-09-16 20:58 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-28 10:08 PT.
+Created 2026-09-16 20:58 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-28 10:08 PT.
 - blocks PHO-58
 - GitHub: [ryan-stoffel/photon#131: v0.3.4: Fix clipboard Enter paste on real Mac](https://github.com/ryan-stoffel/photon/issues/131)
 
@@ -1497,7 +1511,7 @@ History: 2026-09-16 20:58 PT: Sprint PHO Sprint 1 | 2026-09-16 21:00 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.3.7. Labels: github.
 
-Created 2026-09-17 11:44 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 12:03 PT.
+Created 2026-09-17 11:44 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-17 12:03 PT.
 - GitHub: [ryan-stoffel/photon#159: Unify expanded launcher, Files, and clipboard dimensions](https://github.com/ryan-stoffel/photon/issues/159)
 - GitHub: [ryan-stoffel/photon#161: fix(layout): unify expanded panel dimensions](https://github.com/ryan-stoffel/photon/pull/161)
 
@@ -1519,6 +1533,8 @@ Implement Ryan's v0.3.7 layout update:
 - Screenshot artifacts include launcher recommendations, Files, and clipboard at matching dimensions.
 - Existing smoke, paste, guides, and `ember` scenarios remain green.
 
+> **Maya Okafor** 2026-09-17 11:35 PT: Target: 760 x 502 for launcher Suggestions, Files, and expanded clipboard. No expansion animation.
+
 History: 2026-09-17 11:45 PT: Sprint PHO Sprint 1 | 2026-09-17 11:48 PT: status To Do to In Progress | 2026-09-17 12:03 PT: resolution Done; status In Progress to Done; Fix Version 0.3.7
 
 ## Epic PHO-3: Notes (4 issues)
@@ -1537,7 +1553,7 @@ History: 2026-09-13 19:51 PT: status To Do to In Progress | 2026-09-17 19:32 PT:
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.1.0. Labels: github, notes.
 
-Created 2026-09-13 19:50 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-13 21:03 PT.
+Created 2026-09-13 19:50 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-13 21:03 PT.
 - GitHub: [ryan-stoffel/photon#4: Simple notes](https://github.com/ryan-stoffel/photon/issues/4)
 - GitHub: [ryan-stoffel/photon#20: feat(notes): add floating markdown notes with launcher integration](https://github.com/ryan-stoffel/photon/pull/20)
 
@@ -1558,7 +1574,7 @@ History: 2026-09-13 19:50 PT: Sprint PHO Sprint 1 | 2026-09-13 21:00 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.1.1. Labels: github, notes.
 
-Created 2026-09-13 22:49 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-13 23:50 PT.
+Created 2026-09-13 22:49 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-13 23:50 PT.
 - GitHub: [ryan-stoffel/photon#32: feat: notes window with a native sidebar and standard toolbar](https://github.com/ryan-stoffel/photon/issues/32)
 - GitHub: [ryan-stoffel/photon#36: feat(notes): native sidebar and unified toolbar for the notes window](https://github.com/ryan-stoffel/photon/pull/36)
 
@@ -1594,7 +1610,7 @@ History: 2026-09-13 22:49 PT: Sprint PHO Sprint 1 | 2026-09-13 23:09 PT: status 
 
 Bug, Done (Done), priority Medium. Sprint: PHO Sprint 1. Fix version: 0.1.1. Labels: github, notes.
 
-Created 2026-09-13 23:56 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 00:07 PT.
+Created 2026-09-13 23:56 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-14 00:07 PT.
 - GitHub: [ryan-stoffel/photon#37: bug: notes sidebar is not full height and the toolbar title precedes the sidebar controls](https://github.com/ryan-stoffel/photon/issues/37)
 - GitHub: [ryan-stoffel/photon#38: fix(notes): full-height sidebar and tracking separator need fullSizeContentView](https://github.com/ryan-stoffel/photon/pull/38)
 
@@ -1626,7 +1642,7 @@ History: 2026-09-13 23:56 PT: Sprint PHO Sprint 1 | 2026-09-13 23:56 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.3.9. Labels: github, notes.
 
-Created 2026-09-17 18:25 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 19:27 PT.
+Created 2026-09-17 18:25 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-17 19:27 PT.
 - GitHub: [ryan-stoffel/photon#173: feat: revamp Notes to match Raycast Notes chrome](https://github.com/ryan-stoffel/photon/issues/173)
 
 Revamp Photon Notes to match Raycast Notes as closely as SwiftUI/AppKit allow (no Raycast assets). Ryan's 0.3.8 reference shots are authoritative:
@@ -1731,7 +1747,7 @@ History: 2026-09-14 11:20 PT: Sprint PHO Sprint 1 | 2026-09-14 11:26 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.2.2. Labels: files, github.
 
-Created 2026-09-14 14:16 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-14 14:38 PT.
+Created 2026-09-14 14:16 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-14 14:38 PT.
 - GitHub: [ryan-stoffel/photon#79: File search returns nothing; use Spotlight mdfind in home](https://github.com/ryan-stoffel/photon/issues/79)
 - GitHub: [ryan-stoffel/photon#83: fix(files): search home with Spotlight mdfind](https://github.com/ryan-stoffel/photon/pull/83)
 
@@ -1751,6 +1767,8 @@ v0.2.1. Example: `ember_individual` should find a file under `~/Documents` (e.g.
 **Actual**
 
 `NSMetadataQuery` in an `LSUIElement` app often yields nothing. The Spotlight string keeps the underscore as one token (`*ember_individual*`), which does not match `Ember_Individual_Pitch.pdf`. Home-scope filtering treats firmlink paths under `/System/Volumes/Data/Users/...` as blocked `/System` paths.
+
+> **Daniel Reyes** 2026-09-14 14:12 PT: Repro: put a PDF named `Ember_Individual_Pitch.pdf` in ~/Documents, open Photon, type `ember`. Files list stays empty.
 
 History: 2026-09-14 14:16 PT: Sprint PHO Sprint 1 | 2026-09-14 14:24 PT: status To Do to In Progress | 2026-09-14 14:38 PT: resolution Done; status In Progress to Done; Fix Version 0.2.2
 
@@ -1807,7 +1825,7 @@ History: 2026-09-15 11:33 PT: Sprint PHO Sprint 1 | 2026-09-15 11:37 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.3.4. Labels: files, github.
 
-Created 2026-09-16 20:58 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-16 21:24 PT.
+Created 2026-09-16 20:58 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-16 21:24 PT.
 - blocks PHO-58
 - GitHub: [ryan-stoffel/photon#129: v0.3.4: Restore PDF file search and Files split UI from main bar](https://github.com/ryan-stoffel/photon/issues/129)
 - GitHub: [ryan-stoffel/photon#133: fix: v0.3.4 regressions (files, drag, clipboard, parity)](https://github.com/ryan-stoffel/photon/pull/133)
@@ -1820,7 +1838,7 @@ History: 2026-09-16 20:58 PT: Sprint PHO Sprint 1 | 2026-09-16 20:59 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.3.5. Labels: files, github.
 
-Created 2026-09-16 22:26 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-16 23:16 PT.
+Created 2026-09-16 22:26 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-16 23:16 PT.
 - blocks PHO-62
 - GitHub: [ryan-stoffel/photon#142: v0.3.5: Fix real-world file search (ember PDF under Documents)](https://github.com/ryan-stoffel/photon/issues/142)
 
@@ -1867,7 +1885,7 @@ History: 2026-09-13 19:50 PT: Sprint PHO Sprint 1 | 2026-09-13 20:58 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.2. Labels: github, keybinds.
 
-Created 2026-09-21 09:41 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 10:58 PT.
+Created 2026-09-21 09:41 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-21 10:58 PT.
 - GitHub: [ryan-stoffel/photon#194: fix: Caps Lock Hyper key must not toggle Caps Lock](https://github.com/ryan-stoffel/photon/issues/194)
 
 **Summary**
@@ -1926,7 +1944,7 @@ History: 2026-09-13 19:51 PT: status To Do to In Progress | 2026-09-29 12:44 PT:
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.1.0. Labels: github, settings.
 
-Created 2026-09-13 19:50 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-13 19:56 PT.
+Created 2026-09-13 19:50 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-13 19:56 PT.
 - GitHub: [ryan-stoffel/photon#7: Settings window](https://github.com/ryan-stoffel/photon/issues/7)
 
 **Summary**
@@ -1946,7 +1964,7 @@ History: 2026-09-13 19:50 PT: Sprint PHO Sprint 1 | 2026-09-13 19:52 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.2. Labels: github, settings.
 
-Created 2026-09-21 09:41 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 10:58 PT.
+Created 2026-09-21 09:41 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 10:58 PT.
 - GitHub: [ryan-stoffel/photon#193: feat: restyle Settings to match the Photon launcher](https://github.com/ryan-stoffel/photon/issues/193)
 - GitHub: [ryan-stoffel/photon#198: feat(settings): Photon chrome, Caps Lock Hyper, app list, running apps first](https://github.com/ryan-stoffel/photon/pull/198)
 
@@ -1971,7 +1989,7 @@ History: 2026-09-21 09:41 PT: Sprint PHO Sprint 2 | 2026-09-21 09:57 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.3. Labels: github, settings.
 
-Created 2026-09-21 11:33 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 12:08 PT.
+Created 2026-09-21 11:33 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-21 12:08 PT.
 - relates to PHO-108
 - GitHub: [ryan-stoffel/photon#202: fix: Settings sidebar focus ring stays stuck on one row](https://github.com/ryan-stoffel/photon/issues/202)
 
@@ -1995,7 +2013,7 @@ History: 2026-09-21 11:33 PT: Sprint PHO Sprint 2 | 2026-09-21 11:35 PT: status 
 
 Bug, Done (Done), priority Medium. Sprint: PHO Sprint 3. Fix version: 0.4.8. Labels: github, settings.
 
-Created 2026-09-29 09:49 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-29 12:39 PT.
+Created 2026-09-29 09:49 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-29 12:39 PT.
 - relates to PHO-93
 - GitHub: [ryan-stoffel/photon#238: fix: Settings sidebar focus ring stays on the previous row after a click](https://github.com/ryan-stoffel/photon/issues/238)
 - GitHub: [ryan-stoffel/photon#239: fix(settings): move the sidebar focus ring on click](https://github.com/ryan-stoffel/photon/pull/239)
@@ -2120,6 +2138,8 @@ Ryan supplies Apple secrets. When they are present, the release workflow signs w
 
 > **Ryan Stoffel** 2026-09-28 20:17 PT: v0.4.7 is the first notarized pre-release. The tag workflow reported `signing=developer-id-notarized`, published the GitHub Release, and bumped the Homebrew cask to 0.4.7. The release notes say the build is signed with a Developer ID certificate, notarized by Apple, and stapled. - Release: https://github.com/ryan-stoffel/photon/releases/tag/v0.4.7 - Actions: https://github.com/ryan-stoffel/photon/actions/runs/36515748028
 
+> **Daniel Reyes** 2026-09-28 20:40 PT: Verified 0.4.7 on a clean account on macOS 15. No Gatekeeper prompt, and `spctl -a -vv` reports Notarized Developer ID.
+
 History: 2026-09-13 19:50 PT: Sprint PHO Sprint 1 | 2026-09-13 19:52 PT: status To Do to In Progress | 2026-09-28 20:17 PT: resolution Done; status In Progress to Done; Fix Version 0.4.8
 
 ### PHO-24: CI screenshot harness for UI scenarios
@@ -2203,7 +2223,7 @@ History: 2026-09-16 23:17 PT: Sprint PHO Sprint 1 | 2026-09-16 23:16 PT: status 
 
 Bug, Done (Done), priority High. Sprint: PHO Sprint 1. Fix version: 0.3.6. Labels: ci, github.
 
-Created 2026-09-17 07:20 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-17 07:48 PT.
+Created 2026-09-17 07:20 PT by Daniel Reyes, assigned to Ryan Stoffel. Resolved 2026-09-17 07:48 PT.
 - GitHub: [ryan-stoffel/photon#152: fix: CI smoke native-parity SIGTERM after Files recents wait](https://github.com/ryan-stoffel/photon/issues/152)
 
 **Area**
@@ -2534,7 +2554,7 @@ History: 2026-09-21 11:34 PT: status To Do to In Progress | 2026-09-29 13:07 PT:
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.3. Labels: github, keybinds.
 
-Created 2026-09-21 11:33 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 12:08 PT.
+Created 2026-09-21 11:33 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 12:08 PT.
 - GitHub: [ryan-stoffel/photon#203: feat: request Accessibility permissions on first launch](https://github.com/ryan-stoffel/photon/issues/203)
 
 **Problem**
@@ -2557,7 +2577,7 @@ History: 2026-09-21 11:33 PT: Sprint PHO Sprint 2 | 2026-09-21 11:35 PT: status 
 
 Story, Done (Done), priority High. Sprint: PHO Sprint 2. Fix version: 0.4.3. Labels: github, launcher, settings.
 
-Created 2026-09-21 11:33 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 12:08 PT.
+Created 2026-09-21 11:33 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 12:08 PT.
 - GitHub: [ryan-stoffel/photon#204: feat: first-run walkthrough for how to use Photon](https://github.com/ryan-stoffel/photon/issues/204)
 
 **Problem**
@@ -2586,7 +2606,7 @@ History: 2026-09-21 11:33 PT: Sprint PHO Sprint 2 | 2026-09-21 11:35 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 2. Fix version: 0.4.4. Labels: github.
 
-Created 2026-09-21 17:21 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-21 17:43 PT.
+Created 2026-09-21 17:21 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-21 17:43 PT.
 - GitHub: [ryan-stoffel/photon#210: feat: interactive first-run walkthrough](https://github.com/ryan-stoffel/photon/issues/210)
 - GitHub: [ryan-stoffel/photon#212: feat(onboarding): interactive tour and full app icon](https://github.com/ryan-stoffel/photon/pull/212)
 
@@ -2616,7 +2636,7 @@ History: 2026-09-21 17:21 PT: Sprint PHO Sprint 2 | 2026-09-21 17:22 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 2. Fix version: 0.4.5. Labels: github.
 
-Created 2026-09-22 07:44 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-22 08:06 PT.
+Created 2026-09-22 07:44 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-22 08:06 PT.
 - relates to PHO-104
 - GitHub: [ryan-stoffel/photon#216: feat: cinematic full-screen onboarding](https://github.com/ryan-stoffel/photon/issues/216)
 - GitHub: [ryan-stoffel/photon#217: feat(onboarding): full-screen first-run sequence](https://github.com/ryan-stoffel/photon/pull/217)
@@ -2640,7 +2660,7 @@ History: 2026-09-22 07:45 PT: Sprint PHO Sprint 2 | 2026-09-22 07:51 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 2. Fix version: 0.4.6. Labels: github.
 
-Created 2026-09-22 08:55 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-22 09:14 PT.
+Created 2026-09-22 08:55 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-22 09:14 PT.
 - relates to PHO-104
 - GitHub: [ryan-stoffel/photon#221: feat: windowed first-run sequence](https://github.com/ryan-stoffel/photon/issues/221)
 - GitHub: [ryan-stoffel/photon#222: feat(onboarding): play the sequence in a window](https://github.com/ryan-stoffel/photon/pull/222)
@@ -2666,7 +2686,7 @@ History: 2026-09-22 08:56 PT: Sprint PHO Sprint 2 | 2026-09-22 08:58 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 2. Fix version: 0.4.7. Labels: github.
 
-Created 2026-09-22 11:25 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-28 10:17 PT.
+Created 2026-09-22 11:25 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-28 10:17 PT.
 - relates to PHO-100
 - relates to PHO-102
 - relates to PHO-110
@@ -2694,6 +2714,8 @@ Not in this pass.
 
 > **Ryan Stoffel** 2026-09-22 12:38 PT: Ryan wants the Phase 1 arrival bigger, still on this screen only. The 2pt line and short tail read as too small. This pass keeps the same structure (borderless veil, desktop still visible, Reduce Motion skips the travel, click or Return only dismisses) and turns the beam, corner haze, and stars up so the arrival feels like the Mac entering space and Photon condensing out of the light. Phase 2 stays unstarted. The launcher hotkey is unchanged.
 
+> **Maya Okafor** 2026-09-28 10:07 PT: Small native window, system font, one Continue. Mock is in the design file.
+
 > **Ryan Stoffel** 2026-09-28 10:08 PT: Ryan, 2026-09-28: the cinematic Phase 1 overlay is scratched. No beam, flash, stars, full-screen veil, or Desktop 2 pin. The replacement is a small native welcome window: how to open Photon, where Settings are, and one Continue. Escape or Continue dismisses it. Settings > General > Show again replays it. `hasSeenMinimalWelcome` is a new gate, so a Mac that already passed `hasCompletedPhase1Onboarding` still sees this note once. Phase 2 (feature tour and permission prompts) is not in this pass. Pull request #230 is closed without merging.
 
 History: 2026-09-22 11:26 PT: Sprint PHO Sprint 2 | 2026-09-22 11:38 PT: status To Do to In Progress | 2026-09-28 10:17 PT: resolution Done; status In Progress to Done; Fix Version 0.4.7
@@ -2702,7 +2724,7 @@ History: 2026-09-22 11:26 PT: Sprint PHO Sprint 2 | 2026-09-22 11:38 PT: status 
 
 Story, Done (Done), priority Medium. Sprint: PHO Sprint 3. Fix version: 0.4.8. Labels: github, settings.
 
-Created 2026-09-29 09:52 PT by Ryan Stoffel, assigned to Ryan Stoffel. Resolved 2026-09-29 13:02 PT.
+Created 2026-09-29 09:52 PT by Maya Okafor, assigned to Ryan Stoffel. Resolved 2026-09-29 13:02 PT.
 - relates to PHO-104
 - GitHub: [ryan-stoffel/photon#242: feat: windowed welcome with the launcher shortcut](https://github.com/ryan-stoffel/photon/issues/242)
 - GitHub: [ryan-stoffel/photon#245: feat(onboarding): show the launcher shortcut in a welcome window](https://github.com/ryan-stoffel/photon/pull/245)

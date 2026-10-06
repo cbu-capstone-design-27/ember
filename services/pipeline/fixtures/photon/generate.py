@@ -66,13 +66,22 @@ def stable_id(*parts) -> str:
 def gh_refs(text: str) -> list[int]:
     return [int(n) for n in re.findall(r"GH-(\d+)", text, re.I)]
 
-# People. Ryan Stoffel is the only human in the photon history. Everything
-# else in it is a bot: dependabot, Cursor Bugbot, and the release workflow.
+# Ryan Stoffel is the only human in the photon GitHub history, so he authors
+# every pull request and is the Jira assignee. Maya Okafor (design) and
+# Daniel Reyes (QA and release testing) are fictional teammates who exist
+# only in Slack and Jira: they report issues, review decisions, and verify
+# releases.
 
 RYAN_NAME = "Ryan Stoffel"
 RYAN_EMAIL = "stoffel.thomas.ryan@gmail.com"
 RYAN_LOGIN = "ryan-stoffel"
 RYAN_TZ = "America/Los_Angeles"
+
+PEOPLE = {
+    "ryan": {"name": RYAN_NAME, "email": RYAN_EMAIL, "slack": "U08RSTOFFEL", "handle": "ryan"},
+    "maya": {"name": "Maya Okafor", "email": "maya.okafor@example.com", "slack": "U08MOKAFOR1", "handle": "maya"},
+    "daniel": {"name": "Daniel Reyes", "email": "daniel.reyes@example.com", "slack": "U08DREYES01", "handle": "daniel"},
+}
 
 TEAM_ID = "T08PHOTON01"
 TEAM = {
@@ -88,7 +97,7 @@ TEAM = {
     "is_sfdc_auto_slack": False,
 }
 
-U_RYAN = "U08RSTOFFEL"
+U_RYAN = PEOPLE["ryan"]["slack"]
 U_SLACKBOT = "USLACKBOT"
 U_GITHUB = "U08GITHUB01"
 U_JIRA = "U08JIRACLD1"
@@ -156,7 +165,8 @@ def slack_users() -> list[dict]:
     slackbot["profile"]["display_name"] = "Slackbot"
     slackbot["profile"]["display_name_normalized"] = "Slackbot"
     return [
-        slack_user(U_RYAN, "ryan", RYAN_NAME, email=RYAN_EMAIL, updated=WORKSPACE_CREATED),
+        *[slack_user(p["slack"], p["handle"], p["name"], email=p["email"], updated=WORKSPACE_CREATED + timedelta(minutes=i * 9))
+          for i, p in enumerate(PEOPLE.values())],
         slackbot,
         slack_user(U_GITHUB, "github", "GitHub", bot=True, updated=WORKSPACE_CREATED + timedelta(minutes=12)),
         slack_user(U_JIRA, "jira_cloud", "Jira Cloud", bot=True, updated=WORKSPACE_CREATED + timedelta(minutes=14)),
@@ -203,130 +213,171 @@ def slack_channel(cid: str, name: str, purpose: str, member: bool, general: bool
         "purpose": {"value": purpose, "creator": U_RYAN, "last_set": int(created.timestamp())},
         "properties": {},
         "previous_names": [],
-        "num_members": 5 if member else 1,
+        "num_members": len(PEOPLE) + 4 if member else len(PEOPLE),
     }
 
-# Ryan's own messages. Times are UTC and sit where the GitHub history puts the
-# work they describe. Each entry: channel, time, text, replies, reactions.
+# Human messages. Times are UTC and sit where the GitHub history puts the work
+# they describe. Each entry: channel, time, author, text, replies as
+# (time, author, text), reactions as (name, people).
 SLACK_THREADS = [
-    ("general", "2026-09-14T02:31:00Z",
+    ("general", "2026-09-14T02:31:00Z", "ryan",
      "Setting this workspace up for Photon. Code is at https://github.com/ryan-stoffel/photon and tickets are on the PHO board. "
      "#photon-dev is for decisions and conventions, #photon-github and #photon-releases are bot feeds, and #photon-bugs is for regressions.",
-     [], []),
-    ("photon-dev", "2026-09-14T02:35:00Z",
-     "Scope for Photon, written down so I stop relitigating it: applications, clipboard history, notes, file search, and keybinds. "
+     [("2026-09-14T02:40:00Z", "maya", "Joined. Design notes and mocks will go in #photon-dev."),
+      ("2026-09-14T02:41:00Z", "daniel", "Here. I'll triage in #photon-bugs and test every release on a 14 and a 15 machine before it goes out.")],
+     []),
+    ("photon-dev", "2026-09-14T02:35:00Z", "ryan",
+     "Scope for Photon, written down so we stop relitigating it: applications, clipboard history, notes, file search, and keybinds. "
      "No AI, no extensions, no account, no cloud sync, no telemetry. Swift 6 with AppKit for the panel and process behavior and SwiftUI for content. macOS 14 and later.",
-     [("2026-09-14T02:37:00Z", "Branching is git-flow. `develop` is the default branch, `main` only takes release merges, and `main` is back-merged into `develop` after every tag."),
-      ("2026-09-14T02:38:30Z", "Branch names: `feature/GH-<issue>-<slug>` and `bug/GH-<issue>-<slug>`. CI checks the name, so a PR on a bad branch fails before build.")],
-     ["pushpin"]),
-    ("photon-dev", "2026-09-14T03:55:00Z",
+     [("2026-09-14T02:37:00Z", "ryan", "Branching is git-flow. `develop` is the default branch, `main` only takes release merges, and `main` is back-merged into `develop` after every tag."),
+      ("2026-09-14T02:38:30Z", "ryan", "Branch names: `feature/GH-<issue>-<slug>` and `bug/GH-<issue>-<slug>`. CI checks the name, so a PR on a bad branch fails before build."),
+      ("2026-09-14T02:45:00Z", "maya", "Agreed on no extensions. Raycast is the visual reference for the bar, not the feature list.")],
+     [("pushpin", ["ryan", "maya", "daniel"])]),
+    ("photon-dev", "2026-09-14T03:55:00Z", "ryan",
      "Clipboard and file search both take over the launcher panel, but through two paths: clipboard uses `LauncherSession.clipboard`, files use the `LauncherMode` protocol. "
      "Folding clipboard onto `LauncherMode` is the right end state, not now. Filed GH-17 so it does not happen as a side effect of the file search PR.",
-     [], []),
-    ("photon-dev", "2026-09-14T04:52:00Z",
+     [("2026-09-14T04:00:00Z", "daniel", "Fine by me as long as `Cmd+Shift+V` behaves the same when it lands. I'll keep a regression checklist for it.")],
+     []),
+    ("photon-dev", "2026-09-14T04:52:00Z", "ryan",
      "v0.1.0 is out, ad-hoc signed. Developer ID signing and notarization are wired into the release workflow but wait on Apple secrets (GH-11). "
      "Until then Gatekeeper needs Open Anyway on first launch.",
-     [("2026-09-14T04:55:00Z", "The README has the Control-click and `xattr -dr com.apple.quarantine` workaround for now.")],
+     [("2026-09-14T04:55:00Z", "ryan", "The README has the Control-click and `xattr -dr com.apple.quarantine` workaround for now."),
+      ("2026-09-14T04:58:00Z", "daniel", "Installed 0.1.0 from the cask. Open Anyway works on 15 and Control-click works on 14.")],
      []),
-    ("photon-dev", "2026-09-14T13:26:00Z",
+    ("photon-dev", "2026-09-14T13:26:00Z", "ryan",
      "Lost a release PR to the branch-name check. Dots are not allowed in `chore/` slugs, so `chore/merge-main-into-develop-v0.1.1` fails. "
      "Use `chore/backmerge-main-0-2-0` style. Writing it here because I will forget.",
-     [("2026-09-14T17:04:00Z", "Did it again with `chore/backmerge-main-0.2.0` (#60). Closed it and recreated as #61."),
-      ("2026-09-14T20:22:00Z", "And again with #74. Keeping the rule. It is the right rule, I just need to stop typing dots.")],
-     ["pushpin"]),
-    ("photon-dev", "2026-09-14T21:30:00Z",
-     "File search returned nothing from the launcher. Switched to Spotlight `mdfind` scoped to the home folder (GH-79) instead of walking the filesystem. "
-     "The test case I keep using: typing `ember` should find `Ember_Individual_Pitch.pdf` in Documents.",
-     [("2026-09-14T23:24:00Z", "`mdfind -onlyin $HOME` still missed that file. Added an `mdfind -name` filename fallback and a timeout so Files cannot stick on Searching (GH-91).")],
+     [("2026-09-14T17:04:00Z", "ryan", "Did it again with `chore/backmerge-main-0.2.0` (#60). Closed it and recreated as #61."),
+      ("2026-09-14T17:06:00Z", "daniel", "Could the check print the allowed pattern when it fails?"),
+      ("2026-09-14T17:09:00Z", "ryan", "Maybe later. Not touching CI on a release day."),
+      ("2026-09-14T20:22:00Z", "ryan", "And again with #74. Keeping the rule. It is the right rule, I just need to stop typing dots.")],
+     [("pushpin", ["ryan"])]),
+    ("photon-bugs", "2026-09-14T21:10:00Z", "daniel",
+     "File search returns nothing for me. Typing `ember` should find `Ember_Individual_Pitch.pdf` in Documents and the Files list stays empty.",
+     [("2026-09-14T21:17:00Z", "ryan", "Reproduced. Filed GH-79.")],
      []),
-    ("photon-dev", "2026-09-15T06:53:00Z",
+    ("photon-dev", "2026-09-14T21:30:00Z", "ryan",
+     "Switched file search to Spotlight `mdfind` scoped to the home folder (GH-79) instead of walking the filesystem. "
+     "Daniel's `ember` case is the test: it should find `Ember_Individual_Pitch.pdf` in Documents.",
+     [("2026-09-14T23:24:00Z", "ryan", "`mdfind -onlyin $HOME` still missed that file. Added an `mdfind -name` filename fallback and a timeout so Files cannot stick on Searching (GH-91)."),
+      ("2026-09-14T23:40:00Z", "daniel", "0.2.3 finds it now, from Files mode and from the main bar.")],
+     []),
+    ("photon-dev", "2026-09-15T06:53:00Z", "ryan",
      "Going to try a Rust + GPUI rewrite (GH-100). The Swift UI keeps shipping clipped clipboard overlays and stuck file search, and I want layout and ranking in crates I can test. "
      "Same compact bar, same cask, no new visual language.",
-     [("2026-09-15T07:02:00Z", "CI has to build this on `macos-latest`. Linux cannot compile GPUI against AppKit.")],
+     [("2026-09-15T06:58:00Z", "maya", "If you do this, match the v0.2.3 stills exactly. I don't want to redesign the bar a second time."),
+      ("2026-09-15T07:02:00Z", "ryan", "CI has to build this on `macos-latest`. Linux cannot compile GPUI against AppKit.")],
      []),
-    ("photon-dev", "2026-09-15T14:25:00Z",
-     "v0.3.0 is bad. Photon shows up in the Dock, the launcher has a title bar with traffic lights, appearance is stuck on light, the panel moves when clicked, and app icons do not render. Filing it as GH-107 with the Dock screenshot.",
-     [("2026-09-15T14:34:00Z", "New rule: no release unless a parity harness launches the packaged Photon.app on `macos-latest` and checks panel style, activation policy, menu bar, appearance, frame, icons, and the `Cmd+Shift+V` clipboard session."),
-      ("2026-09-15T14:36:00Z", "If GPUI cannot pass that, the v0.2.3 Swift tree comes back. I am not shipping known-broken GPUI to get the rewrite out."),
-      ("2026-09-15T16:05:00Z", "Decided. GPUI did not pass. v0.3.1 restores Swift 6 + SwiftUI/AppKit as the release stack. The rewrite stays in history as 0.3.0 and nowhere else.")],
-     ["pushpin"]),
-    ("photon-dev", "2026-09-15T16:35:00Z",
+    ("photon-bugs", "2026-09-15T14:20:00Z", "daniel",
+     "0.3.0 is bad. Photon shows up in the Dock, the launcher has a title bar with traffic lights, appearance is stuck on light, the panel moves when clicked, and app icons do not render. Dock screenshot is going on the issue.",
+     [("2026-09-15T14:33:00Z", "ryan", "Filed as GH-107.")],
+     []),
+    ("photon-dev", "2026-09-15T14:34:00Z", "ryan",
+     "New rule after Daniel's 0.3.0 report: no release unless a parity harness launches the packaged Photon.app on `macos-latest` and checks panel style, activation policy, menu bar, appearance, frame, icons, and the `Cmd+Shift+V` clipboard session.",
+     [("2026-09-15T14:36:00Z", "ryan", "If GPUI cannot pass that, the v0.2.3 Swift tree comes back. I am not shipping known-broken GPUI to get the rewrite out."),
+      ("2026-09-15T14:38:00Z", "maya", "Appearance stuck on light is the one people will notice first. Please have the harness screenshot light and dark."),
+      ("2026-09-15T14:45:00Z", "daniel", "I'll keep my manual pass too. The harness can't tell me whether it feels right."),
+      ("2026-09-15T16:05:00Z", "ryan", "Decided. GPUI did not pass. v0.3.1 restores Swift 6 + SwiftUI/AppKit as the release stack. The rewrite stays in history as 0.3.0 and nowhere else.")],
+     [("pushpin", ["ryan", "maya", "daniel"])]),
+    ("photon-dev", "2026-09-15T16:35:00Z", "ryan",
      "Cleaned up the PR pile from the rollback. #108, #110, and #112 are closed as superseded by #109, #111, and #113. None of them had anything unique.",
      [], []),
-    ("photon-dev", "2026-09-17T04:15:00Z",
-     "Cursor Bugbot posts \"usage limit reached\" on every PR now. I am not paying for more usage on a solo repo. Those comments are not reviews, ignore them.",
+    ("photon-bugs", "2026-09-15T16:45:00Z", "daniel",
+     "On 0.3.1, file search still finds nothing on my real account, and Up/Down in clipboard history does nothing on hardware.",
+     [("2026-09-15T16:52:00Z", "ryan", "Filing GH-114. The CI harness passed both, so it was testing the wrong thing."),
+      ("2026-09-15T17:55:00Z", "ryan", "0.3.2 fixes both. The harness now seeds a real Documents PDF and four pasteboard entries and checks the displayed rows through Accessibility."),
+      ("2026-09-15T18:10:00Z", "daniel", "Confirmed on 0.3.2.")],
+     [("white_check_mark", ["daniel"])]),
+    ("photon-dev", "2026-09-17T04:15:00Z", "ryan",
+     "Cursor Bugbot posts \"usage limit reached\" on every PR now. Not paying for more usage. Those comments are not reviews, ignore them.",
      [], []),
-    ("photon-dev", "2026-09-17T18:47:00Z",
+    ("photon-dev", "2026-09-17T18:30:00Z", "maya",
+     "Proposal for panel size: one frame for launcher Suggestions, Files, and expanded clipboard. 760 x 502, and drop the expansion animation. Three sizes look like three apps.",
+     [("2026-09-17T19:05:00Z", "ryan", "Done in #161 (GH-159). The parity gate compares the three frames for exact equality.")],
+     [("thumbsup", ["ryan", "daniel"])]),
+    ("photon-dev", "2026-09-17T18:47:00Z", "ryan",
      "GitHub renamed my account from `RyanStoffel` to `ryan-stoffel`. Repo links redirect, but Homebrew records tap trust by name, so the old `ryanstoffel/homebrew-tap` breaks `brew trust`. "
      "Docs use `ryan-stoffel/taps` everywhere now (#158).",
-     [], ["pushpin"]),
-    ("photon-dev", "2026-09-17T19:05:00Z",
-     "Settled the panel size: 760 x 502 for launcher Suggestions, Files, and expanded clipboard. One frame for all three and no expansion animation. "
-     "The parity gate compares the three frames for exact equality (GH-159).",
+     [("2026-09-17T18:55:00Z", "daniel", "Re-tapped with `ryan-stoffel/taps` on both test machines. `brew trust` works again.")],
+     [("pushpin", ["ryan"])]),
+    ("photon-bugs", "2026-09-17T20:20:00Z", "daniel",
+     "Three in Files and drag on 0.3.7: metadata paints over the footer buttons, a folder grant dialog closes the panel, and drag only works from the top edge. Screenshot of the footer is on the ticket.",
+     [("2026-09-17T20:30:00Z", "ryan", "Filed GH-164 through GH-167. One branch for all of them."),
+      ("2026-09-17T23:10:00Z", "ryan", "Merged in #169. Grants are a sheet on the launcher now, queued one at a time, and they survive relaunch."),
+      ("2026-09-17T23:40:00Z", "daniel", "Verified on 0.3.8.")],
+     [("white_check_mark", ["daniel"])]),
+    ("photon-dev", "2026-09-17T23:45:00Z", "ryan",
+     "Issues do not auto-close when a release PR merges to `main`, because `develop` is the default branch. Close them by hand with a \"Shipped in vX\" comment.",
+     [("2026-09-17T23:50:00Z", "daniel", "I'll close them after I verify each release, so closed means tested.")],
+     [("pushpin", ["ryan", "daniel"])]),
+    ("photon-bugs", "2026-09-21T06:10:00Z", "daniel",
+     "Apps launched from Photon open behind whatever window was in front.",
+     [("2026-09-21T06:17:00Z", "ryan", "Filing GH-178.")],
+     []),
+    ("photon-dev", "2026-09-21T06:20:00Z", "ryan",
+     "For GH-178, Photon now hides itself first, then activates the target with `yieldActivation`. Doing the launcher perf pass on the same branch.",
      [], []),
-    ("photon-dev", "2026-09-17T23:45:00Z",
-     "Note for later: issues do not auto-close when a release PR merges to `main`, because `develop` is the default branch. Close them by hand with a \"Shipped in vX\" comment.",
-     [], ["pushpin"]),
-    ("photon-dev", "2026-09-21T06:20:00Z",
-     "Launched apps were not coming to the front (GH-178). Photon now hides itself first, then activates the target with `yieldActivation`. Doing the launcher perf pass on the same branch.",
-     [], []),
-    ("photon-dev", "2026-09-21T16:45:00Z",
+    ("photon-dev", "2026-09-21T16:45:00Z", "ryan",
      "Caps Lock as Hyper was turning Caps Lock on (GH-194). The remap now swallows the lock-state change while Hyper is held. A tap can still be set to nothing, Escape, or Caps Lock.",
-     [], []),
-    ("photon-dev", "2026-09-21T19:45:00Z",
+     [("2026-09-21T18:20:00Z", "daniel", "Held Hyper through twenty window commands on 0.4.2. Caps Lock never latched.")],
+     []),
+    ("photon-dev", "2026-09-21T19:45:00Z", "ryan",
      "Pinning running apps to the top of the launcher felt wrong after a day. 0.4.3 replaces it with Suggestions ranked by how often each app is opened on this Mac. The running dots stay.",
-     [("2026-09-28T17:50:00Z", "Suggestions rank commands by open count too now (GH-232). Files, single notes, and Settings panes stay in the catalog below.")],
+     [("2026-09-21T19:50:00Z", "maya", "Agree. Running apps on top reordered the list every time I opened something."),
+      ("2026-09-28T17:50:00Z", "ryan", "Suggestions rank commands by open count too now (GH-232). Files, single notes, and Settings panes stay in the catalog below.")],
      []),
-    ("photon-dev", "2026-09-22T16:00:00Z",
-     "Onboarding has had three versions in two days: the 0.4.3 walkthrough, the interactive tour in 0.4.4, and the full-screen sequence in 0.4.5. The full-screen one covers everything, which is too much. 0.4.6 plays it in a window (GH-221).",
-     [("2026-09-22T18:30:00Z", "Splitting onboarding into phases (GH-226). Phase 1 is the arrival. Phase 2 is the feature tour and permission prompts.")],
+    ("photon-dev", "2026-09-22T16:00:00Z", "maya",
+     "Onboarding has had three versions in two days: the 0.4.3 walkthrough, the interactive tour in 0.4.4, and the full-screen sequence in 0.4.5. The full-screen one covers everything, which is too much. Can it play in a window?",
+     [("2026-09-22T16:05:00Z", "ryan", "Yes. 0.4.6 will play it in a window (GH-221)."),
+      ("2026-09-22T18:30:00Z", "ryan", "Splitting onboarding into phases (GH-226). Phase 1 is the arrival. Phase 2 is the feature tour and permission prompts.")],
      []),
-    ("photon-dev", "2026-09-22T19:20:00Z",
-     "Running a dev build kills my release Photon because they share a bundle id and hotkeys. Adding a Photon-Dev app with its own bundle id that can run beside it (GH-228).",
-     [], []),
-    ("photon-dev", "2026-09-28T17:05:00Z",
+    ("photon-dev", "2026-09-22T19:20:00Z", "ryan",
+     "Running a dev build kills the release Photon because they share a bundle id and hotkeys. Adding a Photon-Dev app with its own bundle id that can run beside it (GH-228).",
+     [("2026-09-22T19:25:00Z", "daniel", "That helps me too. I can keep the release build as my baseline while I test a branch.")],
+     []),
+    ("photon-dev", "2026-09-28T17:05:00Z", "ryan",
      "Scrapping the cinematic Phase 1. No beam, flash, stars, full-screen veil, or Desktop 2 pin. It becomes one small native welcome window: how to open Photon, where Settings are, and one Continue. Phase 2 is not in this pass.",
-     [("2026-09-28T17:09:00Z", "Sora stays in `Resources/Fonts`, but the welcome window uses the system font.")],
-     ["pushpin"]),
-    ("photon-dev", "2026-09-29T03:20:00Z",
+     [("2026-09-28T17:07:00Z", "maya", "Good. That is the small window I mocked last week."),
+      ("2026-09-28T17:09:00Z", "ryan", "Sora stays in `Resources/Fonts`, but the welcome window uses the system font.")],
+     [("pushpin", ["ryan", "maya"])]),
+    ("photon-bugs", "2026-09-28T17:15:00Z", "daniel",
+     "Typing `finder` lists file hits above Finder.app.",
+     [("2026-09-28T17:25:00Z", "ryan", "Filed GH-233. An application name match beats file hits now.")],
+     [("white_check_mark", ["daniel"])]),
+    ("photon-dev", "2026-09-29T03:20:00Z", "ryan",
      "v0.4.7 is the first notarized build. The tag workflow signed with Developer ID, notarized, stapled, and bumped the cask on its own. GH-11 is closed after two weeks.",
-     [], ["tada"]),
-    ("photon-dev", "2026-09-29T16:55:00Z",
-     "Tried an outlined Photon mark for the menu bar (GH-243). Not the direction. The current menu bar icon stays.",
-     [], []),
-    ("photon-dev", "2026-10-04T02:45:00Z",
-     "Audited 0.4.8 against Raycast. Root search fills with loose System Settings matches, `saf` never lists Safari, root queries flip into Files mode, there is no Cmd+K action panel, and Esc does not clear text first. "
-     "The calculator crashes on `2^64` and gets `2*-3` wrong. All of it is GH-248.",
-     [("2026-10-04T03:10:00Z", "Still no AI and no extensions. Parity means the core interactions, not the store.")],
+     [("2026-09-29T03:35:00Z", "daniel", "Downloaded the zip on a clean account. No Gatekeeper prompt.")],
+     [("tada", ["maya", "daniel"])]),
+    ("photon-bugs", "2026-09-29T16:45:00Z", "daniel",
+     "The Settings sidebar focus ring is stuck again, this time after a click.",
+     [("2026-09-29T16:50:00Z", "ryan", "Same symptom as GH-202, different trigger. Filing GH-238.")],
      []),
-    ("photon-bugs", "2026-09-14T04:37:00Z",
-     "Launcher panel throws `NSInternalInconsistencyException` at launch (GH-22). `moveToActiveSpace` conflicts with the other collection behavior flags. Dropping it.",
-     [("2026-09-14T04:41:00Z", "Fixed in #24.")],
-     ["white_check_mark"]),
-    ("photon-bugs", "2026-09-15T16:52:00Z",
-     "Real-account file search is still broken after 0.3.1, and Up/Down in clipboard history does nothing on hardware. The CI harness passed both, so it was testing the wrong thing (GH-114).",
-     [("2026-09-15T17:55:00Z", "0.3.2 fixes both. The harness now seeds a real Documents PDF and four pasteboard entries and checks the displayed rows through Accessibility.")],
-     ["white_check_mark"]),
-    ("photon-bugs", "2026-09-17T20:30:00Z",
-     "Files metadata paints over the footer buttons, folder grant dialogs close the panel, and drag only works from the top edge (GH-164 through GH-167). One branch for all four.",
-     [("2026-09-17T23:10:00Z", "Merged in #169. Grants are a sheet on the launcher now, queued one at a time, and they survive relaunch.")],
-     ["white_check_mark"]),
-    ("photon-bugs", "2026-09-28T17:25:00Z",
-     "Typing `finder` shows file hits above Finder.app (GH-233). An application name match beats file hits now.",
-     [], ["white_check_mark"]),
-    ("photon-bugs", "2026-09-29T16:50:00Z",
-     "The Settings sidebar focus ring is stuck again, this time after a click (GH-238). Same symptom as GH-202, different trigger.",
-     [], []),
-    ("general", "2026-10-05T16:05:00Z",
+    ("photon-dev", "2026-09-29T16:55:00Z", "ryan",
+     "Tried an outlined Photon mark for the menu bar (GH-243). Not the direction. The current menu bar icon stays.",
+     [("2026-09-29T16:58:00Z", "maya", "Agreed. The filled mark reads better at menu bar size.")],
+     []),
+    ("photon-dev", "2026-10-04T02:30:00Z", "daniel",
+     "Audited 0.4.8 against Raycast. Root search fills with loose System Settings matches, `saf` never lists Safari, root queries flip into Files mode, there is no Cmd+K action panel, and Esc does not clear text first. "
+     "The calculator crashes on `2^64` and gets `2*-3` wrong.",
+     [("2026-10-04T02:45:00Z", "ryan", "Filed all of it as GH-248."),
+      ("2026-10-04T03:10:00Z", "ryan", "Still no AI and no extensions. Parity means the core interactions, not the store."),
+      ("2026-10-04T03:15:00Z", "maya", "I'll mock the Cmd+K action panel and the footer before you start on it.")],
+     []),
+    ("general", "2026-10-05T16:05:00Z", "ryan",
      "Added @Ember to #general, #photon-dev, #photon-github, #photon-releases, and #photon-bugs. It reads only channels it is invited to, so #random stays out.",
      [], []),
 ]
 
 RELEASE_REPLIES = {
-    "v0.3.0": [("2026-09-15T08:40:00Z", "Shipped the GPUI rewrite. Testing on my own machine before I trust it.")],
-    "v0.3.1": [("2026-09-15T16:20:00Z", "Rollback to the v0.2.3 Swift tree. See #photon-dev for why.")],
-    "v0.4.7": [("2026-09-29T03:16:00Z", "First release that is Developer ID signed and notarized.")],
+    "v0.3.0": [("2026-09-15T08:40:00Z", "ryan", "Shipped the GPUI rewrite. Daniel, give it a full pass before anyone else installs it.")],
+    "v0.3.1": [("2026-09-15T16:20:00Z", "ryan", "Rollback to the v0.2.3 Swift tree. See #photon-dev for why."),
+               ("2026-09-15T16:30:00Z", "daniel", "Back out of the Dock, no title bar, light and dark both follow the system.")],
+    "v0.3.8": [("2026-09-17T23:42:00Z", "daniel", "Verified on 14 and 15.")],
+    "v0.4.7": [("2026-09-29T03:16:00Z", "ryan", "First release that is Developer ID signed and notarized.")],
+    "v0.4.8": [("2026-09-29T20:50:00Z", "daniel", "Welcome window shows the configured shortcut. Verified on 14 and 15.")],
 }
+
+
 
 class SlackWorld:
     """Every channel's messages, built once. Answers the fake Web API."""
@@ -374,10 +425,11 @@ class SlackWorld:
         message.update(extra)
         return message
 
-    def _thread(self, channel: str, parent: dict, replies: list[tuple[str, str, str]], reactions: list[str]) -> None:
+    def _thread(self, channel: str, parent: dict, replies: list[tuple[str, str, str]], reactions: list[tuple[str, list[str]]]) -> None:
         cid = CHANNEL_ID[channel]
         if reactions:
-            parent["reactions"] = [{"name": name, "users": [U_RYAN], "count": 1} for name in reactions]
+            parent["reactions"] = [{"name": name, "users": [PEOPLE[who]["slack"] for who in people], "count": len(people)}
+                                   for name, people in reactions]
         self.messages[cid].append(parent)
         if not replies:
             return
@@ -393,14 +445,14 @@ class SlackWorld:
             latest_reply=built[-1]["ts"],
             reply_users=users,
             is_locked=False,
-            subscribed=parent["user"] == U_RYAN,
+            subscribed=parent["user"] in {p["slack"] for p in PEOPLE.values()},
         )
         self.replies[(cid, parent["ts"])] = built
 
     def _build(self) -> None:
-        for channel, when, text, replies, reactions in SLACK_THREADS:
-            parent = self._message(U_RYAN, utc(when), text)
-            self._thread(channel, parent, [(U_RYAN, w, t) for w, t in replies], reactions)
+        for channel, when, who, text, replies, reactions in SLACK_THREADS:
+            parent = self._message(PEOPLE[who]["slack"], utc(when), text)
+            self._thread(channel, parent, [(PEOPLE[by]["slack"], w, t) for w, by, t in replies], reactions)
 
         for issue in self.source["issues"]:
             link = f"<{GITHUB}/issues/{issue['number']}|#{issue['number']} {issue['title']}>"
@@ -426,11 +478,11 @@ class SlackWorld:
             url = f"{GITHUB}/releases/tag/{release['tag']}"
             text = f"Release published: <{url}|{release['name']}> (pre-release). {release['summary']}".rstrip()
             parent = self._message(U_GITHUB, utc(release["published_at"]), text)
-            replies = [(U_RYAN, w, t) for w, t in RELEASE_REPLIES.get(release["tag"], [])]
+            replies = [(PEOPLE[by]["slack"], w, t) for w, by, t in RELEASE_REPLIES.get(release["tag"], [])]
             self._thread("photon-releases", parent, replies, [])
 
-    def bug_created(self, key: str, summary: str, created: datetime, url: str) -> None:
-        text = f"{RYAN_NAME} created Bug <{url}|{key}: {summary}>"
+    def bug_created(self, reporter: str, key: str, summary: str, created: datetime, url: str) -> None:
+        text = f"{reporter} created Bug <{url}|{key}: {summary}>"
         self._thread("photon-bugs", self._message(U_JIRA, created + timedelta(seconds=20), text), [], [])
 
     def finish(self) -> None:
@@ -467,18 +519,24 @@ API = f"{ORIGIN}/rest/api/3"
 PROJECT_KEY = "PHO"
 PROJECT_ID = "10000"
 PROJECT_CREATED = utc("2026-09-14T02:40:00Z")
-RYAN_ACCOUNT = "712020:" + stable_id("jira", RYAN_EMAIL)
 
-RYAN_JIRA = {
-    "self": f"{API}/user?accountId={RYAN_ACCOUNT}",
-    "accountId": RYAN_ACCOUNT,
-    "emailAddress": RYAN_EMAIL,
-    "avatarUrls": {size: f"https://secure.gravatar.com/avatar/{stable_id('gravatar', RYAN_EMAIL)[:32]}?s={size[:2]}" for size in ("48x48", "24x24", "16x16", "32x32")},
-    "displayName": RYAN_NAME,
-    "active": True,
-    "timeZone": RYAN_TZ,
-    "accountType": "atlassian",
-}
+
+def jira_user(person: dict) -> dict:
+    account = "712020:" + stable_id("jira", person["email"])
+    return {
+        "self": f"{API}/user?accountId={account}",
+        "accountId": account,
+        "emailAddress": person["email"],
+        "avatarUrls": {size: f"https://secure.gravatar.com/avatar/{stable_id('gravatar', person['email'])[:32]}?s={size[:2]}" for size in ("48x48", "24x24", "16x16", "32x32")},
+        "displayName": person["name"],
+        "active": True,
+        "timeZone": RYAN_TZ,
+        "accountType": "atlassian",
+    }
+
+
+JIRA_USERS = {key: jira_user(person) for key, person in PEOPLE.items()}
+RYAN_JIRA = JIRA_USERS["ryan"]
 
 STATUS = {
     "To Do": {"id": "10000", "category": {"id": 2, "key": "new", "colorName": "blue-gray", "name": "To Do"}},
@@ -514,12 +572,23 @@ SPRINTS = [
 ]
 
 JIRA_NOTES = {
-    17: [("2026-09-14T04:05:00Z", "Deferred on purpose. Do this as its own change, not inside a file search fix. Clipboard stays on LauncherSession until then.")],
-    100: [("2026-09-15T06:58:00Z", "Why: the Swift UI keeps regressing clipboard overlays and file search, and I want layout and ranking in crates I can test. If the port cannot match the v0.2.3 compact stills, it does not ship.")],
-    107: [("2026-09-15T14:40:00Z", "Parity gate before any further release: packaged Photon.app on macos-latest, borderless non-activating panels, no Dock icon, live appearance, stable frame, bundle icons, and the clipboard hotkey session."),
-          ("2026-09-15T16:06:00Z", "Decision: GPUI failed the gate. v0.3.1 restores the v0.2.3 Swift tree and keeps the harness as a required release check.")],
-    226: [("2026-09-22T18:32:00Z", "Phase 1 is the arrival. Phase 2 is the feature tour and permission prompts.")],
-    248: [("2026-10-04T03:12:00Z", "Scope stays the same: no AI and no extensions. This is about root search ranking, Esc order, an action panel, the calculator, and clipboard reliability.")],
+    11: [("2026-09-29T03:40:00Z", "daniel", "Verified 0.4.7 on a clean account on macOS 15. No Gatekeeper prompt, and `spctl -a -vv` reports Notarized Developer ID.")],
+    17: [("2026-09-14T04:05:00Z", "ryan", "Deferred on purpose. Do this as its own change, not inside a file search fix. Clipboard stays on LauncherSession until then."),
+         ("2026-09-14T04:10:00Z", "daniel", "When this lands, rerun the clipboard checklist: `Cmd+Shift+V`, `cb ` prefix, paste, pin, delete, and the Accessibility fallback.")],
+    79: [("2026-09-14T21:12:00Z", "daniel", "Repro: put a PDF named `Ember_Individual_Pitch.pdf` in ~/Documents, open Photon, type `ember`. Files list stays empty.")],
+    100: [("2026-09-15T06:58:00Z", "ryan", "Why: the Swift UI keeps regressing clipboard overlays and file search, and I want layout and ranking in crates I can test. If the port cannot match the v0.2.3 compact stills, it does not ship."),
+          ("2026-09-15T07:00:00Z", "maya", "The v0.2.3 stills are the spec. Pill bar, footer, calculator card, clipboard and Files modes, Settings, and Notes.")],
+    107: [("2026-09-15T14:33:00Z", "daniel", "Screenshot attached. The clipboard hotkey also does nothing on 0.3.0."),
+          ("2026-09-15T14:40:00Z", "ryan", "Parity gate before any further release: packaged Photon.app on macos-latest, borderless non-activating panels, no Dock icon, live appearance, stable frame, bundle icons, and the clipboard hotkey session."),
+          ("2026-09-15T16:06:00Z", "ryan", "Decision: GPUI failed the gate. v0.3.1 restores the v0.2.3 Swift tree and keeps the harness as a required release check."),
+          ("2026-09-15T16:32:00Z", "daniel", "Verified on 0.3.1 on 14 and 15. Out of the Dock, no title bar, appearance follows the system.")],
+    159: [("2026-09-17T18:35:00Z", "maya", "Target: 760 x 502 for launcher Suggestions, Files, and expanded clipboard. No expansion animation.")],
+    164: [("2026-09-17T20:29:00Z", "daniel", "Screenshot attached. Created and Modified paint over Open and Reveal.")],
+    226: [("2026-09-22T18:32:00Z", "ryan", "Phase 1 is the arrival. Phase 2 is the feature tour and permission prompts."),
+          ("2026-09-28T17:07:00Z", "maya", "Small native window, system font, one Continue. Mock is in the design file.")],
+    233: [("2026-09-28T17:23:00Z", "daniel", "Repro: type `finder`. Search Files and filename hits come before Finder.app.")],
+    248: [("2026-10-04T02:43:00Z", "daniel", "Full audit notes are in #photon-dev."),
+          ("2026-10-04T03:12:00Z", "ryan", "Scope stays the same: no AI and no extensions. This is about root search ranking, Esc order, an action panel, the calculator, and clipboard reliability.")],
 }
 
 # (outward GitHub number, link type, inward GitHub number). Relates is symmetric.
@@ -641,6 +710,14 @@ def epic_for(issue: dict) -> str | None:
             return name
     return None
 
+def reporter_for(issue: dict, kind: str) -> str:
+    if kind == "Bug":
+        return "daniel"
+    if kind == "Story" and epic_for(issue) in ("Launcher", "Notes", "Settings", "Onboarding", "Clipboard history"):
+        return "maya"
+    return "ryan"
+
+
 def sprint_for(moment: datetime) -> int:
     for number, _name, start, end, _state in SPRINTS:
         if utc(start) <= moment < utc(end):
@@ -705,7 +782,7 @@ class JiraWorld:
             plan["id"] = str(10000 + number)
         return plans
 
-    def _base(self, plan: dict, kind: str, summary: str, description: dict, status: str) -> dict:
+    def _base(self, plan: dict, kind: str, summary: str, description: dict, status: str, reporter: str = "ryan") -> dict:
         type_info = ISSUE_TYPES[kind]
         status_info = STATUS[status]
         return {
@@ -739,8 +816,8 @@ class JiraWorld:
                     "id": status_info["id"],
                     "statusCategory": dict(status_info["category"], self=f"{API}/statuscategory/{status_info['category']['id']}"),
                 },
-                "creator": RYAN_JIRA,
-                "reporter": RYAN_JIRA,
+                "creator": JIRA_USERS[reporter],
+                "reporter": JIRA_USERS[reporter],
                 "assignee": RYAN_JIRA,
                 "created": jira_time(plan["created"]),
                 "labels": [],
@@ -752,7 +829,7 @@ class JiraWorld:
                 "resolution": None,
                 "resolutiondate": None,
                 "statuscategorychangedate": jira_time(plan["created"]),
-                "watches": {"self": f"{API}/issue/{plan['key']}/watchers", "watchCount": 1, "isWatching": True},
+                "watches": {"self": f"{API}/issue/{plan['key']}/watchers", "watchCount": len(self._watchers(reporter)), "isWatching": True},
                 "votes": {"self": f"{API}/issue/{plan['key']}/votes", "votes": 0, "hasVoted": False},
                 "worklog": {"startAt": 0, "maxResults": 20, "total": 0, "worklogs": []},
                 "timetracking": {},
@@ -760,21 +837,25 @@ class JiraWorld:
             },
         }
 
-    def _comment(self, issue_id: str, when: datetime, text: str) -> dict:
+    @staticmethod
+    def _watchers(reporter: str) -> list[str]:
+        return ["ryan"] if reporter == "ryan" else ["ryan", reporter]
+
+    def _comment(self, issue_id: str, when: datetime, text: str, who: str = "ryan") -> dict:
         cid = self._next()
         return {
             "self": f"{API}/issue/{issue_id}/comment/{cid}",
             "id": cid,
-            "author": RYAN_JIRA,
+            "author": JIRA_USERS[who],
             "body": adf(text),
-            "updateAuthor": RYAN_JIRA,
+            "updateAuthor": JIRA_USERS[who],
             "created": jira_time(when),
             "updated": jira_time(when),
             "jsdPublic": True,
         }
 
-    def _history(self, when: datetime, items: list[dict]) -> dict:
-        return {"id": self._next(), "author": RYAN_JIRA, "created": jira_time(when), "items": items}
+    def _history(self, when: datetime, items: list[dict], who: str = "ryan") -> dict:
+        return {"id": self._next(), "author": JIRA_USERS[who], "created": jira_time(when), "items": items}
 
     def _build(self, slack: SlackWorld) -> None:
         self._versions()
@@ -795,7 +876,7 @@ class JiraWorld:
                 issue["fields"]["labels"] = ["epic"]
                 issue["fields"]["updated"] = jira_time(plan["created"])
                 epic_ref[plan["epic"]] = issue
-                self.extra[plan["key"]] = {"comments": [], "histories": [], "remote": [], "attachments": []}
+                self.extra[plan["key"]] = {"comments": [], "histories": [], "remote": [], "attachments": [], "watchers": ["ryan"]}
             else:
                 issue = self._issue(plan, epic_ref, pulls_for, comments_for, slack)
                 by_number[plan["github"]["number"]] = issue
@@ -823,7 +904,8 @@ class JiraWorld:
             status = "To Do"
 
         description = adf(gh["body"]) if gh["body"].strip() else adf(gh["title"])
-        issue = self._base(plan, kind, gh["title"], description, status)
+        reporter = reporter_for(gh, kind)
+        issue = self._base(plan, kind, gh["title"], description, status, reporter)
         fields = issue["fields"]
         priority = next((PRIORITIES[label.split("/", 1)[1]] for label in gh["labels"] if label.startswith("priority/")), PRIORITIES["p2"])
         fields["priority"] = {"self": f"{API}/priority/{priority[0]}", "iconUrl": f"{ORIGIN}/images/icons/priorities/{priority[1].lower()}_new.svg", "name": priority[1], "id": priority[0]}
@@ -845,7 +927,7 @@ class JiraWorld:
         if not (status == "To Do" and number == 17):
             fields["customfield_10020"] = [self._sprint(sprint_for(created))]
 
-        histories = [self._history(created + timedelta(seconds=30), [
+        histories = [self._history(created + timedelta(seconds=30), who=reporter, items=[
             {"field": "Sprint", "fieldtype": "custom", "fieldId": "customfield_10020", "from": "", "fromString": "",
              "to": str(sprint_for(created)), "toString": SPRINTS[sprint_for(created) - 1][1]}
         ])] if fields["customfield_10020"] else []
@@ -877,10 +959,10 @@ class JiraWorld:
             fields["statuscategorychangedate"] = jira_time(started)
 
         comments = []
-        notes = [(utc(c["created_at"]), c["body"]) for c in comments_for.get(number, [])]
-        notes += [(utc(when), text) for when, text in JIRA_NOTES.get(number, [])]
-        for when, text in sorted(notes):
-            comments.append(self._comment(plan["id"], when, text))
+        notes = [(utc(c["created_at"]), "ryan", c["body"]) for c in comments_for.get(number, [])]
+        notes += [(utc(when), who, text) for when, who, text in JIRA_NOTES.get(number, [])]
+        for when, who, text in sorted(notes):
+            comments.append(self._comment(plan["id"], when, text, who))
             updated = max(updated, when)
         fields["comment"] = {"comments": comments, "self": f"{API}/issue/{plan['id']}/comment", "maxResults": len(comments), "total": len(comments), "startAt": 0}
 
@@ -891,7 +973,7 @@ class JiraWorld:
                 "self": f"{API}/attachment/{att}",
                 "id": att,
                 "filename": filename,
-                "author": RYAN_JIRA,
+                "author": JIRA_USERS["daniel"],
                 "created": jira_time(utc(when)),
                 "size": size,
                 "mimeType": mime,
@@ -906,9 +988,10 @@ class JiraWorld:
             remote.append(self._remote(plan["key"], f"{GITHUB}/pull/{pull['number']}", f"ryan-stoffel/photon#{pull['number']}: {pull['title']}",
                                        "pull request", pull["merged_at"] is not None or pull["closed_at"] is not None))
         fields["updated"] = jira_time(updated)
-        self.extra[plan["key"]] = {"comments": comments, "histories": histories, "remote": remote, "attachments": attachments}
+        self.extra[plan["key"]] = {"comments": comments, "histories": histories, "remote": remote, "attachments": attachments,
+                                   "watchers": self._watchers(reporter)}
         if kind == "Bug":
-            slack.bug_created(plan["key"], gh["title"], created, f"{ORIGIN}/browse/{plan['key']}")
+            slack.bug_created(PEOPLE[reporter]["name"], plan["key"], gh["title"], created, f"{ORIGIN}/browse/{plan['key']}")
         return issue
 
     def _remote(self, key: str, url: str, title: str, what: str, resolved: bool) -> dict:
@@ -1044,7 +1127,8 @@ class JiraWorld:
         if tail == "remotelink":
             return 200, extra["remote"]
         if tail == "watchers":
-            return 200, {"self": f"{API}/issue/{key}/watchers", "isWatching": True, "watchCount": 1, "watchers": [RYAN_JIRA]}
+            watchers = [JIRA_USERS[who] for who in extra["watchers"]]
+            return 200, {"self": f"{API}/issue/{key}/watchers", "isWatching": True, "watchCount": len(watchers), "watchers": watchers}
         if tail == "votes":
             return 200, {"self": f"{API}/issue/{key}/votes", "votes": 0, "hasVoted": False, "voters": []}
         if tail == "properties":
