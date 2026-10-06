@@ -201,12 +201,15 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}/${{ matrix.target.name }}
-          # main:    main, main-<sha>, latest
-          # develop: develop, develop-<sha>
+          # main:    main, main-<sha>, main-<run>-<sha>, latest
+          # develop: develop, develop-<sha>, develop-<run>-<sha>
           # PRs:     pr-<n> (built, never pushed)
+          # <run> is the workflow run number. It only goes up, so Flux's ImagePolicy can sort
+          # <branch>-<run>-<sha> to find the newest build; <branch>-<sha> has no order.
           tags: |
             type=ref,event=branch
             type=sha,prefix=${{ github.ref_name }}-,enable=${{ env.PUBLISH == 'true' }}
+            type=sha,prefix=${{ github.ref_name }}-${{ github.run_number }}-,enable=${{ env.PUBLISH == 'true' }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=pr
       - name: Build${{ env.PUBLISH == 'true' && ' and push' || '' }}
