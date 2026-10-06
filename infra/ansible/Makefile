@@ -8,6 +8,11 @@ export ANSIBLE_CONFIG := $(abspath ansible.cfg)
 K3S_VERSION := $(shell sed -n 's/^k3s_version: *//p' group_vars/all/main.yml)
 KUBECTL_VERSION := $(firstword $(subst +, ,$(K3S_VERSION)))
 HELM_VERSION := v4.3.0
+FLUX_VERSION := 2.9.6
+SOPS_VERSION := v3.13.3
+AGE_VERSION := v1.3.2
+# age publishes no checksum file; this is the sha256 of age-$(AGE_VERSION)-linux-amd64.tar.gz
+AGE_SHA256 := cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
 CONTEXT := homelab
 
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
@@ -17,7 +22,7 @@ CONTEXT := homelab
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
-deps: ## Create .venv with Ansible, install the pinned collections, kubectl and helm
+deps: ## Create .venv with Ansible, install the pinned collections, kubectl, helm, flux, sops and age
 	test -x $(BIN)/python || $(PYTHON) -m venv $(VENV)
 	$(BIN)/pip install -q -r requirements.txt
 	$(BIN)/ansible-galaxy collection install -r requirements.yml -p collections
@@ -36,6 +41,30 @@ deps: ## Create .venv with Ansible, install the pinned collections, kubectl and 
 	  rm -rf $$tmp; \
 	fi
 	$(BIN)/helm version --short
+	@if ! $(BIN)/flux version --client 2>/dev/null | grep -q '$(FLUX_VERSION)$$'; then \
+	  tmp=$$(mktemp -d) && \
+	  curl -fsSLo $$tmp/flux.tgz https://github.com/fluxcd/flux2/releases/download/v$(FLUX_VERSION)/flux_$(FLUX_VERSION)_linux_amd64.tar.gz && \
+	  echo "$$(curl -fsSL https://github.com/fluxcd/flux2/releases/download/v$(FLUX_VERSION)/flux_$(FLUX_VERSION)_checksums.txt | grep ' flux_$(FLUX_VERSION)_linux_amd64.tar.gz$$' | cut -d' ' -f1)  $$tmp/flux.tgz" | sha256sum -c - && \
+	  tar xzf $$tmp/flux.tgz -C $$tmp flux && mv $$tmp/flux $(BIN)/flux; \
+	  rm -rf $$tmp; \
+	fi
+	$(BIN)/flux version --client
+	@if ! $(BIN)/sops --version 2>/dev/null | grep -q '$(patsubst v%,%,$(SOPS_VERSION))'; then \
+	  tmp=$$(mktemp -d) && \
+	  curl -fsSLo $$tmp/sops-$(SOPS_VERSION).linux.amd64 https://github.com/getsops/sops/releases/download/$(SOPS_VERSION)/sops-$(SOPS_VERSION).linux.amd64 && \
+	  (cd $$tmp && curl -fsSL https://github.com/getsops/sops/releases/download/$(SOPS_VERSION)/sops-$(SOPS_VERSION).checksums.txt | grep ' sops-$(SOPS_VERSION).linux.amd64$$' | sha256sum -c -) && \
+	  install -m 0755 $$tmp/sops-$(SOPS_VERSION).linux.amd64 $(BIN)/sops; \
+	  rm -rf $$tmp; \
+	fi
+	$(BIN)/sops --version --disable-version-check
+	@if ! $(BIN)/age --version 2>/dev/null | grep -q '^$(AGE_VERSION)$$'; then \
+	  tmp=$$(mktemp -d) && \
+	  curl -fsSLo $$tmp/age.tgz https://github.com/FiloSottile/age/releases/download/$(AGE_VERSION)/age-$(AGE_VERSION)-linux-amd64.tar.gz && \
+	  echo "$(AGE_SHA256)  $$tmp/age.tgz" | sha256sum -c - && \
+	  tar xzf $$tmp/age.tgz -C $$tmp age/age age/age-keygen && mv $$tmp/age/age $$tmp/age/age-keygen $(BIN)/; \
+	  rm -rf $$tmp; \
+	fi
+	$(BIN)/age --version
 
 vault-init: ## One time: create .vault-pass and the encrypted k3s join token
 	@test ! -e .vault-pass || { echo ".vault-pass already exists; not overwriting" >&2; exit 1; }

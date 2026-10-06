@@ -69,6 +69,22 @@ jobs:
           echo "layout ok"
       - name: docker-compose is valid YAML
         run: docker compose -f infra/docker-compose.yml config --quiet
+      # ADR 0003: Secrets live in Git only as SOPS-encrypted *.sops.yaml files, and those files
+      # have to actually be encrypted.
+      - name: k8s Secrets are SOPS-encrypted
+        run: |
+          set -euo pipefail
+          bad=0
+          while IFS= read -r f; do
+            case "$f" in
+              *.sops.yaml) ;;
+              *) echo "::error file=$f::kind: Secret outside a *.sops.yaml file"; bad=1; continue ;;
+            esac
+          done < <(grep -rlE '^kind: *Secret *$' infra/k8s || true)
+          while IFS= read -r f; do
+            grep -qE '^sops:' "$f" || { echo "::error file=$f::not encrypted (run sops -e -i $f)"; bad=1; }
+          done < <(find infra/k8s -name '*.sops.yaml')
+          exit $bad
       - name: k8s kustomize roots render
         run: |
           set -euo pipefail
