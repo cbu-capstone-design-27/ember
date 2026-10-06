@@ -161,26 +161,49 @@ Stage workers are always-on Deployments that **pull** jobs. Nothing pushes work 
 | Component | How it starts | How it stops |
 |---|---|---|
 | intake (parent listener) | Deployment, 2 replicas. Ready once Postgres answers, so nginx never routes to a pod that cannot store | On `SIGTERM` it fails readiness, waits a few seconds while the Service drops it, finishes in-flight requests, then exits. A PodDisruptionBudget keeps one replica up during node drains |
-| enrich:&lt;source&gt;, extract, load | Deployment, 1 replica each. The queue library's worker starts, connects and listens | On `SIGTERM` it stops claiming and finishes the job in hand within `terminationGracePeriodSeconds` (60 s). A job still running when the pod is killed is picked up again once the library sees it stalled |
+| enrich:&lt;source&gt;, extract, load | Deployment, 1 replica each. The queue library's worker starts, connects and listens | On `SIGTERM` it stops claiming and finishes every job in flight (see [Concurrency](#concurrency)) within `terminationGracePeriodSeconds` (60 s). A job still running when the pod is killed is picked up again once the library sees it stalled |
 | scheduler:&lt;source&gt; | CronJob on that source's own schedule, `concurrencyPolicy: Forbid` | Enqueues `reconcile` jobs and exits. `scheduler:teams` also renews Graph subscriptions due within the next day |
 | admin CLI | Run by hand, or as a one-off Job | Exits when done |
 
 ```python
-# every stage worker; the queue library runs this loop
-for job in queue.jobs(kind, source):        # LISTEN; claim; wait for NOTIFY or the 30 s poll
+# every stage worker; the queue library runs this, up to CONCURRENCY jobs at a time
+async def run_job(job):
     try:
-        handle(job)                         # output and the next job commit together
+        await handle(job)                   # output and the next job commit together
     except Throttled as e:
         retry(job, after=e.retry_after, counts=False)
     except Transient:
         retry(job, after=backoff(job.attempts))   # dead after 8 attempts
     except Permanent:
         dead(job)
-# SIGTERM: stop claiming, finish this job, exit
+
+# claim while fewer than CONCURRENCY jobs are running; LISTEN, NOTIFY, 30 s poll
+# SIGTERM: stop claiming, let every running job finish, exit
 ```
 
 - **Long jobs:** a reconcile that pages through a long history saves its cursor after every page, so a shutdown costs one page.
 - **Rollouts:** Flux applies a new image tag and Kubernetes replaces pods one at a time, each stopping as above. A deploy never loses a job.
+### Concurrency
+
+A worker runs several jobs at once. The work is nearly all waiting on the network (source APIs, the LLM, Neo4j), so one asyncio process can keep several jobs in flight, and that is much cheaper on two 4 GB nodes than more replicas. The queue library runs it: each Deployment sets `CONCURRENCY` in its environment.
+
+| Stage | Runs at once | Starting `CONCURRENCY` | What limits it |
+|---|---|---|---|
+| intake | Many requests; it is an HTTP server | n/a | Postgres connections |
+| enrich, per source | Jobs across tenants and objects | 4 | The source's rate limits. The shared rate limiter makes extra jobs wait their turn, so raising concurrency never breaks a limit, only queues more |
+| extract | One job per record | 4 | What the tenant's or our LLM endpoint handles |
+| load | Jobs for different subgraphs | 4, and 1 per subgraph | A lock per `{tenant}_{source}` keeps each subgraph in `occurred_at` order, which Graphiti's fact invalidation needs |
+
+Order only matters at load. Enrich and extract can finish out of order: a `source_records` row is unique per object version, and load sorts episodes by the source's own time, not by when they arrived.
+
+Some jobs also cover many events:
+
+- **load** drains up to 100 unloaded episodes for one subgraph per job, so a burst of 50 Slack messages becomes one or two load jobs.
+- **reconcile** pages through many objects in one job.
+- **enrich** and **extract** stay one event per job, so one bad payload dead-letters only itself.
+
+Raise `CONCURRENCY` first, then replicas, then add KEDA.
+
 - **Scaling:** replicas are set in the manifests for now. When one replica is too slow, KEDA's PostgreSQL scaler can size each Deployment from queue depth, down to zero, without changing worker code. That is one Flux HelmRelease plus a `ScaledObject` per stage.
 
 ## Per-source auth
