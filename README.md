@@ -31,8 +31,9 @@ services/
   github-ingestion/  GitHub App webhook receiver; emits {type, body} (EMBER-35)
   jira-ingestion/    Jira admin webhook receiver; emits {type, body} (EMBER-31)
   slack-ingestion/   Slack Events API receiver; emits {type, body} (EMBER-36)
+  gitlab-ingestion/  GitLab webhook receiver plus backfill/reconciliation; emits {type, body} (EMBER-54)
 packages/            Shared libraries - add one only when there is a second consumer
-infra/               Local infrastructure (docker-compose: Neo4j; optional github-ingestion, jira-ingestion and slack-ingestion profiles)
+infra/               Local infrastructure (docker-compose: Neo4j; optional github-ingestion, jira-ingestion, slack-ingestion, gitlab-ingestion and gitlab-backfill profiles)
 docs/
   adr/          Architecture Decision Records (see 0000-use-adrs.md)
   working-agreement.md

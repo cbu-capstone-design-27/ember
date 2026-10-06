@@ -19,6 +19,7 @@
 /services/github-ingestion/  @RyanStoffel
 /services/jira-ingestion/    @RyanStoffel
 /services/slack-ingestion/   @RyanStoffel
+/services/gitlab-ingestion/  @RyanStoffel
 
 # Shared packages
 /packages/              @RyanStoffel

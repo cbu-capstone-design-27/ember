@@ -63,7 +63,7 @@ jobs:
       - name: Repo layout present
         run: |
           set -euo pipefail
-          for p in apps/web apps/cli apps/mcp services/pipeline services/github-ingestion services/jira-ingestion services/slack-ingestion packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
+          for p in apps/web apps/cli apps/mcp services/pipeline services/github-ingestion services/jira-ingestion services/slack-ingestion services/gitlab-ingestion packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
             test -e "$p" || { echo "missing: $p"; exit 1; }
           done
           echo "layout ok"
@@ -109,6 +109,25 @@ jobs:
         env:
           JIRA_WEBHOOK_SECRET: ci-local-smoke
         run: python3 services/jira-ingestion/smoke_webhook.py
+      - name: GitLab ingestion webhook contract
+        run: python3 services/gitlab-ingestion/test_webhook.py
+      - name: GitLab ingestion pull contract
+        run: python3 services/gitlab-ingestion/test_pull.py
+      - name: GitLab ingestion webhook smoke
+        env:
+          # whsec_ + base64("ci-local-smoke-key"). Throwaway, not a real token.
+          GITLAB_WEBHOOK_SIGNING_TOKEN: whsec_Y2ktbG9jYWwtc21va2Uta2V5
+        run: python3 services/gitlab-ingestion/smoke_webhook.py
+      - name: GitLab ingestion container
+        run: |
+          set -euo pipefail
+          docker build -f services/gitlab-ingestion/Dockerfile -t ember-gitlab-ingestion:ci .
+          docker run --rm --entrypoint python3 ember-gitlab-ingestion:ci pull.py --help > /dev/null
+          cid=$(docker run -d -p 127.0.0.1:18083:8083 ember-gitlab-ingestion:ci)
+          trap 'docker logs "$cid"; docker rm -f "$cid" > /dev/null' EXIT
+          curl -fsS --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:18083/health
+          echo
+          test "$(docker inspect -f '{{.Config.User}}' ember-gitlab-ingestion:ci)" = nobody
 
   pipeline:
     name: pipeline

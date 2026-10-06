@@ -1,8 +1,8 @@
 # GitLab ingestion: requirements and architecture
 
 - Jira: EMBER-38 (drop-first), epic EMBER-20 (GitLab Ingestion)
-- Status: proposed, for team review. Documentation only. No code in this change.
-- GitLab facts were checked against docs.gitlab.com on 2026-09-23 (see [Sources](#sources)).
+- Status: built in [`services/gitlab-ingestion`](../../services/gitlab-ingestion/README.md) (EMBER-54, rate limits EMBER-55). Not yet run against a live GitLab project.
+- GitLab facts were checked against docs.gitlab.com on 2026-09-23; webhook signing and rate limits re-checked on 2026-10-01 (see [Sources](#sources)).
 - Related: EMBER-39 intake contract, EMBER-34 graph schema, EMBER-12 auth and multi-tenancy, EMBER-35 GitHub (closest sibling)
 - Diagram source for Excalidraw or any Mermaid renderer: [`gitlab/architecture.mmd`](gitlab/architecture.mmd). Word copies: [`gitlab/`](gitlab/).
 
@@ -60,9 +60,22 @@ Delivery rules that shape the design:
 
 ## API access (backfill and reconciliation)
 
-- **Onboarding backfill:** page through merge requests, issues, and each one's notes (`/projects/:id/merge_requests`, `/projects/:id/issues`, `.../:iid/notes`). One envelope per REST object, same as the GitHub `pull_test.py` backfill.
-- **Reconciliation:** a scheduled re-pull (`updated_after`) to catch anything a disabled webhook dropped. Cadence depends on EMBER-2 scheduling.
-- **Rate limits:** GitLab doesn't publish one global number, and self-hosted instances set their own. Page conservatively and honor `RateLimit-*` and `Retry-After`.
+- **Onboarding backfill:** page through merge requests, issues, and each one's notes (`/projects/:id/merge_requests`, `/projects/:id/issues`, `.../:iid/notes`). One envelope per REST object, same as the GitHub `pull_test.py` backfill. Confidential issues and internal notes are skipped, matching the webhook triggers that stay off.
+- **Reconciliation:** a scheduled re-pull (`updated_after`) to catch anything a disabled webhook dropped. Cadence depends on EMBER-2 scheduling and the worker architecture (EMBER-41).
+- **Rate limits:** see [Rate limits](#rate-limits).
+
+### Rate limits
+
+| Limit | GitLab.com |
+| --- | --- |
+| Authenticated API traffic, per user | 2,000 requests a minute |
+| Unauthenticated API traffic, per IP | 500 requests a minute |
+| Webhook calls, per top-level namespace | 500 a minute on Free; more on paid plans |
+| Webhook timeout / payload | 10 seconds / 25 MB |
+
+- Self-managed instances set their own numbers. GitLab has proposed lower per-plan hourly limits for GitLab.com, not in effect as of 2026-10-01.
+- Every API response carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Observed` and `RateLimit-Reset` (a Unix time). A throttled `429` adds `Retry-After` (seconds) and `RateLimit-ResetTime`.
+- The backfill pauses every worker when `RateLimit-Remaining` drops to 50 or fewer, honors `Retry-After` on a `429`, and backs off 1s, 2s, 4s on a `429`/`5xx` with no header. Details: [`services/gitlab-ingestion`](../../services/gitlab-ingestion/README.md#rate-limits).
 
 ## Data shapes
 
@@ -109,10 +122,12 @@ flowchart TD
 | Component | Does | Holds a token? |
 | --- | --- | --- |
 | Receiver (`services/gitlab-ingestion`, `POST /webhook/gitlab`) | Verifies the signing or secret token, wraps the body, emits one line, answers 2xx | Webhook secret only |
-| Backfill / reconciliation | Onboarding history and scheduled re-pulls, one envelope per REST object | API token |
+| Backfill / reconciliation (`pull.py`, same image) | Onboarding history and scheduled re-pulls, one envelope per REST object | API token |
 | Envelope | `{"type":"gitlab","body":...}` per the EMBER-39 contract. Body unchanged. | No |
 
 Registering the webhook URL and secret on the customer's project or group is onboarding, owned by the CLI and web app (EMBER-11 / EMBER-12). The public HTTPS URL is the same hosting need as the other receivers.
+
+GitLab webhooks carry the full object, not just a change signal, so the receiver never needs to fetch. Only the backfill and reconciliation call the API. This answers the per-source webhook question for the worker architecture (EMBER-41).
 
 ## Handoff to the pipeline
 
@@ -133,3 +148,10 @@ Checked on 2026-09-23:
 - [Webhooks](https://docs.gitlab.com/user/project/integrations/webhooks/): signing token vs. secret token, auto-disable after 4 and 40 failures
 - [REST API authentication](https://docs.gitlab.com/api/rest/authentication/): token headers, OAuth 2-hour expiry
 - [Token overview](https://docs.gitlab.com/security/tokens/): personal vs. project vs. group access tokens
+
+Checked on 2026-10-01:
+
+- [Webhooks](https://docs.gitlab.com/user/project/integrations/webhooks/): signing token format (`whsec_`, base64 key), signed string, `v1,` signatures, `webhook-id` / `Idempotency-Key` stable across retries
+- [GitLab.com settings](https://docs.gitlab.com/user/gitlab_com/): webhook timeout, payload size and rate limits
+- [GitLab.com rate limits](https://docs.gitlab.com/user/gitlab_com/rate_limits/): authenticated and unauthenticated API limits, proposed per-plan limits
+- [User and IP rate limits](https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/): `RateLimit-*` and `Retry-After` response headers

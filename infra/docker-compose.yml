@@ -4,8 +4,8 @@
 #   cp .env.example .env          # first time only; fill in values
 #   docker compose -f infra/docker-compose.yml --env-file .env up -d
 #
-# Neo4j starts by default. github-ingestion, jira-ingestion and slack-ingestion are optional
-# profiles so a plain `up` stays Neo4j-only:
+# Neo4j starts by default. github-ingestion, jira-ingestion, slack-ingestion and
+# gitlab-ingestion are optional profiles so a plain `up` stays Neo4j-only:
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile github-ingestion up --build github-ingestion
 #   docker compose -f infra/docker-compose.yml --env-file .env \
@@ -15,6 +15,11 @@
 #     --profile slack-backfill run --rm --build slack-backfill
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile jira-ingestion up --build jira-ingestion
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile gitlab-ingestion up --build gitlab-ingestion
+# GitLab backfill or reconciliation is a one-off run of the same image:
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile gitlab-backfill run --rm -T gitlab-backfill > gitlab.jsonl
 
 name: ember
 
@@ -138,6 +143,37 @@ services:
       JIRA_API_TOKEN: "${JIRA_API_TOKEN:-}"
       JIRA_TEST_PROJECT: "${JIRA_TEST_PROJECT:-}"
       JIRA_INGESTION_PORT: "${JIRA_INGESTION_PORT:-8081}"
+
+  # EMBER-54. Webhook receiver. Holds the webhook secrets only, never the API
+  # token. Not part of the default `up` (see profiles).
+  gitlab-ingestion:
+    profiles: ["gitlab-ingestion"]
+    build:
+      context: ..
+      dockerfile: services/gitlab-ingestion/Dockerfile
+    image: ember-gitlab-ingestion
+    container_name: ember-gitlab-ingestion
+    ports:
+      - "${GITLAB_INGESTION_PORT:-8083}:${GITLAB_INGESTION_PORT:-8083}"
+    environment:
+      GITLAB_WEBHOOK_SIGNING_TOKEN: "${GITLAB_WEBHOOK_SIGNING_TOKEN:-}"
+      GITLAB_WEBHOOK_SECRET_TOKEN: "${GITLAB_WEBHOOK_SECRET_TOKEN:-}"
+      GITLAB_INGESTION_PORT: "${GITLAB_INGESTION_PORT:-8083}"
+
+  # EMBER-54. Backfill / reconciliation, same image. Holds the API token only.
+  # One-off: `run --rm -T gitlab-backfill`; append `--lookback-hours 24` to reconcile.
+  gitlab-backfill:
+    profiles: ["gitlab-backfill"]
+    build:
+      context: ..
+      dockerfile: services/gitlab-ingestion/Dockerfile
+    image: ember-gitlab-ingestion
+    entrypoint: ["python3", "pull.py"]
+    environment:
+      GITLAB_BASE_URL: "${GITLAB_BASE_URL:-https://gitlab.com}"
+      GITLAB_API_TOKEN: "${GITLAB_API_TOKEN:-}"
+      GITLAB_PROJECT: "${GITLAB_PROJECT:-}"
+      GITLAB_PULL_CONCURRENCY: "${GITLAB_PULL_CONCURRENCY:-8}"
 
 volumes:
   neo4j-data:
