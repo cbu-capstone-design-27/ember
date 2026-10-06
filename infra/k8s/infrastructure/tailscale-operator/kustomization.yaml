@@ -5,6 +5,7 @@ namespace: tailscale
 resources:
   - helmrepository.yaml
   - helmrelease.yaml
+  - operator-oauth.sops.yaml
 configMapGenerator:
   - name: tailscale-operator-values
     files:
