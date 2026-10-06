@@ -20,7 +20,7 @@ The `image targets` and `image (<name>)` jobs in `.github/workflows/ci.yml` hand
 
 Publishing uses the workflow's `GITHUB_TOKEN`, so no secrets need to be set up.
 
-Today's targets are `github-ingestion`, `jira-ingestion` and `slack-ingestion`.
+Today's targets are `github-ingestion`, `gitlab-ingestion`, `jira-ingestion`, `pipeline` and `slack-ingestion`.
 
 ## Adding a new service
 

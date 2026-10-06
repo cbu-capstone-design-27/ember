@@ -30,6 +30,10 @@
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile postgres run --rm postgres-migrate
 
+# The pipeline loader (EMBER-45) is a one-off run that reads ./data/raw/<tenant>/:
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile pipeline run --rm pipeline
+
 name: ember
 
 services:
@@ -238,6 +242,30 @@ services:
       DATABASE_URL: "postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable"
     volumes:
       - ./k8s/apps/postgres/migrations:/migrations:ro
+
+  # EMBER-45. Not part of the default `up` (see profiles). Reads connector JSONL from
+  # ./data/raw/<tenant>/ and writes rejects to ./data/out/. Set PIPELINE_NEO4J_URI to the
+  # database to load into: bolt://neo4j:7687 for the compose Neo4j, or the cluster's bolt:// address.
+  # Extra flags go after the service name, e.g. `... run --rm pipeline --reset`.
+  pipeline:
+    profiles: ["pipeline"]
+    build:
+      context: ..
+      dockerfile: services/pipeline/Dockerfile
+    container_name: ember-pipeline
+    environment:
+      NEO4J_URI: "${PIPELINE_NEO4J_URI:-bolt://neo4j:7687}"
+      NEO4J_USER: "${NEO4J_USER:-neo4j}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-change-me-locally}"
+    volumes:
+      - ../data:/data
+    command:
+      - --tenant
+      - "${EMBER_TENANT:-brandon-dev}"
+      - --input
+      - "/data/raw/${EMBER_TENANT:-brandon-dev}"
+      - --rejects
+      - /data/out/rejects.jsonl
 
 volumes:
   neo4j-data:
