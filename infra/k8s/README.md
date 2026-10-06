@@ -10,6 +10,8 @@ Manifests for the `homelab` k3s cluster. Node and k3s setup live in `../ansible`
 
 ## How deploys work
 
+The full guide to Flux here (why, layout, secrets, recovery, troubleshooting) is `../docs/flux.md`.
+
 Flux runs on the cluster and follows the `develop` branch (ADR 0003). About once a minute it fetches `infra/k8s`, applies `infrastructure/`, waits until everything there is healthy, then applies `apps/`. **Merging to `develop` is the deploy.** Nobody runs `kubectl apply` or `helm` against the cluster.
 
 Flux also deletes what is removed from Git (pruning), including the old hashed ConfigMaps a config edit leaves behind. Namespaces are the exception: they carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so dropping one from `namespaces.yaml` does not delete it and everything in it.
