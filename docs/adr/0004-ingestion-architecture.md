@@ -37,7 +37,8 @@ Ingestion is one parent listener followed by three stages that meet only in Post
 - **Postgres on the cluster holds every hand-off and the queue.** The queue is a library on the same database (Procrastinate proposed), not hand-written.
 - **Workers are always-on Deployments that pull.**
   - An idle worker waits on `LISTEN` and wakes on the `NOTIFY` from the commit that enqueued its job.
-  - On `SIGTERM` a worker finishes its current job; a job still running when the pod is killed is detected as stalled and runs again.
+  - Each worker runs several jobs at once (`CONCURRENCY`, 4 to start). Load runs at most one job per subgraph, to keep episodes in order.
+  - On `SIGTERM` a worker finishes the jobs in flight; a job still running when the pod is killed is detected as stalled and runs again.
   - A scheduler CronJob per source enqueues `reconcile` jobs on that source's own interval, so missed deliveries are found.
   - Autoscaling with KEDA can come later without changing worker code.
 - **Credentials are split.** Intake holds only webhook secrets. Each source's API credentials live only in that source's enrich worker. The LLM endpoint is the tenant's URL and API token, or our own cloud provider on the enterprise instance.
