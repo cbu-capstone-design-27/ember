@@ -16,8 +16,8 @@ AGE_SHA256 := cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
 CONTEXT := homelab
 
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
-	apps-diff apps-up apps-health apps-down ts-operator-up ts-operator-health ts-operator-down \
-	neo4j-prep neo4j-up neo4j-health neo4j-down
+	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
+	ts-operator-up ts-operator-health ts-operator-down neo4j-prep neo4j-up neo4j-health neo4j-down
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -102,19 +102,32 @@ reset: ## Uninstall k3s from every node (destroys the cluster and local-path dat
 	@read -p "Type 'reset homelab' to uninstall k3s from all nodes: " ans && [ "$$ans" = "reset homelab" ]
 	ansible-playbook k3s.orchestration.reset
 
-apps-diff: ## Preview what apps-up would change on the cluster
-	kubectl --context $(CONTEXT) diff -k ../k8s/infrastructure || [ $$? -eq 1 ]
-	kubectl --context $(CONTEXT) diff -k ../k8s/apps || [ $$? -eq 1 ]
+flux-up: ## Install Flux and its age key; Flux then deploys k8s/ from develop by itself. Then health check
+	ansible-playbook playbooks/flux.yml --tags prep,up,health
 
-apps-up: ## Apply k8s/infrastructure then k8s/apps, wait for the rollouts, then health check
-	ansible-playbook playbooks/apps.yml --tags up,health
+flux-health: ## Flux controllers healthy, every Kustomization applied; lists what is deployed
+	ansible-playbook playbooks/flux.yml --tags health
+
+flux-preview: ## Deploy a pushed branch instead of develop: make flux-preview BRANCH=<branch>
+	ansible-playbook playbooks/flux.yml --tags preview -e preview_branch=$(BRANCH)
+
+flux-preview-end: ## Go back to deploying develop after flux-preview
+	ansible-playbook playbooks/flux.yml --tags preview-end
+
+flux-components: ## Regenerate k8s/clusters/homelab/flux-system/gotk-components.yaml for FLUX_VERSION
+	flux install --export > ../k8s/clusters/homelab/flux-system/gotk-components.yaml
+
+sync: ## Make Flux fetch develop and apply it now instead of within the next minute
+	flux --context $(CONTEXT) reconcile kustomization flux-system --with-source
+	flux --context $(CONTEXT) reconcile kustomization infrastructure
+	flux --context $(CONTEXT) reconcile kustomization apps
+
+apps-diff: ## Show what this checkout's k8s/ would change on the cluster
+	flux --context $(CONTEXT) diff kustomization infrastructure --path ../k8s/infrastructure || [ $$? -eq 1 ]
+	flux --context $(CONTEXT) diff kustomization apps --path ../k8s/apps || [ $$? -eq 1 ]
 
 apps-health: ## Apps rolled out; the GitHub webhook answers through nginx, from the tailnet and through Funnel
 	ansible-playbook playbooks/apps.yml --tags health
-
-# Leaves k8s/infrastructure alone: deleting the ember namespace would also take Neo4j with it.
-apps-down: ## Delete everything in k8s/apps (keeps the namespace and Neo4j; forces a new certificate for the public hostname)
-	ansible-playbook playbooks/apps.yml --tags down
 
 ts-operator-up: ## Install/upgrade the Tailscale operator (serves Tailscale Ingresses), then health check
 	ansible-playbook playbooks/tailscale-operator.yml --tags prep,up,health

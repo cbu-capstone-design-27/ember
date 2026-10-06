@@ -1,9 +1,15 @@
+# prune: disabled keeps Flux from deleting a namespace, and everything in it (Neo4j's data claim
+# included), if it is ever dropped from this file. Delete one by hand if that is really meant.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ember
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: tailscale
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled

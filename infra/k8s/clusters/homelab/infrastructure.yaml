@@ -1,0 +1,22 @@
+# Cluster-wide pieces from infra/k8s/infrastructure: namespaces, the Tailscale operator.
+# wait: Ready only once everything it applied is healthy, HelmReleases included, so apps can
+# depend on it.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infrastructure
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  timeout: 10m
+  path: ./infra/k8s/infrastructure
+  prune: true
+  wait: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age

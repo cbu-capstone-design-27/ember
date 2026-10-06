@@ -1,15 +1,13 @@
 ---
-# Everything in k8s/apps: nginx, the reverse proxy behind the public https://ember.<tailnet_domain>
-# (a Tailscale Funnel Ingress), and the GitHub webhook listener it routes /webhook/github to.
-# Run from the controller against the "homelab" kubeconfig context. The Ingress needs the Tailscale
-# operator (make ts-operator-up).
-# Use the make targets: apps-up (up, health), apps-health, apps-down. apps-diff previews apps-up.
+# Checks k8s/apps on the cluster end to end: nginx, the reverse proxy behind the public
+# https://ember.<tailnet_domain> (a Tailscale Funnel Ingress), and the GitHub webhook listener it
+# routes /webhook/github to. Flux deploys them (playbooks/flux.yml); this playbook deploys nothing.
+# Run from the controller against the "homelab" kubeconfig context. Use make apps-health.
 - name: Apps
   hosts: localhost
   gather_facts: false
   vars:
     kubectl: "kubectl --context {{ cluster_context }}"
-    k8s_dir: "{{ playbook_dir }}/../../k8s"
     # Every app lives in this namespace, so rollout status runs there
     apps_ns: ember
     # The name the GitHub App posts to
@@ -21,34 +19,17 @@
       {{ (public_dns.content | default('{}') | from_json).Answer | default([])
       | selectattr('type', 'equalto', 1) | map(attribute='data') | list }}
   tasks:
-    - name: Up
-      tags: [up]
-      block:
-        - name: Apply k8s/infrastructure
-          ansible.builtin.command: "{{ kubectl }} apply -k {{ k8s_dir }}/infrastructure"
-          register: infra_apply
-          changed_when: infra_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
-
-        - name: Apply k8s/apps
-          ansible.builtin.command: "{{ kubectl }} apply -k {{ k8s_dir }}/apps"
-          register: apps_apply
-          changed_when: apps_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
-
-    # Both tags: up waits here for what it just applied, and health starts from the same check
     - name: Rollout
-      tags: [up, health]
+      tags: [health]
       block:
-        # Fails with NotFound while the checkout is ahead of the cluster: a generated ConfigMap's
-        # name carries a hash of its content, so an edit that is not applied yet names one that is
-        # not there. make apps-diff shows the difference.
-        - name: List what k8s/apps defines
-          ansible.builtin.command: "{{ kubectl }} get -k {{ k8s_dir }}/apps -o name"
+        - name: List the workloads in {{ apps_ns }}
+          ansible.builtin.command: "{{ kubectl }} -n {{ apps_ns }} get deployment,statefulset,daemonset -o name"
           register: apps_objects
           changed_when: false
 
         - name: Wait for each workload to roll out
           ansible.builtin.command: "{{ kubectl }} -n {{ apps_ns }} rollout status {{ item }} --timeout=180s"
-          loop: "{{ apps_objects.stdout_lines | select('match', '(deployment|statefulset|daemonset)\\.') | list }}"
+          loop: "{{ apps_objects.stdout_lines }}"
           changed_when: false
 
     - name: Health
@@ -195,26 +176,3 @@
             msg:
               - "Webhook: {{ webhook_url }} (POST)"
               - "Probe:   {{ ember_url }}/healthz"
-
-    # "never" keeps this out of untagged runs; only --tags down selects it
-    - name: Down
-      tags: [never, down]
-      block:
-        - name: Delete everything in k8s/apps
-          ansible.builtin.command: "{{ kubectl }} delete -k {{ k8s_dir }}/apps --ignore-not-found --wait"
-          register: apps_delete
-          changed_when: "'deleted' in apps_delete.stdout"
-
-        # delete -k only removes the ConfigMaps the checkout generates now. Each earlier version of
-        # a config was created under its own hash suffix and is still there.
-        - name: Delete the generated ConfigMaps of earlier versions
-          ansible.builtin.command: >-
-            {{ kubectl }} -n {{ apps_ns }} delete configmap -l ember.io/generated=true --ignore-not-found
-          register: cm_delete
-          changed_when: "'deleted' in cm_delete.stdout"
-
-        - name: Note what is kept and what is lost
-          ansible.builtin.debug:
-            msg: >-
-              Namespace {{ apps_ns }} and Neo4j are kept. Deleting the Ingress also deleted the
-              Tailscale proxy's state, so the next apps-up gets a new certificate for {{ ember_host }}.

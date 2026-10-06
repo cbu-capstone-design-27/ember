@@ -1,0 +1,7 @@
+# gotk-components.yaml is generated: make flux-components regenerates it for FLUX_VERSION in
+# infra/ansible/Makefile. Edit gotk-sync.yaml by hand.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - gotk-components.yaml
+  - gotk-sync.yaml

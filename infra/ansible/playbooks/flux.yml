@@ -1,0 +1,156 @@
+---
+# Flux (ADR 0003): installs the controllers from k8s/clusters/homelab/flux-system and gives them the
+# age key that decrypts the *.sops.yaml Secrets. From then on Flux applies k8s/infrastructure and
+# k8s/apps from the develop branch by itself; this playbook only installs, checks and previews.
+# Run from the controller against the "homelab" kubeconfig context.
+# Use the make targets: flux-up (prep, up, health), flux-health, flux-preview, flux-preview-end.
+- name: Flux
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubectl: "kubectl --context {{ cluster_context }}"
+    flux: "flux --context {{ cluster_context }}"
+    flux_dir: "{{ playbook_dir }}/../../k8s/clusters/homelab"
+    # The branch gotk-sync.yaml follows; flux-preview-end returns to it
+    flux_branch: develop
+    # flux-preview points the cluster at this branch instead
+    preview_branch: ""
+  tasks:
+    - name: Prep
+      tags: [prep]
+      block:
+        - name: Require flux (make deps installs it)
+          ansible.builtin.command: flux version --client
+          changed_when: false
+
+        - name: Require the age key in the vault
+          ansible.builtin.assert:
+            that: vault_sops_age_key is defined
+            fail_msg: >-
+              Add vault_sops_age_key with .venv/bin/ansible-vault edit group_vars/all/vault.yml
+              (the output of age-keygen; see k8s/README.md)
+            quiet: true
+
+        - name: Check the cluster meets Flux's requirements
+          ansible.builtin.command: "{{ flux }} check --pre"
+          changed_when: false
+
+    - name: Up
+      tags: [up]
+      block:
+        # The CRDs have to exist before gotk-sync.yaml's GitRepository and Kustomization can be applied
+        - name: Install the Flux controllers and CRDs
+          ansible.builtin.command: "{{ kubectl }} apply --server-side -f {{ flux_dir }}/flux-system/gotk-components.yaml"
+          changed_when: true
+
+        - name: Wait for the Flux CRDs
+          ansible.builtin.command: >-
+            {{ kubectl }} wait --for=condition=Established --timeout=60s
+            crd/gitrepositories.source.toolkit.fluxcd.io crd/kustomizations.kustomize.toolkit.fluxcd.io
+            crd/helmreleases.helm.toolkit.fluxcd.io
+          changed_when: false
+
+        # Server-side apply, so no last-applied annotation keeps a plaintext copy of the key
+        - name: Create the age key Secret from the vault
+          ansible.builtin.command:
+            cmd: "{{ kubectl }} apply --server-side --field-manager=ansible -f -"
+            stdin: "{{ age_secret | to_json }}"
+          vars:
+            age_secret:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: sops-age
+                namespace: flux-system
+              stringData:
+                age.agekey: "{{ vault_sops_age_key }}"
+          register: secret_apply
+          changed_when: "'unchanged' not in secret_apply.stdout"
+          no_log: true
+
+        - name: Apply the sync configuration
+          ansible.builtin.command: "{{ kubectl }} apply --server-side -k {{ flux_dir }}/flux-system"
+          changed_when: true
+
+    - name: Health
+      tags: [health]
+      block:
+        - name: Check the Flux controllers
+          ansible.builtin.command: "{{ flux }} check"
+          changed_when: false
+
+        - name: Wait for the source to be fetched
+          ansible.builtin.command: "{{ kubectl }} -n flux-system wait gitrepository/flux-system --for=condition=Ready --timeout=3m"
+          changed_when: false
+
+        # The first sync installs the Tailscale operator and Neo4j, hence the long timeout
+        - name: Wait for each Kustomization to be applied and healthy
+          ansible.builtin.command: "{{ kubectl }} -n flux-system wait kustomization/{{ item }} --for=condition=Ready --timeout=15m"
+          loop: [flux-system, infrastructure, apps]
+          changed_when: false
+
+        - name: Read what is deployed
+          ansible.builtin.command: "{{ flux }} get all -A"
+          register: flux_get
+          changed_when: false
+
+        - name: Show what is deployed
+          ansible.builtin.debug:
+            msg: "{{ flux_get.stdout_lines }}"
+
+    # "never" keeps these out of untagged runs; only their own tag selects them
+    - name: Preview a branch
+      tags: [never, preview]
+      block:
+        - name: Require a branch
+          ansible.builtin.assert:
+            that: preview_branch | length > 0
+            fail_msg: "Name the branch: make flux-preview BRANCH=<branch>. It has to be pushed to GitHub."
+            quiet: true
+
+        # Otherwise flux-system re-applies gotk-sync.yaml and puts the branch back to develop
+        - name: Suspend flux-system
+          ansible.builtin.command: "{{ flux }} suspend kustomization flux-system"
+          changed_when: true
+
+        - name: Point the GitRepository at {{ preview_branch }}
+          ansible.builtin.command: >-
+            {{ kubectl }} -n flux-system patch gitrepository flux-system --type merge
+            -p '{"spec":{"ref":{"branch":"{{ preview_branch }}"}}}'
+          changed_when: true
+
+        # Picks up new or changed Kustomizations in clusters/homelab from this checkout, since
+        # flux-system is suspended. Without -R this skips flux-system/.
+        - name: Apply the cluster Kustomizations from this checkout
+          ansible.builtin.command: "{{ kubectl }} apply --server-side -f {{ flux_dir }}"
+          changed_when: true
+
+        - name: Fetch the branch and apply it
+          ansible.builtin.command: "{{ flux }} reconcile kustomization {{ item }} --with-source --timeout 15m"
+          loop: [infrastructure, apps]
+          changed_when: true
+
+        - name: Note how to go back
+          ansible.builtin.debug:
+            msg: >-
+              The cluster now follows {{ preview_branch }}. make flux-preview-end returns it to
+              {{ flux_branch }} and removes what only the branch had.
+
+    - name: End a preview
+      tags: [never, preview-end]
+      block:
+        - name: Point the GitRepository back at {{ flux_branch }}
+          ansible.builtin.command: >-
+            {{ kubectl }} -n flux-system patch gitrepository flux-system --type merge
+            -p '{"spec":{"ref":{"branch":"{{ flux_branch }}"}}}'
+          changed_when: true
+
+        # Resuming re-applies gotk-sync.yaml and clusters/homelab from flux_branch, and prunes the rest
+        - name: Resume flux-system
+          ansible.builtin.command: "{{ flux }} resume kustomization flux-system"
+          changed_when: true
+
+        - name: Apply {{ flux_branch }} again
+          ansible.builtin.command: "{{ flux }} reconcile kustomization {{ item }} --with-source --timeout 15m"
+          loop: [infrastructure, apps]
+          changed_when: true
