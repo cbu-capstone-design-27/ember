@@ -23,6 +23,9 @@ class Line(NamedTuple):
 def read_envelopes(root: Path) -> Iterator[Line]:
     schema = envelope_validate.load_schema()
     for path in sorted(Path(root).rglob("*.jsonl")):
+        # Skip files with .parts directory in their path
+        if any(part.endswith(".parts") for part in path.parts):
+            continue
         with path.open(encoding="utf-8") as handle:
             for number, text in enumerate(handle, 1):
                 if not text.strip():

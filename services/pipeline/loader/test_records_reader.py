@@ -41,6 +41,27 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(lines[1].line, 3)
         self.assertIn("body", lines[2].error)
 
+    def test_skips_parts_directory_and_non_jsonl_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Create a file in a .parts directory that should be skipped
+            (root / "foo.jsonl.parts").mkdir()
+            (root / "foo.jsonl.parts" / "C1.jsonl").write_text(
+                "{not json\n",
+                encoding="utf-8",
+            )
+            # Create a good file to ensure read_envelopes still works
+            good = {"type": "github", "body": {"number": 1}}
+            (root / "good.jsonl").write_text(
+                json.dumps(good) + "\n",
+                encoding="utf-8",
+            )
+            lines = list(read_envelopes(root))
+        # Should only get the good file, not the one in .parts
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].envelope, good)
+        self.assertIsNone(lines[0].error)
+
 
 if __name__ == "__main__":
     unittest.main()
