@@ -83,11 +83,37 @@
           ansible.builtin.command: "{{ kubectl }} -n flux-system wait gitrepository/flux-system --for=condition=Ready --timeout=3m"
           changed_when: false
 
-        # The first sync installs the Tailscale operator and Neo4j, hence the long timeout
-        - name: Wait for each Kustomization to be applied and healthy
-          ansible.builtin.command: "{{ kubectl }} -n flux-system wait kustomization/{{ item }} --for=condition=Ready --timeout=15m"
-          loop: [flux-system, infrastructure, apps]
+        # flux-preview suspends flux-system, which then stays not Ready until flux-preview-end
+        - name: Read which branch the cluster follows
+          ansible.builtin.command: "{{ kubectl }} -n flux-system get gitrepository flux-system -o jsonpath={.spec.ref.branch}"
+          register: synced_branch
           changed_when: false
+
+        - name: Wait for flux-system to be applied
+          ansible.builtin.command: "{{ kubectl }} -n flux-system wait kustomization/flux-system --for=condition=Ready --timeout=3m"
+          when: synced_branch.stdout == flux_branch
+          changed_when: false
+
+        # flux-system creates these, so on a first install they can take a moment to appear
+        - name: Wait for the infrastructure and apps Kustomizations to exist
+          ansible.builtin.command: "{{ kubectl }} -n flux-system get kustomization/{{ item }}"
+          loop: [infrastructure, apps]
+          register: ks_exists
+          until: ks_exists.rc == 0
+          retries: 12
+          delay: 5
+          changed_when: false
+
+        # The first sync installs the Tailscale operator and Neo4j, hence the long timeout
+        - name: Wait for each to be applied and healthy
+          ansible.builtin.command: "{{ kubectl }} -n flux-system wait kustomization/{{ item }} --for=condition=Ready --timeout=15m"
+          loop: [infrastructure, apps]
+          changed_when: false
+
+        - name: Note a preview in progress
+          ansible.builtin.debug:
+            msg: "The cluster follows {{ synced_branch.stdout }}, not {{ flux_branch }}. make flux-preview-end goes back."
+          when: synced_branch.stdout != flux_branch
 
         - name: Read what is deployed
           ansible.builtin.command: "{{ flux }} get all -A"
