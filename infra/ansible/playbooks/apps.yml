@@ -97,7 +97,7 @@
 
         # Requests from the tailnet resolve through MagicDNS and never use Funnel, so everything
         # above passes even when GitHub cannot get in. Ask a public resolver for the address and
-        # send the same ping there. After apps-down the public record can take minutes to return.
+        # send the same ping there. After the Ingress is recreated the public record can take minutes to return.
         - name: Look the name up in public DNS
           ansible.builtin.uri:
             url: "https://cloudflare-dns.com/dns-query?name={{ ember_host }}&type=A"

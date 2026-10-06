@@ -326,8 +326,9 @@ Workload manifests live in `infra/k8s/` (see its README), not here.
 | `make upgrade` | Bump `k3s_version` in `group_vars/all/main.yml` first, then run it (and `make deps` for a matching kubectl) |
 | `make reboot` | Rolling reboot of every node |
 | `make kubeconfig` | Fetch the kubeconfig from the server and merge it into `~/.kube/config` as context `homelab`. Run it once on any new machine (needs `.vault-pass`) |
-| `make apps-diff` / `apps-up` / `apps-health` / `apps-down` | Preview the manifests in `infra/k8s`, apply and health-check them, health-check only, or delete the apps (see `infra/k8s/README.md`) |
-| `make ts-operator-up` / `ts-operator-health` / `ts-operator-down` | Install, check, or remove the Tailscale operator that publishes Ingresses on the tailnet and through Funnel (see `infra/k8s/README.md`) |
+| `make flux-up` | Install Flux after a fresh `make up`. From then on Flux deploys `infra/k8s` from `develop` by itself (see `infra/k8s/README.md`) |
+| `make flux-health` / `sync` / `apps-diff` | Show what Flux has deployed, make it apply `develop` now, or preview what a checkout would change |
+| `make apps-health` / `ts-operator-health` / `neo4j-health` | End-to-end checks of the public route, the Tailscale operator and Neo4j |
 | `make reset` | Uninstall k3s everywhere (asks you to type `reset homelab`). Destroys all volumes |
 
 ---

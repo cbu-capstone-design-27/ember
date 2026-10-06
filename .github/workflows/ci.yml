@@ -88,6 +88,7 @@ jobs:
       - name: k8s kustomize roots render
         run: |
           set -euo pipefail
+          kubectl kustomize infra/k8s/clusters/homelab/flux-system > /dev/null
           kubectl kustomize infra/k8s/infrastructure > /dev/null
           kubectl kustomize infra/k8s/apps > /dev/null
       - name: Placeholder webhook listener compiles
