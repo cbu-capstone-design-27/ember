@@ -130,7 +130,7 @@ make flux-preview-end        # after the PR merges, or to abandon the preview
 
 `https://headlamp.tail470a31.ts.net`, on the tailnet only. It shows the whole cluster, with a Flux section from the Flux plugin.
 
-Sign in with a token from `make headlamp-token`. It is valid for 24 hours and signs you in as ServiceAccount `headlamp-viewer`, which has the built-in `view` role. That role includes Flux's objects through Flux's `flux-view-flux-system` role. You can look at everything except Secrets, and change nothing. Use `make sync` or the `flux` CLI for actions.
+Sign in with a token from `make headlamp-token`. It is valid for 24 hours and signs you in as ServiceAccount `headlamp-viewer`, which has the built-in `view` role. That role includes Flux's objects through Flux's `flux-view-flux-system` role. `headlamp-viewer-cluster` adds read access to the cluster-wide objects Headlamp's overview and the Flux plugin need: nodes, persistent volumes, storage classes, CRDs and metrics. You can look at everything except Secrets, and change nothing. Use `make sync` or the `flux` CLI for actions.
 
 The plugin comes from the image `ghcr.io/headlamp-k8s/headlamp-plugin-flux:v0.7.0`, pinned in `apps/headlamp/values.yaml`; an init container copies it into the pod. Headlamp's own ServiceAccount has no cluster role (the chart default would bind cluster-admin).
 
