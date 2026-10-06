@@ -13,5 +13,5 @@ next-env.d.ts
 *.tsbuildinfo
 apps/web/data/
 # Local pipeline data and loader output (EMBER-45)
-data/
+/data/
 rejects.jsonl

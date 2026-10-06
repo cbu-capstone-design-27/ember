@@ -34,6 +34,17 @@ Without Docker, from `services/pipeline`:
 `--dry-run` maps and checks everything in memory and needs no database. `--reset` deletes the
 tenant's own subgraphs first; it never touches other tenants.
 
+Arguments after the service name replace the compose `command:` entirely, so to pass `--reset`
+under Docker give the full list:
+
+    docker compose -f infra/docker-compose.yml --env-file .env --profile pipeline run --rm pipeline \
+      --tenant brandon-dev --input /data/raw/brandon-dev --rejects /data/out/rejects.jsonl --reset
+
+With the default `PIPELINE_NEO4J_URI` (`bolt://neo4j:7687`) the compose Neo4j must be up first:
+`docker compose -f infra/docker-compose.yml --env-file .env up -d neo4j`. On Linux hosts
+`data/out` must be writable by the container user (`nobody`) for `rejects.jsonl`:
+`mkdir -p data/out && chmod a+rwX data/out`.
+
 Records the loader cannot map go to `rejects.jsonl` (`data/out/rejects.jsonl` under compose) with
 a reason. The file is removed at the start of every run, so it only ever describes the latest run.
 Records of a kind it does not map yet (for example Jira worklogs) are counted as skipped. The exit
