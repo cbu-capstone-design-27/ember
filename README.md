@@ -33,7 +33,8 @@ services/
   slack-ingestion/   Slack Events API receiver; emits {type, body} (EMBER-36)
   gitlab-ingestion/  GitLab webhook receiver plus backfill/reconciliation; emits {type, body} (EMBER-54)
 packages/            Shared libraries - add one only when there is a second consumer
-infra/               Local infrastructure (docker-compose: Neo4j; optional github-ingestion, jira-ingestion, slack-ingestion, gitlab-ingestion and gitlab-backfill profiles)
+infra/               Local infrastructure (docker-compose: Neo4j; optional github-ingestion, jira-ingestion, slack-ingestion, gitlab-ingestion and gitlab-backfill profiles),
+                     and the homelab cluster: Ansible sets up the nodes, Flux deploys infra/k8s from develop (ADR 0003)
 docs/
   adr/          Architecture Decision Records (see 0000-use-adrs.md)
   working-agreement.md

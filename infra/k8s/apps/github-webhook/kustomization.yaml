@@ -10,7 +10,3 @@ configMapGenerator:
     namespace: ember
     files:
       - listener.py
-generatorOptions:
-  # delete -k removes only the current hashed ConfigMap; the label finds the older ones.
-  labels:
-    ember.io/generated: "true"

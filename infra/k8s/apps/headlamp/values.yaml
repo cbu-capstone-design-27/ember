@@ -1,0 +1,52 @@
+# Values for the headlamp/headlamp chart (https://kubernetes-sigs.github.io/headlamp/), release
+# "headlamp" in namespace "headlamp". Flux installs it from helmrelease.yaml.
+
+# Headlamp's own ServiceAccount needs no cluster role: every request runs with the token the person
+# signs in with (viewer.yaml, make headlamp-token). The chart default would bind it to cluster-admin.
+clusterRoleBinding:
+  create: false
+
+# The Flux plugin ships as an image holding only the plugin's files. The init container copies them
+# into an emptyDir that Headlamp loads plugins from. fsGroup makes the emptyDir writable for uid 100.
+config:
+  pluginsDir: /build/plugins
+podSecurityContext:
+  fsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+initContainers:
+  - name: flux-plugin
+    image: ghcr.io/headlamp-k8s/headlamp-plugin-flux:v0.7.0
+    command: [sh, -c, "cp -r /plugins/. /build/plugins/"]
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 100
+      runAsGroup: 101
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+    volumeMounts:
+      - name: plugins
+        mountPath: /build/plugins
+volumeMounts:
+  - name: plugins
+    mountPath: /build/plugins
+volumes:
+  - name: plugins
+    emptyDir: {}
+
+securityContext:
+  runAsNonRoot: true
+  privileged: false
+  runAsUser: 100
+  runAsGroup: 101
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 256Mi

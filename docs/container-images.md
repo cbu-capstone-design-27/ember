@@ -10,12 +10,12 @@ The `image targets` and `image (<name>)` jobs in `.github/workflows/ci.yml` hand
 - **Every PR and push** to `develop` or `main` builds each target for `linux/amd64` (hv-workers) and `linux/arm64` (pi-cp). A broken Dockerfile fails `ci-ok`.
 - **A push to `main` or `develop`** also publishes each image to `ghcr.io/cbu-capstone-design-27/ember/<name>`. Each branch gets its own tags, so the two lines can run side by side on different hv-workers (for example, a staging environment on `main` and a development environment on `develop`):
 
-  | Branch    | Pinned tag (immutable) | Moving tags        |
-  |-----------|------------------------|--------------------|
-  | `main`    | `main-<short sha>`     | `main`, `latest`   |
-  | `develop` | `develop-<short sha>`  | `develop`          |
+  | Branch    | Pinned tags (immutable)                          | Moving tags        |
+  |-----------|--------------------------------------------------|--------------------|
+  | `main`    | `main-<short sha>`, `main-<run>-<short sha>`       | `main`, `latest`   |
+  | `develop` | `develop-<short sha>`, `develop-<run>-<short sha>` | `develop`          |
 
-  Deploy the pinned tag. Use a moving tag only where "whatever the branch last built" is what you want.
+  Deploy a pinned tag. Use a moving tag only where "whatever the branch last built" is what you want. `<run>` is the CI workflow's run number, which only goes up, so `<branch>-<run>-<short sha>` tags sort by build order. Flux uses that to pick the newest image (ADR 0003); `<branch>-<short sha>` tags cannot be sorted.
 - **PRs** build an image tagged `pr-<n>`, but never push it.
 
 Publishing uses the workflow's `GITHUB_TOKEN`, so no secrets need to be set up.

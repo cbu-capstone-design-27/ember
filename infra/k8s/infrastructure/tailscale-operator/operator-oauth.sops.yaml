@@ -1,0 +1,26 @@
+# The Tailscale operator logs in to the tailnet with this OAuth client (k8s/README.md, Tailscale
+# operator). Edit with sops (k8s/README.md, Secrets).
+# A changed credential only takes effect after: kubectl -n tailscale rollout restart deploy/operator
+apiVersion: v1
+kind: Secret
+metadata:
+    name: operator-oauth
+    namespace: tailscale
+stringData:
+    client_id: ENC[AES256_GCM,data:ypzzf+yMnysMH90/psFZQjk=,iv:E4IJfpMCbcb8dcEEC2vgD6xV2gXOF2/3k9PnvQnZiuM=,tag:gXHb47Utfx5YFi4rtCy4lw==,type:str]
+    client_secret: ENC[AES256_GCM,data:JXP+nMSe+sGrbKJR9FerIob3028/MiQX7OZhPiDX0eNazRguHkTRKwUBNjcybKVSooklbaprPM/o3MfKRnuW,iv:ivgMF2oRykspbKcWdXlqBPmKg+Wm2oV5yBt6jTOr3Rk=,tag:mPPAKFiAHsjEiCmwmq8cIQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBiUURwblRDNzM2NjFtOVhU
+            YkRBU1kzRkRNZ2ZRLzQ2NXNBeXo0ZDBObkQ4Ck51OUxnZ1JnQWZ0aHNhTWV2MzhP
+            SkJKd2V6Z1luaHNzeVBxQ3pNSVVod3cKLS0tIFFjZXQwaVplK3NrWVMyUXgwUjNB
+            ZnJqaHlCYjNjdW9wZGV3bnBLSlM1YmcKvpN/HPbXbcwB8YULWnJHlaxphHhsHs1N
+            4mKRcknzWh7AKU9OmkUw0vSqTIwvTkQ9hiByryKCTBBYgHJ+OV11CA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-06T16:47:05Z"
+    mac: ENC[AES256_GCM,data:hQ+oGfuTsDwTysxObnsT4UlFrZuDd+e94iY+YcGT/h7QF/ItYvE8KD4UC9eQS+RuXDSwR0YrWZhuBx+0c/yZVSgPKroESv/Ki7xpo9xSHBWkN0uPY9XgUkecItOLvCm8n/mJAy4EKysnb+BIfDtXIic0EAeTa7RE8wdVfDWGOZI=,iv:CySbnSzWWgB68MGfzRH71I64As5W1eZZyXes5mSw5rk=,tag:O0OaR8+ui6E5kYohFKXAAw==,type:str]
+    version: 3.13.3

@@ -1,0 +1,30 @@
+# Flux follows develop (ADR 0003): a merge to develop is a deploy. The repo is public, so the
+# GitRepository needs no credentials. Only infra/k8s is fetched.
+# To try a branch on the cluster before merging, see make flux-preview in infra/k8s/README.md.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: https://github.com/cbu-capstone-design-27/ember
+  ref:
+    branch: develop
+  ignore: |
+    /*
+    !/infra/k8s/
+---
+# Applies everything in clusters/homelab: Flux itself and the Kustomizations next to this directory.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./infra/k8s/clusters/homelab
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

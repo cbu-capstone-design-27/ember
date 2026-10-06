@@ -1,0 +1,7 @@
+# SOPS rules for Secrets committed under infra/k8s (ADR 0003). Flux decrypts them on the cluster
+# with the age key that infra/ansible keeps in the vault (vault_sops_age_key) and puts in Secret
+# flux-system/sops-age. Encrypting needs only the public key below; see infra/k8s/README.md.
+creation_rules:
+  - path_regex: ^infra/k8s/.*\.sops\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne

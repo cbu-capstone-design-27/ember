@@ -1,0 +1,21 @@
+# The identity people sign in to Headlamp as. Read-only: the built-in view role, which Flux's
+# flux-view-flux-system role extends to Flux's objects. view excludes Secrets.
+# Get a sign-in token with make headlamp-token (valid 24 hours); no long-lived token is stored.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: headlamp-viewer
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-viewer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: headlamp-viewer
+    namespace: headlamp

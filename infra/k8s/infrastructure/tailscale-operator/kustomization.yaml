@@ -1,13 +1,13 @@
-# Neo4j: the Helm release (values.yaml) and the Service that publishes it on every node's IP.
+# Tailscale Kubernetes operator: serves ingressClassName tailscale (k8s/README.md).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: ember
+namespace: tailscale
 resources:
   - helmrepository.yaml
   - helmrelease.yaml
-  - service-lb.yaml
+  - operator-oauth.sops.yaml
 configMapGenerator:
-  - name: neo4j-values
+  - name: tailscale-operator-values
     files:
       - values.yaml
 configurations:
