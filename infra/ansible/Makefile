@@ -17,7 +17,7 @@ CONTEXT := homelab
 
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
-	ts-operator-up ts-operator-health ts-operator-down neo4j-prep neo4j-up neo4j-health neo4j-down
+	ts-operator-health neo4j-health headlamp-token
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -129,23 +129,11 @@ apps-diff: ## Show what this checkout's k8s/ would change on the cluster
 apps-health: ## Apps rolled out; the GitHub webhook answers through nginx, from the tailnet and through Funnel
 	ansible-playbook playbooks/apps.yml --tags health
 
-ts-operator-up: ## Install/upgrade the Tailscale operator (serves Tailscale Ingresses), then health check
-	ansible-playbook playbooks/tailscale-operator.yml --tags prep,up,health
-
 ts-operator-health: ## Operator ready and logged in; every Tailscale Ingress has a hostname and answers HTTPS
 	ansible-playbook playbooks/tailscale-operator.yml --tags health
-
-ts-operator-down: ## Uninstall the Tailscale operator (refuses while Tailscale Ingresses exist)
-	ansible-playbook playbooks/tailscale-operator.yml --tags down
-
-neo4j-prep: ## Neo4j prerequisites: helm, pinned node Ready, StorageClass, namespace, chart repo
-	ansible-playbook playbooks/neo4j.yml --tags prep
-
-neo4j-up: ## Install/upgrade Neo4j from k8s/apps/neo4j, publish it on node IPs, then health check
-	ansible-playbook playbooks/neo4j.yml --tags prep,up,health
 
 neo4j-health: ## Neo4j pod ready on its node, answers a query in-pod and on every node's IP
 	ansible-playbook playbooks/neo4j.yml --tags health
 
-neo4j-down: ## Uninstall Neo4j and its node-IP Service (keeps the data volume)
-	ansible-playbook playbooks/neo4j.yml --tags down
+headlamp-token: ## Print a 24-hour sign-in token for Headlamp (read-only) at https://headlamp.<tailnet>
+	@kubectl --context $(CONTEXT) -n headlamp create token headlamp-viewer --duration 24h

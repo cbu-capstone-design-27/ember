@@ -1,0 +1,16 @@
+# Headlamp with the Flux plugin: a web UI for the cluster and what Flux has deployed, on the tailnet
+# only at https://headlamp.tail470a31.ts.net (k8s/README.md, Headlamp).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: headlamp
+resources:
+  - helmrepository.yaml
+  - helmrelease.yaml
+  - ingress.yaml
+  - viewer.yaml
+configMapGenerator:
+  - name: headlamp-values
+    files:
+      - values.yaml
+configurations:
+  - kustomizeconfig.yaml

@@ -1,0 +1,24 @@
+# The chart version is pinned so a reinstall does not pick up a newer chart. Values: values.yaml.
+# The data volume uses local-path-retain, so it outlives the release (k8s/README.md, Neo4j).
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: neo4j
+spec:
+  interval: 30m
+  releaseName: neo4j
+  chart:
+    spec:
+      chart: neo4j
+      version: 2026.9.0
+      sourceRef:
+        kind: HelmRepository
+        name: neo4j
+  # The first start initialises the store, which can take a few minutes on hv-worker-1
+  install:
+    timeout: 10m
+  upgrade:
+    timeout: 10m
+  valuesFrom:
+    - kind: ConfigMap
+      name: neo4j-values
