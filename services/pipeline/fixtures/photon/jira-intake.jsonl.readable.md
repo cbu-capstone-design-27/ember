@@ -1,0 +1,759 @@
+# PHO
+
+## Project (1)
+
+- Photon
+
+## Components (0)
+
+- (none)
+
+## Versions (25)
+
+- 0.1.0
+- 0.1.1
+- 0.2.0
+- 0.2.1
+- 0.2.2
+- 0.2.3
+- 0.3.0
+- 0.3.1
+- 0.3.2
+- 0.3.3
+- 0.3.4
+- 0.3.5
+- 0.3.6
+- 0.3.7
+- 0.3.8
+- 0.3.9
+- 0.4.0
+- 0.4.1
+- 0.4.2
+- 0.4.3
+- 0.4.4
+- 0.4.5
+- 0.4.6
+- 0.4.7
+- 0.4.8
+
+## Issue type statuses (4)
+
+- Epic
+- Story
+- Bug
+- Task
+
+## Project properties (0)
+
+- (none)
+
+## Issues (112)
+
+- PHO-1 In Progress — Launcher — Panel, search, ranking, Suggestions, drag and snap.
+- PHO-2 Done — Clipboard history — Clipboard capture, history UI, and paste-back.
+- PHO-3 Done — Notes — Floating markdown notes.
+- PHO-4 Done — File search — Spotlight file search, Files mode, folder access.
+- PHO-5 Done — Keybinds and window management — Hyper key, app shortcuts, window commands.
+- PHO-6 Done — Settings — Settings window and preferences.
+- PHO-7 Done — Release and CI — CI, parity harness, signing, Homebrew cask, releases.
+- PHO-8 Done — Launcher hotkey (Cmd+Space) with Spotlight conflict guidance — Summary Photon opens from a global hotkey. The default is Cmd+Space. Detect a Spotlight shortcut collision on first lau…
+- PHO-9 Done — Launch applications via fuzzy search and frecency — Summary The launcher indexes applications and System Settings panes, ranks them with fuzzy matching plus frecency, and…
+- PHO-10 Done — Clipboard history — Summary Phase 2. Searchable clipboard history for text, links, images, and files, with pin, paste/copy-back, retention,…
+- PHO-11 Done — Simple notes — Summary Phase 2. Raycast Notes-like floating notes: lightweight markdown, multiple notes, persistent, searchable from t…
+- PHO-12 Done — File search — Summary Phase 2. Whole-Mac search via Spotlight (NSMetadataQuery), Quick Look, open / reveal in Finder / copy path. Acc…
+- PHO-13 Done — Keybinds and window management — Summary Phase 2. Configurable Hyper key (default Caps Lock → Ctrl+Opt+Shift+Cmd), user-defined hotkeys to launch or foc…
+- PHO-14 Done — Settings window — Summary Native settings window with tabs: General, Clipboard, Notes, Files, Keybinds, About. Phase 1 ships General (hot…
+- PHO-15 Done — CI pipeline — Summary GitHub Actions CI on PRs and pushes to develop / main: branch-name check, SwiftLint + SwiftFormat, Release buil…
+- PHO-16 Done — Release pipeline — Summary Tag v*.*.* builds a Release, signs/notarizes when Apple secrets exist (otherwise ad-hoc), publishes Photon-<ver…
+- PHO-17 Done — Homebrew cask in ryanstoffel/taps — Summary The release workflow bumps Casks/photon.rb in [RyanStoffel/homebrew-taps](https://github.com/RyanStoffel/homebr…
+- PHO-18 Done — Developer ID signing and notarization — Summary Ryan supplies Apple secrets. When they are present, the release workflow signs with Developer ID, notarizes, an…
+- PHO-19 To Do — Unify clipboard session with LauncherMode protocol — Summary Clipboard history (GH-3) and file search (GH-5) both take over the launcher panel, but they do it through two p…
+- PHO-20 Done — Launcher panel throws NSInternalInconsistencyException at launch — Summary The release dry run's smoke test log ([run 34805534226](https://github.com/RyanStoffel/photon/actions/runs/3480…
+- PHO-21 Done — Launcher shows a placeholder square instead of app icons — Summary Every application and System Settings pane row in the launcher shows the same grey placeholder square instead o…
+- PHO-22 Done — Launcher visual redesign: search field, icon rows, compact by default, Appearance settings — Summary Functionality of v0.1.0 is right; the launcher UI is not. Feedback from the first test on real hardware: The se…
+- PHO-23 Done — feat: notes window with a native sidebar and standard toolbar — Area notes Summary Ryan tested v0.1.0: notes work, but the window's chrome does not feel like macOS. His feedback: > I…
+- PHO-24 Done — CI screenshot harness for UI scenarios — Automated macOS screenshots of deterministic UI scenarios for agent/human visual QA. See PR.
+- PHO-25 Done — bug: notes sidebar is not full height and the toolbar title precedes the sidebar controls — Area notes What happens On develop after #36, the notes window's sidebar stops below the toolbar instead of running the…
+- PHO-26 Done — feat: System Settings panes searchable by human title — Summary Searching the launcher for System Settings panes should work by the human-facing pane title (e.g. wallpaper ope…
+- PHO-27 Done — Inline calculator and unit conversions in launcher — Raycast-style inline calculator: typing expressions like 30/5 shows a result row; Enter copies the result. Support + -…
+- PHO-28 Done — File search: default to home folder, fuzzy matching, launcher-style Files UI — Problem File search defaults to the whole Mac, so Spotlight surfaces irrelevant system paths (for example under /System…
+- PHO-29 Done — Restyle clipboard mode to match compact launcher — Problem Clipboard mode opens a tall panel with a large empty region below the search field. The blue \"Clipboard\" pill…
+- PHO-30 Done — Launcher: drag to reposition with center snap guides — Summary Allow repositioning the launcher panel vertically (and horizontally when not snapped) by click-dragging the sea…
+- PHO-31 Done — Raycast-style inline calculator result card — Replace calculator list row with Raycast-like split card.
+- PHO-32 Done — Calculator section sits too close to search hairline — v0.2.1 bug fix
+- PHO-33 Done — File search defaults to home scope and filters system paths — v0.2.1 bug fix
+- PHO-34 Done — Cmd+Shift+V clipboard should use compact launcher bar — v0.2.1 bug fix
+- PHO-35 Done — Launcher drag guides and reliability — v0.2.1 bug fix
+- PHO-36 Done — Clipboard history: arrow keys do not cycle items — Summary In clipboard history (Cmd+Shift+V or cb ), Down/Up do not move through previous copies. The compact bar never e…
+- PHO-37 Done — Remove Clipboard/Files mode pill from the search field — Summary Clipboard and Files modes still show a blue capsule in the search field (\"Clipboard\" / \"Files\"). Ryan asked…
+- PHO-38 Done — Launcher drag jitters and does not follow the pointer — Summary Drag guides are in the right place after 0.2.1, but live drag jitters, barely moves, and fights the mouse. The…
+- PHO-39 Done — File search returns nothing; use Spotlight mdfind in home — Summary Files mode returns no results. Search should follow Raycast: Spotlight via mdfind, scoped to the home folder, n…
+- PHO-40 Done — Files empty panel stays tall instead of compact — Summary Empty Files mode is supposed to match the compact clipboard bar until the user types. v0.2.2 screenshots still…
+- PHO-41 Done — Clipboard reopen shows clipped overlay; arrows must expand and cycle — On v0.2.2, the compact clipboard bar is correct when first opened empty. After typing, closing, or opening clipboard fr…
+- PHO-42 Done — Launcher drag should live-snap X between the edge guides — Live tracking during a launcher drag is good on v0.2.2. Horizontal placement still drifts with small X movement, so the…
+- PHO-43 Done — Files: ember misses Documents PDFs; Searching sticks; mix into main launcher — File search on v0.2.2 still misses known Documents files and can hang on a Searching empty panel. The main launcher als…
+- PHO-44 Done — Empty launcher Down should show recents; darken top of search hairline — The empty/default Photon bar should behave like Raycast: Down reveals recommended apps (and other recents). Separately,…
+- PHO-45 Done — Rewrite Photon in Rust + GPUI (ship as Photon.app) — Summary Replace the Swift/SwiftUI+AppKit app with a Rust + GPUI (Zed) rewrite. Keep the compact-bar UI, menu-bar agent,…
+- PHO-46 Done — Clipboard compact bar: Down expands, dismiss restores compact (no overlay) — Summary Cmd+Shift+V must open a compact bar. Down expands history. Up/Down cycle items with and without a query. Dismis…
+- PHO-47 Done — File search: ember ranks Ember_Individual_Pitch.pdf; mix into launcher; no stuck Searching — Summary Home-only Spotlight/mdfind plus filename/basename matching so \ember\ returns Ember_Individual_Pitch.pdf under…
+- PHO-48 Done — Restore native macOS parity after the v0.3.0 GPUI rewrite — Regression Photon v0.3.0 regressed native macOS launcher behavior during the Rust + GPUI rewrite. The release currently…
+- PHO-49 Done — v0.3.2: fix real file search and clipboard key routing — Summary Photon 0.3.1 still fails on Ryan's physical Mac despite the packaged runtime checks added in #109: searching fo…
+- PHO-50 Done — Fix trusted clipboard paste and add expanded detail view — Photon 0.3.3: restore the previously focused target before injecting Cmd+V, distinguish AX trust from event-delivery fa…
+- PHO-51 Done — Replace protected-folder prompt cascade with guided file access — Photon 0.3.3: stop launcher-time protected-folder walks. Add a normal one-time folder grant flow using NSOpenPanel and…
+- PHO-52 Done — Add Files recents and persistent preview metadata — Photon 0.3.3: show Recent Files and Quick Look-quality preview/metadata in empty Files mode, retain split detail for qu…
+- PHO-53 Done — Expand safe launcher drag surface and snap behavior — Photon 0.3.3: allow click-and-hold drag from safe outer chrome/background points without stealing search, row, scroll,…
+- PHO-54 Done — v0.3.4: Restore PDF file search and Files split UI from main bar — Regressions from v0.3.3: PDFs missing in search; main-bar file queries must open full Files session (recents, split pre…
+- PHO-55 Done — v0.3.4: Fix launcher drag guides to panel edges — Snap guides collapsed to ±60pt corridor; restore panel left/right edge guides and center-only snap between them.
+- PHO-56 Done — v0.3.4: Fix clipboard Enter paste on real Mac — Paste still fails with Accessibility granted; restore target activation and delivery-time trust checks.
+- PHO-57 Done — v0.3.4: Extend macOS parity harness for v0.3.4 gates — Mixed search Files UI, guide math, real paste sentinel, screenshots.
+- PHO-58 Done — Release Photon v0.3.4 — Regression fix release for file search, drag guides, clipboard paste, and parity harness.
+- PHO-59 Done — v0.3.5: Vertical-only panel expansion for Files and clipboard — Files mode and clipboard detail must expand downward only; keep launcher bar width fixed.
+- PHO-60 Done — v0.3.5: Fix real-world file search (ember PDF under Documents) — Fallback must walk granted and standard user folders; fix promotion/search races.
+- PHO-61 Done — v0.3.5: Extend macOS parity for Ryan-like Documents path — Gate ember PDF under Documents/School/Capstone without mdimport-only reliance.
+- PHO-62 Done — Release v0.3.5 — Ship vertical expansion and file search fixes.
+- PHO-63 Done — fix: Files and clipboard expanded UI should split side-by-side inside the compact launcher width — Area launcher / files / clipboard Photon version 0.3.5 macOS version 26.1 (Ryan) Expected Expanded Files and Clipboard…
+- PHO-64 Done — fix: snappy launcher height animation (~120-180ms) for Files and clipboard expand — Area launcher Photon version 0.3.5 macOS version 26.1 (Ryan) Expected Height changes when Files promotes or Clipboard H…
+- PHO-65 Done — fix: clipboard Up/Down must highlight the selected left-list row — Area clipboard Photon version 0.3.5 macOS version 26.1 (Ryan) Expected Up/Down in expanded clipboard history moves the…
+- PHO-66 Done — fix: CI smoke native-parity SIGTERM after Files recents wait — Area ci Photon version 0.3.5 (example: Actions run 355 on \fix: v0.3.5 vertical expansion and real-world file search\)…
+- PHO-67 Done — chore: release Photon v0.3.6 — Area release Summary Ship Photon v0.3.6 from develop (compact horizontal Files/clipboard split, snappy expand, clipboar…
+- PHO-68 Done — Unify expanded launcher, Files, and clipboard dimensions — Request Implement Ryan's v0.3.7 layout update: Make the default compact launcher bar modestly wider. Pressing Down on t…
+- PHO-69 Done — Release Photon v0.3.7 — Ship Photon v0.3.7 after the unified expanded-panel layout lands. Merge a release PR from develop to main. Publish the…
+- PHO-70 Done — Files metadata overlaps the command footer — Request On Photon 0.3.7, Files detail metadata (Created / Modified) paints over the bottom command row (Open, Reveal in…
+- PHO-71 Done — Folder permission dialogs must keep the Files panel open — Request Typing a Files search still triggers TCC or open-panel prompts one folder at a time and closes Photon. Ryan has…
+- PHO-72 Done — Drag the launcher from the entire panel with click slop — Request Holding the launcher hotkey and pressing mouse-down anywhere on the panel (search field, list, preview, footer…
+- PHO-73 Done — Horizontal center snap when the panel midpoint is between the edge guides — Request Horizontal center snap is still broken. While dragging, if the panel's horizontal center is between the two dot…
+- PHO-74 Done — Release Photon v0.3.8 — Request Ship Photon v0.3.8 from develop onto main, tag v0.3.8, publish the GitHub Release, bump ryan-stoffel/taps cask…
+- PHO-75 Done — fix: launcher Down list must scroll the full catalog, not wrap — When the default launcher is expanded (Down on the empty bar), the recommendations / apps / recent-shortcuts list shoul…
+- PHO-76 Done — feat: revamp Notes to match Raycast Notes chrome — Revamp Photon Notes to match Raycast Notes as closely as SwiftUI/AppKit allow (no Raycast assets). Ryan's 0.3.8 referen…
+- PHO-77 Done — chore: release Photon v0.3.9 — Cut Photon **0.3.9** after the launcher recs-scroll fix and Raycast Notes revamp land on develop. Acceptance VERSION /…
+- PHO-78 Done — fix: launched apps must come to the foreground — Summary Opening an app from Photon currently activates it in the background. The launched or focused app must come **ab…
+- PHO-79 Done — feat: make launcher show, search, recs, Files, and clipboard snappy — Summary Photon should feel instant: hotkey to visible panel in one frame, typing should not hitch, recs scroll / Files…
+- PHO-80 Done — feat: Command-comma opens Settings from Photon and the launcher — Summary The standard macOS Settings shortcut (⌘,) must open Photon's Settings from anywhere Photon is running, includin…
+- PHO-81 Done — feat: native macOS 27 Settings and Liquid Glass chrome — Summary Settings should feel like System Settings (NavigationSplitView + grouped Form) while keeping Photon's materials…
+- PHO-82 Done — chore: release Photon v0.4.0 — Summary Ship Photon v0.4.0: foreground app launch, launcher snappiness, ⌘, Settings, and native Settings / Liquid Glass…
+- PHO-83 Done — feat: Dock-style running indicator under open app icons — Summary Launcher app rows should show a small filled Dock-style dot under the icon when that application is running, ma…
+- PHO-84 Done — feat: show assigned shortcuts as trailing keybind chips — Summary When a launcher row has an assigned keybind, show it as trailing Raycast-style key chips (separate glyphs, e.g.…
+- PHO-85 Done — chore: release Photon v0.4.1 — Summary Ship Photon v0.4.1 so Ryan can brew upgrade --cask ryan-stoffel/taps/photon: Dock-style running dots and traili…
+- PHO-86 Done — feat: restyle Settings to match the Photon launcher — Summary Ryan rejected the current Settings window (System Settings clone). Restyle it to match the launcher panel: mate…
+- PHO-87 Done — fix: Caps Lock Hyper key must not toggle Caps Lock — Summary When Caps Lock is the Hyper key, Caps Lock state must not turn on. Typing with Hyper currently leaves CAPS on.…
+- PHO-88 Done — feat: list installed apps then assign app shortcuts — Summary Replace the Add Application… picker plus warning-triangle row in App hotkeys. Show installed/current apps in a…
+- PHO-89 Done — feat: currently open applications at the top of the launcher — Summary Currently open applications should appear at the top of the launcher list (with existing running dots), then th…
+- PHO-90 Done — chore: release Photon v0.4.2 — Summary Ship Photon v0.4.2 so Ryan can brew upgrade --cask ryan-stoffel/taps/photon: Photon-styled Settings, Caps Lock…
+- PHO-91 Done — Onboarding — First-run experience and permission prompts.
+- PHO-92 Done — feat: Suggestions of most-used apps at the top of the launcher — Problem 0.4.2 pins currently open applications to the top of the launcher. That ranking is the wrong signal. Ryan wants…
+- PHO-93 Done — fix: Settings sidebar focus ring stays stuck on one row — Problem In the Photon Settings window, a blue focus box appears on a sidebar row and does not move or clear when pressi…
+- PHO-94 Done — feat: request Accessibility permissions on first launch — Problem Photon asks for Accessibility (and Input Monitoring, which Keybinds already treats as a permission macOS may re…
+- PHO-95 Done — feat: first-run walkthrough for how to use Photon — Problem Photon has no first-run walkthrough. The first open should teach the product in a short, polished sequence in t…
+- PHO-96 Done — chore: release Photon v0.4.3 — Expected Ship 0.4.3 so brew upgrade picks it up. Squash-merge the feature work into develop after green packaged macOS…
+- PHO-97 Done — feat: interactive first-run walkthrough — Area launcher Summary The first-run walkthrough is a static card. Replace it with a guided, animated tour you can try:…
+- PHO-98 Done — fix: Photon icon is tiny in the launcher and menus — Area launcher Photon version 0.4.3 macOS version 26 Expected The Photon row in the launcher, and Photon in menus, uses…
+- PHO-99 Done — chore: release Photon v0.4.4 — Expected Ship 0.4.4 so brew upgrade picks it up. Squash-merge the interactive onboarding and full app icon into develop…
+- PHO-100 Done — feat: cinematic full-screen onboarding — Summary Replace the 0.4.4 dialog tour with a borderless full-screen sequence: reveal, Accessibility, Input Monitoring,…
+- PHO-101 Done — chore: release Photon v0.4.5 — Expected Ship 0.4.5 so brew upgrade picks it up. Squash-merge the cinematic full-screen onboarding into develop after g…
+- PHO-102 Done — feat: windowed first-run sequence — Expected Replace the 0.4.5 full-screen onboarding with a calm windowed sequence. Borderless, non-resizable, about 800 b…
+- PHO-103 Done — chore: release Photon v0.4.6 — Expected Ship 0.4.6 so brew upgrade picks it up. Squash-merge the windowed first-run sequence into develop after green…
+- PHO-104 Done — Rebuild onboarding (phased) — Ryan, 2026-09-28: the cinematic Phase 1 overlay is scratched. Phase 2 (feature tour and permission prompts) is not in t…
+- PHO-105 Done — Add a Photon-Dev app that can run beside the release build — Ryan wants the Homebrew release (Photon.app, com.ryanstoffel.photon) and a develop build open at the same time, with se…
+- PHO-106 Done — Rank empty-launcher Suggestions by use count for apps and commands — The empty launcher Suggestions list puts opened applications first, then commands in catalog order. A command he opens…
+- PHO-107 Done — fix: typing finder hides Finder.app behind file hits — Area launcher Photon version 0.4.6 (develop) macOS version 26 Expected Typing finder keeps the command list. Finder.app…
+- PHO-108 Done — fix: Settings sidebar focus ring stays on the previous row after a click — Problem In the Photon Settings window, the blue focus ring on a sidebar row only moves when Tab is pressed. A mouse cli…
+- PHO-109 Done — fix: launcher footer gap while results load — Area launcher Photon version 0.4.7 (develop) macOS version macOS 15 Expected The footer stays one compact bar (Photon i…
+- PHO-110 Done — feat: windowed welcome with the launcher shortcut — Summary The first-run note is a small titled window. Replace it with one normal window that uses Photon's panel materia…
+- PHO-111 Done — feat: outlined Photon mark for the menu bar — The menu bar status item uses the filled SF Symbol sun.max.fill. Replace it with an outlined template image of the Phot…
+- PHO-112 In Progress — feat(launcher): Raycast parity pass — Area launcher Summary Photon should behave like a minimal Raycast: no AI and no extensions, with the core launcher inte…
+
+## Issue links (28)
+
+- 10608 Relates → PHO-19
+- 10609 Relates → PHO-19
+- 10608 Relates ← PHO-10
+- 10609 Relates ← PHO-12
+- 10607 Relates → PHO-48
+- 10607 Relates ← PHO-45
+- 10610 Blocks → PHO-58
+- 10611 Blocks → PHO-58
+- 10612 Blocks → PHO-58
+- 10613 Blocks → PHO-58
+- 10610 Blocks ← PHO-54
+- 10611 Blocks ← PHO-55
+- 10612 Blocks ← PHO-56
+- 10613 Blocks ← PHO-57
+- 10614 Blocks → PHO-62
+- 10615 Blocks → PHO-62
+- 10616 Blocks → PHO-62
+- 10614 Blocks ← PHO-59
+- 10615 Blocks ← PHO-60
+- 10616 Blocks ← PHO-61
+- 10620 Relates → PHO-108
+- 10617 Relates → PHO-104
+- 10618 Relates → PHO-104
+- 10617 Relates ← PHO-100
+- 10618 Relates ← PHO-102
+- 10619 Relates ← PHO-110
+- 10620 Relates ← PHO-93
+- 10619 Relates → PHO-104
+
+## Comments (18)
+
+- 10136 Ryan Stoffel — CI jobs branch-name, lint, build, and test are green on macos-latest (see PR #15).
+- 10151 Ryan Stoffel — v0.1.0 shipped ad-hoc signed. The workflow is ready for Developer ID signing, notarization, and automatic cask bumps as…
+- 10152 Ryan Stoffel — v0.4.7 is the first notarized pre-release. The tag workflow reported signing=developer-id-notarized, published the GitH…
+- 10154 Ryan Stoffel — Deferred on purpose. Do this as its own change, not inside a file search fix. Clipboard stays on LauncherSession until…
+- 10285 Ryan Stoffel — Why: the Swift UI keeps regressing clipboard overlays and file search, and I want layout and ranking in crates I can te…
+- 10299 Ryan Stoffel — Parity gate before any further release: packaged Photon.app on macos-latest, borderless non-activating panels, no Dock…
+- 10300 Ryan Stoffel — Decision: GPUI failed the gate. v0.3.1 restores the v0.2.3 Swift tree and keeps the harness as a required release check.
+- 10338 Ryan Stoffel — Shipped in v0.3.4. Launcher drag guides mark the panel's left and right edges again, and horizontal snap uses a narrow…
+- 10343 Ryan Stoffel — Shipped in v0.3.4. Clipboard paste hides Photon, reactivates the prior app, and checks Accessibility at delivery time s…
+- 10348 Ryan Stoffel — Shipped in v0.3.4. The packaged macOS gate covers mixed-bar Files promotion, guide span, and a real paste sentinel. See…
+- 10376 Ryan Stoffel — Shipped as v0.3.5 (vertical expansion and the file-search fixes in that release). Later versions through v0.4.6 are on…
+- 10400 Ryan Stoffel — Shipped as v0.3.6: version on main, GitHub Release with zip and dmg, Homebrew cask bump, and the back-merge onto develo…
+- 10433 Ryan Stoffel — Shipped in [Photon v0.3.8](https://github.com/ryan-stoffel/photon/releases/tag/v0.3.8). Release PR #170 merged to main…
+- 10559 Ryan Stoffel — Phase 1 is the arrival. Phase 2 is the feature tour and permission prompts.
+- 10560 Ryan Stoffel — Ryan wants the Phase 1 arrival bigger, still on this screen only. The 2pt line and short tail read as too small. This p…
+- 10561 Ryan Stoffel — Ryan, 2026-09-28: the cinematic Phase 1 overlay is scratched. No beam, flash, stars, full-screen veil, or Desktop 2 pin…
+- 10599 Ryan Stoffel — Not doing the outlined menu bar icon. The current menu bar icon stays.
+- 10604 Ryan Stoffel — Scope stays the same: no AI and no extensions. This is about root search ranking, Esc order, an action panel, the calcu…
+
+## Changelog pages (112)
+
+- startAt 0 — status: To Do → In Progress
+- startAt 0 — status: To Do → In Progress; resolution: Done; status: In Progress → Done
+- startAt 0 — status: To Do → In Progress; resolution: Done; status: In Progress → Done
+- startAt 0 — status: To Do → In Progress; resolution: Done; status: In Progress → Done
+- startAt 0 — status: To Do → In Progress; resolution: Done; status: In Progress → Done
+- startAt 0 — status: To Do → In Progress; resolution: Done; status: In Progress → Done
+- startAt 0 — status: To Do → In Progress; resolution: Done; status: In Progress → Done
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.8
+- startAt 0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.1.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.2
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.2
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.2
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.2
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.2
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.3
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.3
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.3
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.2.3
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.0
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.1
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.2
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.3
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.3
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.3
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.3
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.4
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.7
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.7
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.7
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.4
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.5
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.5
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.5
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.7
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.6
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.6
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.6
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.6
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.7
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.7
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.8
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.8
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.8
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.8
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.8
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.9
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.9
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.3.9
+- startAt 0 — Sprint: PHO Sprint 1; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.0
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.0
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.0
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.0
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.0
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.1
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.1
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.1
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.2
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.2
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.2
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.2
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.2
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.3
+- startAt 0 — status: To Do → In Progress; resolution: Done; status: In Progress → Done
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.3
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.3
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.3
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.3
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.4
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.4
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.4
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.5
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.5
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.6
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.6
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.7
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.7
+- startAt 0 — Sprint: PHO Sprint 2; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.7
+- startAt 0 — Sprint: PHO Sprint 3; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.7
+- startAt 0 — Sprint: PHO Sprint 3; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.7
+- startAt 0 — Sprint: PHO Sprint 3; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.8
+- startAt 0 — Sprint: PHO Sprint 3; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.8
+- startAt 0 — Sprint: PHO Sprint 3; status: To Do → In Progress; resolution: Done; status: In Progress → Done; Fix Version: 0.4.8
+- startAt 0 — Sprint: PHO Sprint 3; status: To Do → In Progress; resolution: Won't Do; status: In Progress → Done
+- startAt 0 — Sprint: PHO Sprint 3; status: To Do → In Progress
+
+## Worklogs (0)
+
+- (none)
+
+## Attachments (2)
+
+- v0.3.0-dock-regression.png (image/png)
+- files-metadata-over-footer.png (image/png)
+
+## Remote links (179)
+
+- 10103 — ryan-stoffel/photon#1: Launcher hotkey (Cmd+Space) with Spotlight conflict guidance
+- 10104 — ryan-stoffel/photon#15: feat(launcher): add hotkey, panel, app provider, and settings
+- 10108 — ryan-stoffel/photon#2: Launch applications via fuzzy search and frecency
+- 10112 — ryan-stoffel/photon#3: Clipboard history
+- 10113 — ryan-stoffel/photon#16: feat(clipboard): add clipboard history
+- 10117 — ryan-stoffel/photon#4: Simple notes
+- 10118 — ryan-stoffel/photon#20: feat(notes): add floating markdown notes with launcher integration
+- 10122 — ryan-stoffel/photon#5: File search
+- 10123 — ryan-stoffel/photon#18: feat(files): Spotlight file search with Quick Look
+- 10127 — ryan-stoffel/photon#6: Keybinds and window management
+- 10128 — ryan-stoffel/photon#19: feat(keybinds): Hyper key, app hotkeys, and window management
+- 10132 — ryan-stoffel/photon#7: Settings window
+- 10137 — ryan-stoffel/photon#8: CI pipeline
+- 10141 — ryan-stoffel/photon#9: Release pipeline
+- 10142 — ryan-stoffel/photon#21: ci(release): dry-run mode, launch smoke test, and release notes
+- 10143 — ryan-stoffel/photon#23: ci(release): dry-run mode, launch smoke test, and release notes
+- 10147 — ryan-stoffel/photon#10: Homebrew cask in ryanstoffel/taps
+- 10153 — ryan-stoffel/photon#11: Developer ID signing and notarization
+- 10155 — ryan-stoffel/photon#17: Unify clipboard session with LauncherMode protocol
+- 10159 — ryan-stoffel/photon#22: Launcher panel throws NSInternalInconsistencyException at launch
+- 10160 — ryan-stoffel/photon#24: fix(launcher): drop the conflicting moveToActiveSpace panel behaviour
+- 10164 — ryan-stoffel/photon#29: Launcher shows a placeholder square instead of app icons
+- 10165 — ryan-stoffel/photon#31: fix(launcher): show real icons for apps, panes, and provider rows
+- 10169 — ryan-stoffel/photon#30: Launcher visual redesign: search field, icon rows, compact by default, Appearance settings
+- 10170 — ryan-stoffel/photon#33: feat(launcher): redesign the panel, compact by default, Appearance settings
+- 10174 — ryan-stoffel/photon#32: feat: notes window with a native sidebar and standard toolbar
+- 10175 — ryan-stoffel/photon#36: feat(notes): native sidebar and unified toolbar for the notes window
+- 10179 — ryan-stoffel/photon#34: CI screenshot harness for UI scenarios
+- 10180 — ryan-stoffel/photon#35: feat(ci): UI scenario screenshot harness
+- 10184 — ryan-stoffel/photon#37: bug: notes sidebar is not full height and the toolbar title precedes the sidebar controls
+- 10185 — ryan-stoffel/photon#38: fix(notes): full-height sidebar and tracking separator need fullSizeContentView
+- 10189 — ryan-stoffel/photon#45: feat: System Settings panes searchable by human title
+- 10190 — ryan-stoffel/photon#48: feat(apps): searchable System Settings pane titles
+- 10194 — ryan-stoffel/photon#46: Inline calculator and unit conversions in launcher
+- 10195 — ryan-stoffel/photon#51: feat(launcher): inline calculator and unit conversions
+- 10199 — ryan-stoffel/photon#47: File search: default to home folder, fuzzy matching, launcher-style Files UI
+- 10200 — ryan-stoffel/photon#52: File search: home scope, fuzzy matching, launcher-style Files UI
+- 10204 — ryan-stoffel/photon#49: Restyle clipboard mode to match compact launcher
+- 10205 — ryan-stoffel/photon#53: Restyle clipboard mode to match compact launcher
+- 10209 — ryan-stoffel/photon#50: Launcher: drag to reposition with center snap guides
+- 10210 — ryan-stoffel/photon#54: Launcher: drag to reposition with center snap guides
+- 10214 — ryan-stoffel/photon#56: Raycast-style inline calculator result card
+- 10215 — ryan-stoffel/photon#57: Raycast-style inline calculator result card
+- 10219 — ryan-stoffel/photon#62: Calculator section sits too close to search hairline
+- 10220 — ryan-stoffel/photon#66: fix(launcher): calculator section spacing (GH-62)
+- 10224 — ryan-stoffel/photon#63: File search defaults to home scope and filters system paths
+- 10225 — ryan-stoffel/photon#67: fix(files): home-only Spotlight scope (GH-63)
+- 10229 — ryan-stoffel/photon#64: Cmd+Shift+V clipboard should use compact launcher bar
+- 10230 — ryan-stoffel/photon#68: fix(clipboard): compact hotkey panel (GH-64)
+- 10234 — ryan-stoffel/photon#65: Launcher drag guides and reliability
+- 10235 — ryan-stoffel/photon#69: fix(launcher): drag guides and file compact empty (GH-65)
+- 10236 — ryan-stoffel/photon#72: fix(launcher): file mode compact panel on enter
+- 10240 — ryan-stoffel/photon#76: Clipboard history: arrow keys do not cycle items
+- 10241 — ryan-stoffel/photon#80: fix(clipboard): move history with arrow keys
+- 10245 — ryan-stoffel/photon#77: Remove Clipboard/Files mode pill from the search field
+- 10246 — ryan-stoffel/photon#81: fix(launcher): drop Clipboard and Files search-field pills
+- 10250 — ryan-stoffel/photon#78: Launcher drag jitters and does not follow the pointer
+- 10251 — ryan-stoffel/photon#82: fix(launcher): track live drag in screen space
+- 10255 — ryan-stoffel/photon#79: File search returns nothing; use Spotlight mdfind in home
+- 10256 — ryan-stoffel/photon#83: fix(files): search home with Spotlight mdfind
+- 10260 — ryan-stoffel/photon#84: Files empty panel stays tall instead of compact
+- 10261 — ryan-stoffel/photon#85: fix(files): compact empty Files panel
+- 10265 — ryan-stoffel/photon#89: Clipboard reopen shows clipped overlay; arrows must expand and cycle
+- 10266 — ryan-stoffel/photon#94: fix(clipboard): reset compact panel on dismiss and cycle with arrows
+- 10270 — ryan-stoffel/photon#90: Launcher drag should live-snap X between the edge guides
+- 10271 — ryan-stoffel/photon#93: fix(launcher): live-snap drag X between edge guides
+- 10275 — ryan-stoffel/photon#91: Files: ember misses Documents PDFs; Searching sticks; mix into main launcher
+- 10276 — ryan-stoffel/photon#95: fix(files): match Documents filenames and mix hits into the launcher
+- 10280 — ryan-stoffel/photon#92: Empty launcher Down should show recents; darken top of search hairline
+- 10281 — ryan-stoffel/photon#96: fix(launcher): Down on empty bar shows recents; darker search hairline
+- 10286 — ryan-stoffel/photon#100: Rewrite Photon in Rust + GPUI (ship as Photon.app)
+- 10287 — ryan-stoffel/photon#103: feat: rewrite Photon in Rust + GPUI
+- 10291 — ryan-stoffel/photon#101: Clipboard compact bar: Down expands, dismiss restores compact (no overlay)
+- 10295 — ryan-stoffel/photon#102: File search: ember ranks Ember_Individual_Pitch.pdf; mix into launcher; no stuck Searching
+- 10302 — ryan-stoffel/photon#107: Restore native macOS parity after the v0.3.0 GPUI rewrite
+- 10303 — ryan-stoffel/photon#108: fix(mac): restore native parity after v0.3.0
+- 10304 — ryan-stoffel/photon#109: fix(mac): restore native parity after v0.3.0
+- 10308 — ryan-stoffel/photon#114: v0.3.2: fix real file search and clipboard key routing
+- 10309 — ryan-stoffel/photon#115: fix(runtime): restore file search and clipboard keys
+- 10313 — ryan-stoffel/photon#118: Fix trusted clipboard paste and add expanded detail view
+- 10314 — ryan-stoffel/photon#122: fix(clipboard): restore trusted paste and add detail view
+- 10318 — ryan-stoffel/photon#119: Replace protected-folder prompt cascade with guided file access
+- 10319 — ryan-stoffel/photon#123: fix(files): add guided persistent folder access
+- 10323 — ryan-stoffel/photon#120: Add Files recents and persistent preview metadata
+- 10324 — ryan-stoffel/photon#125: feat(files): add recents and persistent detail preview
+- 10328 — ryan-stoffel/photon#121: Expand safe launcher drag surface and snap behavior
+- 10329 — ryan-stoffel/photon#124: fix(launcher): expand safe drag chrome
+- 10333 — ryan-stoffel/photon#129: v0.3.4: Restore PDF file search and Files split UI from main bar
+- 10334 — ryan-stoffel/photon#133: fix: v0.3.4 regressions (files, drag, clipboard, parity)
+- 10339 — ryan-stoffel/photon#130: v0.3.4: Fix launcher drag guides to panel edges
+- 10344 — ryan-stoffel/photon#131: v0.3.4: Fix clipboard Enter paste on real Mac
+- 10349 — ryan-stoffel/photon#132: v0.3.4: Extend macOS parity harness for v0.3.4 gates
+- 10350 — ryan-stoffel/photon#137: fix(files): reset recents when reopening Files mode
+- 10351 — ryan-stoffel/photon#139: fix(parity): stabilize Files recents gate
+- 10355 — ryan-stoffel/photon#134: Release Photon v0.3.4
+- 10356 — ryan-stoffel/photon#135: Release v0.3.4
+- 10357 — ryan-stoffel/photon#136: Release v0.3.4
+- 10358 — ryan-stoffel/photon#138: chore: back-merge main after v0.3.4
+- 10359 — ryan-stoffel/photon#140: chore: back-merge main after v0.3.4 hotfix
+- 10363 — ryan-stoffel/photon#141: v0.3.5: Vertical-only panel expansion for Files and clipboard
+- 10364 — ryan-stoffel/photon#144: fix: v0.3.5 vertical expansion and real-world file search
+- 10368 — ryan-stoffel/photon#142: v0.3.5: Fix real-world file search (ember PDF under Documents)
+- 10372 — ryan-stoffel/photon#143: v0.3.5: Extend macOS parity for Ryan-like Documents path
+- 10377 — ryan-stoffel/photon#145: Release v0.3.5
+- 10378 — ryan-stoffel/photon#146: Release v0.3.5
+- 10379 — ryan-stoffel/photon#147: Release v0.3.5
+- 10383 — ryan-stoffel/photon#149: fix: Files and clipboard expanded UI should split side-by-side inside the compact launcher width
+- 10384 — ryan-stoffel/photon#153: fix: compact side-by-side Files and clipboard split
+- 10388 — ryan-stoffel/photon#150: fix: snappy launcher height animation (~120-180ms) for Files and clipboard expand
+- 10392 — ryan-stoffel/photon#151: fix: clipboard Up/Down must highlight the selected left-list row
+- 10396 — ryan-stoffel/photon#152: fix: CI smoke native-parity SIGTERM after Files recents wait
+- 10401 — ryan-stoffel/photon#154: chore: release Photon v0.3.6
+- 10402 — ryan-stoffel/photon#155: chore(release): 0.3.6
+- 10406 — ryan-stoffel/photon#159: Unify expanded launcher, Files, and clipboard dimensions
+- 10407 — ryan-stoffel/photon#161: fix(layout): unify expanded panel dimensions
+- 10411 — ryan-stoffel/photon#160: Release Photon v0.3.7
+- 10416 — ryan-stoffel/photon#164: Files metadata overlaps the command footer
+- 10417 — ryan-stoffel/photon#169: fix(launcher): keep Files footer, grants, drag, and snap usable
+- 10421 — ryan-stoffel/photon#165: Folder permission dialogs must keep the Files panel open
+- 10425 — ryan-stoffel/photon#166: Drag the launcher from the entire panel with click slop
+- 10429 — ryan-stoffel/photon#167: Horizontal center snap when the panel midpoint is between the edge guides
+- 10434 — ryan-stoffel/photon#168: Release Photon v0.3.8
+- 10438 — ryan-stoffel/photon#172: fix: launcher Down list must scroll the full catalog, not wrap
+- 10439 — ryan-stoffel/photon#175: feat(notes): match Raycast chrome and scroll launcher recs
+- 10443 — ryan-stoffel/photon#173: feat: revamp Notes to match Raycast Notes chrome
+- 10447 — ryan-stoffel/photon#174: chore: release Photon v0.3.9
+- 10451 — ryan-stoffel/photon#178: fix: launched apps must come to the foreground
+- 10452 — ryan-stoffel/photon#183: feat(launcher): foreground launch, snappy panel, native Settings
+- 10456 — ryan-stoffel/photon#179: feat: make launcher show, search, recs, Files, and clipboard snappy
+- 10460 — ryan-stoffel/photon#180: feat: Command-comma opens Settings from Photon and the launcher
+- 10464 — ryan-stoffel/photon#181: feat: native macOS 27 Settings and Liquid Glass chrome
+- 10468 — ryan-stoffel/photon#182: chore: release Photon v0.4.0
+- 10469 — ryan-stoffel/photon#185: fix: keep launcher visible during packaged drag checks
+- 10473 — ryan-stoffel/photon#187: feat: Dock-style running indicator under open app icons
+- 10474 — ryan-stoffel/photon#190: feat(launcher): Dock-style running dots and keybind chips
+- 10478 — ryan-stoffel/photon#188: feat: show assigned shortcuts as trailing keybind chips
+- 10482 — ryan-stoffel/photon#189: chore: release Photon v0.4.1
+- 10486 — ryan-stoffel/photon#193: feat: restyle Settings to match the Photon launcher
+- 10487 — ryan-stoffel/photon#198: feat(settings): Photon chrome, Caps Lock Hyper, app list, running apps first
+- 10491 — ryan-stoffel/photon#194: fix: Caps Lock Hyper key must not toggle Caps Lock
+- 10495 — ryan-stoffel/photon#195: feat: list installed apps then assign app shortcuts
+- 10499 — ryan-stoffel/photon#196: feat: currently open applications at the top of the launcher
+- 10503 — ryan-stoffel/photon#197: chore: release Photon v0.4.2
+- 10507 — ryan-stoffel/photon#201: feat: Suggestions of most-used apps at the top of the launcher
+- 10508 — ryan-stoffel/photon#206: feat(launcher): most-used Suggestions, Settings focus, first-run walkthrough
+- 10512 — ryan-stoffel/photon#202: fix: Settings sidebar focus ring stays stuck on one row
+- 10516 — ryan-stoffel/photon#203: feat: request Accessibility permissions on first launch
+- 10520 — ryan-stoffel/photon#204: feat: first-run walkthrough for how to use Photon
+- 10524 — ryan-stoffel/photon#205: chore: release Photon v0.4.3
+- 10528 — ryan-stoffel/photon#210: feat: interactive first-run walkthrough
+- 10529 — ryan-stoffel/photon#212: feat(onboarding): interactive tour and full app icon
+- 10533 — ryan-stoffel/photon#211: fix: Photon icon is tiny in the launcher and menus
+- 10537 — ryan-stoffel/photon#213: chore: release Photon v0.4.4
+- 10541 — ryan-stoffel/photon#216: feat: cinematic full-screen onboarding
+- 10542 — ryan-stoffel/photon#217: feat(onboarding): full-screen first-run sequence
+- 10546 — ryan-stoffel/photon#218: chore: release Photon v0.4.5
+- 10550 — ryan-stoffel/photon#221: feat: windowed first-run sequence
+- 10551 — ryan-stoffel/photon#222: feat(onboarding): play the sequence in a window
+- 10555 — ryan-stoffel/photon#223: chore: release Photon v0.4.6
+- 10562 — ryan-stoffel/photon#226: Rebuild onboarding (phased)
+- 10563 — ryan-stoffel/photon#227: Phase 1 onboarding overlay
+- 10564 — ryan-stoffel/photon#230: Make the Phase 1 arrival cinematic
+- 10565 — ryan-stoffel/photon#231: Replace the Phase 1 overlay with a short welcome
+- 10569 — ryan-stoffel/photon#228: Add a Photon-Dev app that can run beside the release build
+- 10570 — ryan-stoffel/photon#229: Add a Photon-Dev app that can run beside the release build
+- 10574 — ryan-stoffel/photon#232: Rank empty-launcher Suggestions by use count for apps and commands
+- 10575 — ryan-stoffel/photon#234: feat(launcher): rank Suggestions by use count
+- 10579 — ryan-stoffel/photon#233: fix: typing finder hides Finder.app behind file hits
+- 10580 — ryan-stoffel/photon#235: fix(launcher): keep Finder.app above file hits
+- 10584 — ryan-stoffel/photon#238: fix: Settings sidebar focus ring stays on the previous row after a click
+- 10585 — ryan-stoffel/photon#239: fix(settings): move the sidebar focus ring on click
+- 10589 — ryan-stoffel/photon#240: fix: launcher footer gap while results load
+- 10590 — ryan-stoffel/photon#241: fix(launcher): keep the footer against the result rows
+- 10594 — ryan-stoffel/photon#242: feat: windowed welcome with the launcher shortcut
+- 10595 — ryan-stoffel/photon#245: feat(onboarding): show the launcher shortcut in a welcome window
+- 10600 — ryan-stoffel/photon#243: feat: outlined Photon mark for the menu bar
+- 10601 — ryan-stoffel/photon#244: feat(menu-bar): draw an outlined Photon mark
+- 10605 — ryan-stoffel/photon#248: feat(launcher): Raycast parity pass
+- 10606 — ryan-stoffel/photon#249: feat(launcher): Raycast parity pass
+
+## Watchers (112)
+
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+- watchCount 1 — Ryan Stoffel
+
+## Votes (112)
+
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+- votes 0
+
+## Issue properties (0)
+
+- (none)
+
+## Other (0)
+
+- (none)

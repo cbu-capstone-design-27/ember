@@ -126,6 +126,8 @@ jobs:
         env:
           JIRA_WEBHOOK_SECRET: ci-local-smoke
         run: python3 services/jira-ingestion/smoke_webhook.py
+      - name: Photon synthetic Slack and Jira fixtures
+        run: python3 services/pipeline/fixtures/photon/test_fixtures.py
       - name: GitLab ingestion webhook contract
         run: python3 services/gitlab-ingestion/test_webhook.py
       - name: GitLab ingestion pull contract
