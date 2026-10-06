@@ -46,6 +46,8 @@ def _classify(body: dict) -> tuple[str, dict, str | None]:
                 return kind, body, None
         if _is_issue(body.get("issue")):
             return "issue", body["issue"], None
+        if isinstance(body.get("issue"), dict):
+            return "malformed_issue", body, None
         return "other", body, None
     if _is_issue(body):
         return "issue", body, None
@@ -73,6 +75,8 @@ def _origin(self_url: str | None) -> str | None:
 
 def map_jira(ctx: MapContext, body: dict) -> Mapped:
     kind, obj, issue_id = _classify(body)
+    if kind == "malformed_issue":
+        raise Reject("issue webhook has no usable key/fields")
     if kind not in ("issue", "comment"):
         raise Skip(kind)
     gid = subgraph_id(ctx.tenant, "jira")
@@ -125,7 +129,8 @@ def map_jira(ctx: MapContext, body: dict) -> Mapped:
     if issue_key:
         out.edges.append(EdgeRec("REFERENCES", gid, "Message", node.key, "WorkItem", issue_key))
     else:
-        ctx.warnings.append(f"jira comment {comment_id}: its issue (id {issue_id}) is not in the input")
+        where = f"id {issue_id}" if issue_id else "id unknown"
+        ctx.warnings.append(f"jira comment {comment_id}: its issue ({where}) is not in the input")
     author = obj.get("author")
     if isinstance(author, dict) and author.get("accountId"):
         link_person(out, gid, "jira", author["accountId"], node, "AUTHORED",

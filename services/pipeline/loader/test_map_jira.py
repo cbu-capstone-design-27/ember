@@ -115,6 +115,13 @@ class JiraMapperTests(unittest.TestCase):
             map_jira(MapContext("brandon-dev"), {"webhookEvent": "issuelink_created", "issueLink": {"id": "1"}})
         self.assertEqual(raised.exception.kind, "issuelink")
 
+    def test_webhook_with_unusable_issue_is_rejected(self):
+        no_key = {"webhookEvent": "jira:issue_updated", "issue": {"id": "1", "fields": {}}}
+        bad_fields = {"webhookEvent": "jira:issue_updated", "issue": {"id": "1", "key": "EMBER-1", "fields": None}}
+        for body in (no_key, bad_fields):
+            with self.assertRaises(Reject):
+                map_jira(MapContext("brandon-dev"), body)
+
     def test_other_objects_are_skipped(self):
         with self.assertRaises(Skip):
             map_jira(MapContext("brandon-dev"), {"key": "EMBER", "self": "https://x/rest/api/3/project/1"})
