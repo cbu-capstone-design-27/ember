@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .facts import SOURCE_BACKED, GraphFacts, expected_constraint_names
 from .records import EdgeRec, NodeRec
+from .snapshot import HIDDEN_PROPS, Snapshot, make_ref
 
 
 class MemoryWriter:
@@ -73,3 +74,18 @@ class MemoryWriter:
                 triple = (src, rel, dst)
                 facts.relationships[triple] = facts.relationships.get(triple, 0) + 1
         return facts
+
+    def snapshot(self, group_ids: list[str]) -> Snapshot:
+        wanted = set(group_ids)
+        snap, refs = Snapshot(), {}
+        for (label, uuid_), props in self.nodes.items():
+            if props["group_id"] in wanted and props.get("source") and props.get("external_id"):
+                refs[(label, uuid_)] = make_ref(props["source"], props["external_id"])
+                snap.nodes.append({"label": label, "ref": refs[(label, uuid_)], "source": props["source"],
+                                   "props": {k: v for k, v in props.items() if k not in HIDDEN_PROPS}})
+        for (rel, src_label, src_uuid, dst_label, dst_uuid), props in self.edges.items():
+            src, dst = refs.get((src_label, src_uuid)), refs.get((dst_label, dst_uuid))
+            if src and dst and props["group_id"] in wanted:
+                snap.edges.append({"type": rel, "src_label": src_label, "src": src,
+                                   "dst_label": dst_label, "dst": dst})
+        return snap
