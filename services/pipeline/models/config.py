@@ -59,8 +59,9 @@ def load_profile(name: str | None = None, path: Path = DEFAULT_CONFIG, env=os.en
     if missing:
         raise ConfigError(f"profile {name!r} is missing: {', '.join(missing)}")
     values = {k: raw[k] for k in _REQUIRED + _OPTIONAL if k in raw}
-    values["llm_base_url"] = env.get("LLM_BASE_URL") or values["llm_base_url"]
-    values["embedding_base_url"] = env.get("EMBEDDING_BASE_URL") or values["embedding_base_url"]
+    # Compose passes unset variables as empty strings; an empty or blank override must not win.
+    values["llm_base_url"] = env.get("LLM_BASE_URL", "").strip() or values["llm_base_url"]
+    values["embedding_base_url"] = env.get("EMBEDDING_BASE_URL", "").strip() or values["embedding_base_url"]
     return Profile(name=name, **values)
 
 

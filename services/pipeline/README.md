@@ -66,3 +66,41 @@ code is 1 if anything was rejected or the schema check found a mismatch, so a cl
 
 Tests: `cd services/pipeline && python -m unittest discover -s loader -t . -p "test_*.py" -v`.
 The Neo4j integration test runs only when `NEO4J_TEST_URI` is set.
+
+## Models (EMBER-49)
+
+The pipeline calls a chat model and an embedding model chosen by a profile in `config/models.toml`
+(why: `docs/adr/0004-cloud-llm-and-embedding.md`). To switch models, set `MODEL_PROFILE` (or pass
+`--profile`) or edit that file. No code changes. Empty variables are treated as unset, so the blank
+`LLM_BASE_URL=` / `EMBEDDING_BASE_URL=` lines in `.env` leave the profile's URLs alone.
+
+Keys are read from environment variables, never from the repository. Copy `.env.example` to `.env`,
+set `OPENAI_API_KEY`, and set a monthly spending limit on the provider account.
+
+Check that the models answer (one chat call and one embedding call, a few cents at most):
+
+    cd services/pipeline && python -m models smoke
+    docker compose -f infra/docker-compose.yml --env-file .env --profile pipeline run --rm \
+      --entrypoint python pipeline -m models smoke
+
+Embed during a load:
+
+    python -m loader --tenant brandon-dev --input ../../data/raw/brandon-dev --embed
+
+Under compose the arguments after the service name replace `command:` entirely, so enabling `--embed`
+means giving the full list:
+
+    docker compose -f infra/docker-compose.yml --env-file .env --profile pipeline run --rm pipeline \
+      --tenant <tenant> --input /data/raw/<tenant> --rejects /data/out/rejects.jsonl --embed
+
+Each node's `embed_text` is embedded unprefixed, the vector is stored on the node, and the model is
+recorded once in the `EmberConfig` node. The first `--embed` run records the embedding model in the
+graph, and a different model is refused afterwards: a graph holds vectors from one model only
+(ADR 0001), so switching means re-embedding everything. Delete the
+`(:EmberConfig {key: 'embedding'})` node and each tenant's `embedding` and `embedding_text_hash`
+properties deliberately, then rerun with `--embed`.
+
+Embedding a small input costs a few cents. Set a spending limit on the provider account before the
+first real run.
+
+Tests (no key, no network): `cd services/pipeline && python -m unittest discover -s models -t . -p "test_*.py" -v`.

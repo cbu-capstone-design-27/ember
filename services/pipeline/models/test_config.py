@@ -66,6 +66,12 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(p.llm_base_url, "http://x/v1")
         self.assertEqual(p.embedding_base_url, "https://emb.example/v1")
 
+    def test_blank_base_url_overrides_are_ignored(self):
+        env = {"LLM_BASE_URL": "  ", "EMBEDDING_BASE_URL": "\t"}
+        p = load_profile("a", path=self.path, env=env)
+        self.assertEqual(p.embedding_base_url, "https://emb.example/v1")
+        self.assertNotEqual(p.llm_base_url.strip(), "")
+
     def test_key_comes_from_the_named_variable_and_errors_do_not_leak(self):
         p = load_profile("a", path=self.path, env={})
         self.assertEqual(p.llm_key({"A_KEY": " sk-1 "}), "sk-1")
