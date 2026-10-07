@@ -5,19 +5,21 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from unittest import mock
 
 from benchmarks.__main__ import main, run_suites
-from benchmarks.results import DEV_NOTE, build_meta, data_version, render_summary, save_result
+from benchmarks.results import DEV_NOTE, LOADING_NOTE, build_meta, data_version, render_summary, save_result
 from benchmarks.retrieval_suite import Doc
 from benchmarks.testing import BAG_IDENTITY, BagClient, bag_of_words_embed
 from loader.embed import embed_graph
 from loader.memory_writer import MemoryWriter
 from loader.run import run
 from loader.testdata import write_sample
-from models.config import Profile
+from models.config import Profile, load_profile
+from models.identity import identity_for
 from ontology import tenant_subgraphs
 
 DATA = Path(__file__).parent / "data"
@@ -42,6 +44,12 @@ class ResultsTests(unittest.TestCase):
                          ("2026-10-07", "brandon-dev", "chat-test", "emb-test"))
         self.assertEqual(meta["note"], DEV_NOTE)
         self.assertIn("not comparable", DEV_NOTE)
+
+    def test_loading_meta_carries_a_note_that_names_no_models(self):
+        meta = build_meta("brandon-dev", "loading_sample.json", today=date(2026, 10, 6))
+        self.assertEqual(meta["note"], LOADING_NOTE)
+        self.assertNotIn("models named here", meta["note"])
+        self.assertNotIn("embedding_model", meta)
 
     def test_save_and_render(self):
         result = {"suite": "retrieval", "meta": {"date": "2026-10-07", "tenant": "t", "note": DEV_NOTE,
@@ -191,6 +199,77 @@ class CliTests(unittest.TestCase):
                         self.assertIn(expected, err)
                         self.assertNotIn("Traceback", err)
                 loader.assert_not_called()
+
+    def test_hand_written_input_with_the_wrong_shape_exits_two_before_anything_runs(self):
+        class ForbiddenClient:
+            def __init__(self, profile):
+                raise AssertionError("the model client must not be created")
+
+        def q(**over):
+            item = {"id": "q1", "question": "login redirect", "answers": ["github:acme/widget#42"], **over}
+            return {"questions": [item]}
+
+        sample = json.loads((DATA / "loading_sample.json").read_text(encoding="utf-8"))
+        spec_cases = {"edge typo": ({**sample, "edge": []}, "'edge'"),
+                      "unknown key": ({**sample, "comment": "x"}, "'comment'")}
+        question_cases = {"top-level list": ([], "top level"),
+                          "misspelled key": ({"question": q()["questions"]}, "non-empty questions list"),
+                          "empty list": ({"questions": []}, "non-empty questions list"),
+                          "item not an object": ({"questions": ["why?"]}, "must be an object"),
+                          "bare string answers": (q(answers="github:acme/widget#42"), "list of non-empty strings"),
+                          "nested answers": (q(answers=[["github:acme/widget#42"]]), "list of non-empty strings"),
+                          "empty answer": (q(answers=[""]), "list of non-empty strings"),
+                          "empty answers": (q(answers=[]), "at least one answer"),
+                          "question not a string": (q(question=7), "needs text"),
+                          "id not a string": (q(id=1), "not a string")}
+        with tempfile.TemporaryDirectory() as tmp:
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            with mock.patch("benchmarks.__main__.run_loader") as loader:
+                for name, (content, expected) in spec_cases.items():
+                    path = Path(tmp) / "spec.json"
+                    path.write_text(json.dumps(content), encoding="utf-8")
+                    with self.subTest(spec=name):
+                        code, _, err = self._run_cli(tmp, suite="loading", spec=path)
+                        self.assertEqual(code, 2, err)
+                        self.assertIn(expected, err)
+                for name, (content, expected) in question_cases.items():
+                    path = Path(tmp) / "q.json"
+                    path.write_text(json.dumps(content), encoding="utf-8")
+                    with self.subTest(questions=name):
+                        code, _, err = self._run_cli(tmp, suite="retrieval", client=ForbiddenClient, env=KEY_ENV,
+                                                     questions=path)
+                        self.assertEqual(code, 2, err)
+                        self.assertIn(expected, err)
+                        self.assertNotIn("Traceback", err)
+                loader.assert_not_called()
+
+    def test_neo4j_embedding_mismatch_exits_one_before_the_tenant_is_reset(self):
+        calls = []
+
+        class RecordingWriter(MemoryWriter):
+            def read_embedding_identity(self):
+                return replace(identity_for(load_profile("openai-dev")), model="some-other-model")
+
+            def reset(self, *args, **kwargs):
+                calls.append("reset")
+                return super().reset(*args, **kwargs)
+
+        class ForbiddenClient:
+            def __init__(self, profile):
+                pass
+
+            def embed(self, texts, **kwargs):
+                raise AssertionError("nothing may be embedded")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            with mock.patch("benchmarks.__main__._writer", return_value=RecordingWriter()), \
+                    mock.patch("benchmarks.__main__.run_loader") as loader:
+                code, _, err = self._run_cli(tmp, "--neo4j", suite="retrieval", client=ForbiddenClient, env=KEY_ENV)
+        self.assertEqual(code, 1, err)
+        self.assertIn("embedding identity mismatch", err)
+        loader.assert_not_called()
+        self.assertEqual(calls, [])
 
     def test_unknown_answer_refs_exit_two_before_any_embedding(self):
         calls = []

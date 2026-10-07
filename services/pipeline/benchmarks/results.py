@@ -10,6 +10,8 @@ from pathlib import Path
 
 DEV_NOTE = ("Scores come from the cheap development models named here. They are not comparable with "
             "scores from other models or from other data versions.")
+LOADING_NOTE = ("Loading checks compare the loaded graph with expectations written by hand from the source data. "
+                "They make no model calls, so no model is named.")
 
 
 class BenchmarkError(RuntimeError):
@@ -35,7 +37,8 @@ def build_meta(tenant: str, dataset: str, profile=None, docs=None, today: date |
 
     Only model names and settings go in; never a key or a URL that could carry credentials.
     """
-    meta = {"date": (today or date.today()).isoformat(), "tenant": tenant, "dataset": dataset, "note": DEV_NOTE}
+    meta = {"date": (today or date.today()).isoformat(), "tenant": tenant, "dataset": dataset,
+            "note": DEV_NOTE if profile is not None else LOADING_NOTE}
     if profile is not None:
         meta.update({"profile": profile.name, "llm_model": profile.llm_model,
                      "embedding_model": profile.embedding_model,

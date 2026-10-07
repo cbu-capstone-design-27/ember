@@ -36,12 +36,13 @@ from models.client import Client, ModelError
 from models.config import ROOT, ConfigError, load_dotenv, load_profile
 from models.identity import identity_for
 from ontology import tenant_subgraphs
-from ontology.config import EmbeddingMismatch
+from ontology.config import EmbeddingMismatch, check_embedding_identity
 
 from .loading import run_loading, score_loading
 from .results import BenchmarkError, build_meta, render_summary, save_result
 from .retrieval_suite import docs_from, load_questions, run_retrieval
 
+SPEC_KEYS = {"max_reject_rate", "nodes", "fields", "edges"}
 HERE = Path(__file__).parent
 DATA, RESULTS = HERE / "data", HERE / "results"
 
@@ -68,6 +69,9 @@ def load_spec(path: Path) -> dict:
 
     if not isinstance(spec, dict):
         bad("the top level must be an object")
+    unknown = sorted(set(spec) - SPEC_KEYS)
+    if unknown:
+        bad(f"unknown key {', '.join(map(repr, unknown))} (allowed: {', '.join(sorted(SPEC_KEYS))})")
     rate = spec.get("max_reject_rate", 0.0)
     if isinstance(rate, bool) or not isinstance(rate, (int, float)):
         bad("max_reject_rate must be a number")
@@ -216,6 +220,12 @@ def main(argv: list[str] | None = None) -> int:
         if not reads_existing_graph:
             _check_input(args.input)
         writer = _writer(args)
+
+        if args.neo4j and needs_models:
+            # --neo4j resets the tenant, so a different recorded embedding model must be found out first.
+            recorded = writer.read_embedding_identity()
+            if recorded is not None:
+                check_embedding_identity(recorded, identity_for(profile))
 
         if reads_existing_graph:
             report = None

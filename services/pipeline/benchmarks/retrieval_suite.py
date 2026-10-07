@@ -29,15 +29,25 @@ class Doc:
 
 def load_questions(path: Path) -> tuple[dict, list[Question]]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise BenchmarkError(f"{path}: the top level must be an object with a questions list")
+    items = data.get("questions")
+    if not isinstance(items, list) or not items:
+        raise BenchmarkError(f"{path}: needs a non-empty questions list")
     questions, seen = [], set()
-    for item in data.get("questions", []):
-        qid, text, answers = item.get("id"), (item.get("question") or "").strip(), item.get("answers") or []
-        if not qid or qid in seen:
-            raise BenchmarkError(f"{path}: question id {qid!r} is missing or repeated")
-        if not text or not answers:
-            raise BenchmarkError(f"{path}: question {qid} needs text and at least one answer")
+    for item in items:
+        if not isinstance(item, dict):
+            raise BenchmarkError(f"{path}: each question must be an object with id, question and answers")
+        qid, text, answers = item.get("id"), item.get("question"), item.get("answers")
+        if not isinstance(qid, str) or not qid or qid in seen:
+            raise BenchmarkError(f"{path}: question id {qid!r} is missing, not a string or repeated")
+        if not isinstance(text, str) or not text.strip():
+            raise BenchmarkError(f"{path}: question {qid} needs text (a string)")
+        if not (isinstance(answers, list) and answers
+                and all(isinstance(a, str) and a.strip() for a in answers)):
+            raise BenchmarkError(f"{path}: question {qid} needs at least one answer, as a list of non-empty strings")
         seen.add(qid)
-        questions.append(Question(qid, text, tuple(answers)))
+        questions.append(Question(qid, text.strip(), tuple(answers)))
     return {k: v for k, v in data.items() if k != "questions"}, questions
 
 
