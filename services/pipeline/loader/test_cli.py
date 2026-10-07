@@ -37,8 +37,29 @@ class CliTests(unittest.TestCase):
     def test_missing_password_is_a_clear_error(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(SystemExit) as raised:
-                run_cli("--tenant", "brandon-dev", "--input", tmp)
+                run_cli("--tenant", "brandon-dev", "--input", tmp, "--no-dotenv")
         self.assertIn("NEO4J_PASSWORD", str(raised.exception))
+
+    def test_embed_without_a_key_stops_before_loading(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {}, clear=True):
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            with self.assertRaises(SystemExit) as raised:
+                run_cli("--tenant", "brandon-dev", "--input", str(Path(tmp) / "raw"), "--dry-run",
+                        "--embed", "--profile", "openai-dev", "--no-dotenv")
+        self.assertIn("OPENAI_API_KEY", str(raised.exception))
+
+    def test_embed_flag_embeds_in_a_dry_run(self):
+        env = {"OPENAI_API_KEY": "sk-test-not-real"}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch("loader.__main__.Client") as client_cls:
+            client_cls.return_value.embed.side_effect = lambda texts, **kw: [[0.0, 1.0] for _ in texts]
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            code, text = run_cli("--tenant", "brandon-dev", "--input", str(Path(tmp) / "raw"),
+                                 "--rejects", str(Path(tmp) / "r.jsonl"), "--dry-run",
+                                 "--embed", "--profile", "openai-dev", "--no-dotenv")
+        self.assertEqual(code, 0, text)
+        self.assertIn("embedded:       7", text)
+        self.assertNotIn("sk-test-not-real", text)
 
     def test_bad_tenant_is_a_clear_error(self):
         with tempfile.TemporaryDirectory() as tmp:

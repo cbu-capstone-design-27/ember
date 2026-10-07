@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from models.client import ModelError
+from models.config import ConfigError
 from ontology import tenant_subgraphs
+from ontology.config import EmbeddingMismatch
 
 from .check import check_graph
 from .conform import validate_mapped
@@ -47,7 +50,7 @@ def _envelope_problem(envelope) -> str | None:
     return None
 
 
-def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False) -> Report:
+def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False, embedder=None) -> Report:
     report = Report(rejects_path=str(rejects_path))
     group_ids = tenant_subgraphs(tenant)  # also validates the tenant name
     if not Path(root).is_dir():
@@ -129,8 +132,15 @@ def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False
             "is not in the graph (for example a link to a ticket outside the input)")
     report.warnings += sorted(set(ctx.warnings))
 
+    if embedder is not None:
+        # An embedding failure is reported, not raised: the graph above is already written and stays.
+        try:
+            report.embedded = embedder(writer, group_ids)
+        except (EmbeddingMismatch, ModelError, ConfigError) as exc:
+            report.problems.append(f"embedding step failed: {exc}")
+
     facts = writer.read_facts(group_ids)
     report.node_counts = dict(facts.node_counts)
-    report.problems = check_graph(facts)
+    report.problems += check_graph(facts)
 
     return report

@@ -17,6 +17,7 @@ class Report:
     warnings: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     rejects_path: str = ""
+    embedded: int | None = None
 
     @property
     def exit_code(self) -> int:
@@ -34,6 +35,8 @@ class Report:
             f"edges written:  {self.edges_written} merged of {self.edges_sent} sent "
             f"({self.edges_sent - self.edges_written} dropped, endpoint not in graph)",
         ]
+        if self.embedded is not None:
+            lines.append(f"embedded:       {self.embedded}")
         if self.node_counts:
             lines.append("nodes in graph: " + ", ".join(f"{k}={v}" for k, v in sorted(self.node_counts.items())))
         for warning in self.warnings:

@@ -97,6 +97,43 @@ class WriterTests(unittest.TestCase):
         self.assertEqual(sum(q.startswith("CREATE CONSTRAINT") for q in queries), 7)
         self.assertEqual(sum(q.startswith("CREATE INDEX") for q in queries), 9)
 
+    def test_identity_is_created_never_overwritten(self):
+        from ontology.config import EmbeddingIdentity
+
+        driver = FakeDriver()
+        w = Neo4jWriter("bolt://x", "u", "p", driver=driver)
+        w.write_embedding_identity(EmbeddingIdentity("m", "r", 1024, "{query}"))
+        query, params = driver.log[0]
+        self.assertIn("MERGE (c:EmberConfig {key: 'embedding'}) ON CREATE SET", query)
+        self.assertNotIn("ON MATCH", query)
+        self.assertEqual((params["model"], params["dimension"]), ("m", 1024))
+
+    def test_read_identity_returns_none_when_absent_and_the_record_when_present(self):
+        from ontology.config import EmbeddingIdentity
+
+        self.assertIsNone(Neo4jWriter("bolt://x", "u", "p", driver=FakeDriver(rows=[[]])).read_embedding_identity())
+        row = {"model": "m", "revision": "r", "dimension": 8, "query_template": "{query}"}
+        got = Neo4jWriter("bolt://x", "u", "p", driver=FakeDriver(rows=[[row]])).read_embedding_identity()
+        self.assertEqual(got, EmbeddingIdentity("m", "r", 8, "{query}"))
+
+    def test_write_embeddings_sets_vector_and_hash_by_label(self):
+        driver = FakeDriver()
+        Neo4jWriter("bolt://x", "u", "p", driver=driver).write_embeddings(
+            [{"label": "WorkItem", "uuid": "u1", "group_id": G, "vector": [0.5], "hash": "h"}])
+        query, params = driver.log[0]
+        self.assertIn("MATCH (n:WorkItem", query)
+        self.assertIn("SET n.embedding = row.vector", query)
+        self.assertEqual(params["rows"][0]["vector"], [0.5])
+
+    def test_reloading_a_node_never_sends_the_embedding_so_it_is_not_wiped(self):
+        driver = FakeDriver()
+        node = NodeRec("WorkItem", G, "a#1", {"source": "github", "kind": "issue", "external_id": "a#1",
+                                              "embed_text": "hello"})
+        Neo4jWriter("bolt://x", "u", "p", driver=driver).write_nodes([node])
+        query, params = driver.log[0]
+        self.assertIn("SET n += row.props", query)  # merges into existing properties, never replaces them
+        self.assertNotIn("embedding", params["rows"][0]["props"])
+
 
 if __name__ == "__main__":
     unittest.main()
