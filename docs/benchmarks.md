@@ -54,7 +54,7 @@ full-text and vector indexes are not used yet (see Gaps).
 Each suite writes one file in `services/pipeline/benchmarks/results/`:
 
 - retrieval: `<date>-retrieval-<tenant>-<profile>.json`, for example
-  `2026-10-07-retrieval-brandon-dev-openai-dev.json`. The profile is in the name so two profiles run
+  `2026-10-06-retrieval-brandon-dev-openai-dev.json`. The profile is in the name so two profiles run
   on the same day do not overwrite each other.
 - loading: `<date>-loading-<tenant>.json`. Loading makes no model calls, so there is no profile.
 
@@ -86,6 +86,7 @@ optional parts:
   values that node must carry.
 - `edges`: a list of `{type, src_label, src, dst_label, dst}` entries for relationships that must exist.
 
+Any other top-level key (a typo such as `edge`) is rejected with exit code 2.
 `benchmarks/data/loading_sample.json` is a worked example.
 
 Checks, each pass or fail:
@@ -99,7 +100,9 @@ Checks, each pass or fail:
 | `field <ref> <name>` | sampled items carry the right values (status, state, branches, names) |
 | `edge <type> <from> -> <to>` | sampled relationships exist (a pull request resolves its issue, a reply points at its parent, and so on) |
 
-Score: percent of checks passed, per source and overall (the first three checks count under `all`).
+Score: percent of checks passed, per source, plus a separate run-wide group (`all`) that holds only the
+first three checks (`records accounted for`, `reject rate`, `schema check`). There is no overall
+percent across the two; report the per-source scores and the run-wide group separately.
 Target: 100%. A failure is a bug in the loader or an out-of-date expectation, and the detail says
 which check failed and what was found.
 
@@ -121,7 +124,8 @@ unique and each question needs text and at least one answer. Rules for writing t
   exit code 2 before anything is embedded.
 - Cover every source that has data. A second person reads each question and checks the answer.
 
-Systems compared (all over the same text, the node's `embed_text`):
+Systems compared (all over the same text, the node's `embed_text`; one caveat: the vectors see only the
+first 24,000 characters of it, while BM25 sees the full text):
 
 | System | How it ranks |
 | --- | --- |
@@ -157,8 +161,8 @@ Every retrieval result file stores:
 - the development-model note: "Scores come from the cheap development models named here. They are
   not comparable with scores from other models or from other data versions."
 
-Loading results carry the date, tenant, spec name, load counts and the same note, and the full list
-of checks with their detail. No key or URL is ever written to a result file.
+Loading results carry the date, tenant, spec name, load counts and a note of their own (they make no
+model calls, so no model is named), and the full list of checks with their detail. No key or URL is ever written to a result file.
 
 Compare runs only when the data version and models match, or say what changed.
 
@@ -172,7 +176,7 @@ three things that are not in the repository:
 2. The real brandon-dev raw data under `data/raw/brandon-dev/` (the `data/` folder is not in git).
 3. The two hand-written files for that tenant: `benchmarks/data/loading_brandon-dev.json` and
    `benchmarks/data/questions_brandon-dev.json` (20 to 30 questions, written by a person under the
-   rules above). These are Task 7 of the benchmark plan.
+   rules above). Writing these is the baseline step below.
 
 Then run, from `services/pipeline`:
 
@@ -181,11 +185,20 @@ python -m benchmarks run --tenant brandon-dev --input ../../data/raw/brandon-dev
 ```
 
 and copy the printed tables here, with the date, data version and model names from the result files.
+For loading, copy the per-source scores and the run-wide group (`all`) as separate lines; do not
+quote `all` as an overall percent.
+
+Also:
+
+- Optionally rerun with `--neo4j` to confirm the numbers match the in-memory run. This is the only
+  real test of the Neo4j snapshot query. The benchmark reads the `NEO4J_*` environment variables, so
+  a run against the cluster needs them set in the shell (Tailscale up, the password from `.env`).
+- Never delete failing checks or questions to reach 100%. Record them as gaps.
 
 | Suite | Result | Date | Data version | Models |
 | --- | --- | --- | --- | --- |
-| Loading correctness | Not yet recorded | | | none |
-| Retrieval: `bm25` | Not yet recorded | | | `text-embedding-3-small` (embeddings only matter for `vector` and `hybrid`) |
+| Loading correctness (per source, and run-wide separately) | Not yet recorded | | n/a | none |
+| Retrieval: `bm25` | Not yet recorded | | | none |
 | Retrieval: `vector` | Not yet recorded | | | `text-embedding-3-small` |
 | Retrieval: `hybrid` | Not yet recorded | | | `text-embedding-3-small` |
 
