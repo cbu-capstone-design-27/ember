@@ -13,6 +13,9 @@
 #   # one-off Slack backfill (exits when done; resumes if re-run; output in volume slack-backfill-data):
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile slack-backfill run --rm --build slack-backfill
+#   # Ember web app on http://localhost:3000 (SQLite in volume web-data):
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile web up --build web
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile jira-ingestion up --build jira-ingestion
 #   docker compose -f infra/docker-compose.yml --env-file .env \
@@ -175,8 +178,27 @@ services:
       GITLAB_PROJECT: "${GITLAB_PROJECT:-}"
       GITLAB_PULL_CONCURRENCY: "${GITLAB_PULL_CONCURRENCY:-8}"
 
+  # EMBER-51. The web app: sign-up, log-in, dashboard. Not part of the default `up`.
+  # DATABASE_URL picks the database: file:/data/ember.db (SQLite, default) or
+  # postgres://user:pass@host:5432/db (Postgres) with no other change.
+  web:
+    profiles: ["web"]
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    container_name: ember-web
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: "${DATABASE_URL:-file:/data/ember.db}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env (openssl rand -hex 32)}"
+      BETTER_AUTH_URL: "${BETTER_AUTH_URL:-http://localhost:3000}"
+    volumes:
+      - web-data:/data
+
 volumes:
   neo4j-data:
   neo4j-logs:
   embedding-models:
   slack-backfill-data:
+  web-data:

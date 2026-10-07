@@ -23,7 +23,7 @@ Monorepo. Each top-level area is a stub until its own ticket lands code.
 
 ```
 apps/
-  web/          Web frontend
+  web/          Web app: Next.js + Better Auth, sign-up / log-in (EMBER-51, ADR 0005)
   cli/          Command-line interface
   mcp/          MCP server exposing the graph to AI coding tools
 services/
