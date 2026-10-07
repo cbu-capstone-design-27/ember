@@ -24,7 +24,7 @@ class BM25:
         self.idf = {term: math.log(1 + (n - d + 0.5) / (d + 0.5)) for term, d in df.items()}
 
     def rank(self, query: str, k: int) -> list[str]:
-        terms = set(tokenize(query))
+        terms = sorted(set(tokenize(query)))
         scores: dict[str, float] = {}
         for ref, tf in self.tf.items():
             score = 0.0
@@ -39,12 +39,15 @@ class BM25:
 
 
 def cosine(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b):
+        raise ValueError(f"vectors must have same length: {len(a)} != {len(b)}")
     dot = sum(x * y for x, y in zip(a, b))
     na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(y * y for y in b))
     return dot / (na * nb) if na and nb else 0.0
 
 
 def vector_rank(query_vector: list[float], vectors: dict[str, list[float]], k: int) -> list[str]:
+    # Returns all documents including zero or negative scores, unlike BM25.rank which filters by score > 0.
     scores = {ref: cosine(query_vector, vector) for ref, vector in vectors.items()}
     return sorted(scores, key=lambda r: (-scores[r], r))[:k]
 
