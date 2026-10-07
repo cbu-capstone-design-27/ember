@@ -8,6 +8,7 @@ from unittest import mock
 
 from loader.__main__ import main
 from loader.testdata import write_sample
+from models.client import ModelError
 
 
 def run_cli(*args):
@@ -70,6 +71,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertIn("embedded:       7", text)
         self.assertNotIn("sk-test-not-real", text)
+
+    def test_profile_without_embed_is_a_parser_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as raised:
+                run_cli("--tenant", "brandon-dev", "--input", tmp, "--dry-run", "--profile", "openai-dev")
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--profile only applies with --embed", err.getvalue())
+
+    def test_a_model_error_while_embedding_exits_one_with_a_stderr_line(self):
+        env = {"OPENAI_API_KEY": "sk-test-not-real"}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env, clear=True),                 mock.patch("loader.__main__.Client") as client_cls:
+            client_cls.return_value.embed.side_effect = ModelError("/embeddings returned HTTP 400: too long")
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code, text = run_cli("--tenant", "brandon-dev", "--input", str(Path(tmp) / "raw"),
+                                     "--rejects", str(Path(tmp) / "r.jsonl"), "--dry-run",
+                                     "--embed", "--profile", "openai-dev", "--no-dotenv")
+        self.assertEqual(code, 1)
+        self.assertIn("nodes written:", text)  # the normal report is still printed
+        self.assertEqual(err.getvalue().strip(), "error: embedding step failed: /embeddings returned HTTP 400: too long")
+        self.assertNotIn("sk-test-not-real", text + err.getvalue())
 
     def test_bad_tenant_is_a_clear_error(self):
         with tempfile.TemporaryDirectory() as tmp:

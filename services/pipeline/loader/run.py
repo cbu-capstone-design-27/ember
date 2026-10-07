@@ -137,7 +137,8 @@ def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False
         try:
             report.embedded = embedder(writer, group_ids)
         except (EmbeddingMismatch, ModelError, ConfigError) as exc:
-            report.problems.append(f"embedding step failed: {exc}")
+            report.embedding_error = f"embedding step failed: {exc}"
+            report.problems.append(report.embedding_error)
 
     facts = writer.read_facts(group_ids)
     report.node_counts = dict(facts.node_counts)

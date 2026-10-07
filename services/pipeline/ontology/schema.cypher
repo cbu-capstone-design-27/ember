@@ -12,7 +12,8 @@ CREATE CONSTRAINT change_source_key IF NOT EXISTS FOR (n:Change) REQUIRE (n.grou
 CREATE CONSTRAINT conversation_source_key IF NOT EXISTS FOR (n:Conversation) REQUIRE (n.group_id, n.source, n.external_id) IS UNIQUE;
 CREATE CONSTRAINT message_source_key IF NOT EXISTS FOR (n:Message) REQUIRE (n.group_id, n.source, n.external_id) IS UNIQUE;
 
-// Embedding identity record (ADR 0001). Written once at first startup from ontology.config.EXPECTED.
+// Embedding identity record (ADR 0001). Written once, on the first successful embed, from the active model
+// profile's identity (models.identity.identity_for); ontology.config.EXPECTED is only the local-spark default.
 // MERGE (c:EmberConfig {key: 'embedding'})
 //   ON CREATE SET c.model = $model, c.revision = $revision, c.dimension = $dimension,
 //                 c.query_template = $query_template, c.schema_version = $schema_version;

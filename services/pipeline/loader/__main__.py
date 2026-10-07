@@ -48,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profile", help="model profile for --embed (default: MODEL_PROFILE)")
     parser.add_argument("--no-dotenv", action="store_true", help="do not read the repo's .env")
     args = parser.parse_args(argv)
+    if args.profile and not args.embed:
+        parser.error("--profile only applies with --embed")
 
     try:
         subgraph_id(args.tenant, "github")
@@ -84,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(writer, "close"):
             writer.close()
     print(report.render())
+    if report.embedding_error:
+        print(f"error: {report.embedding_error}", file=sys.stderr)
     return report.exit_code
 
 

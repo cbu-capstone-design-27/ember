@@ -1,8 +1,10 @@
 """Graph-side record of the embedding identity and schema version (ADR 0001, EMBER-34).
 
-Stored as one (:EmberConfig {key: 'embedding'}) node. Services that embed or query
-compare it with EXPECTED at startup and refuse to run on a mismatch. A mismatch means
-a different model, so the fix is a full rebuild, not a config edit.
+Stored as one (:EmberConfig {key: 'embedding'}) node. The identity comes from the active model
+profile (models.identity.identity_for) and is recorded once, on the first successful embed. Services
+that embed or query compare the recorded identity with theirs and refuse to run on a mismatch. A
+mismatch means a different model, so the fix is a full rebuild, not a config edit. EXPECTED is only
+the identity of the local-spark profile (the default).
 """
 
 from dataclasses import dataclass, fields

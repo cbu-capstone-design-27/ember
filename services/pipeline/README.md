@@ -77,7 +77,8 @@ The pipeline calls a chat model and an embedding model chosen by a profile in `c
 Keys are read from environment variables, never from the repository. Copy `.env.example` to `.env`,
 set `OPENAI_API_KEY`, and set a monthly spending limit on the provider account.
 
-Check that the models answer (one chat call and one embedding call, a few cents at most):
+Check that the models answer (one chat call and one embedding call, a few cents at most). The first
+command runs from `services/pipeline`; the docker command runs from the repo root:
 
     cd services/pipeline && python -m models smoke
     docker compose -f infra/docker-compose.yml --env-file .env --profile pipeline run --rm \
@@ -86,6 +87,9 @@ Check that the models answer (one chat call and one embedding call, a few cents 
 Embed during a load:
 
     python -m loader --tenant brandon-dev --input ../../data/raw/brandon-dev --embed
+
+`--dry-run --embed` still calls the paid embedding API (only Neo4j is skipped). `--profile` only matters
+with `--embed`; without it the loader exits with a usage error.
 
 Under compose the arguments after the service name replace `command:` entirely, so enabling `--embed`
 means giving the full list:

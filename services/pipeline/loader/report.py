@@ -18,6 +18,7 @@ class Report:
     problems: list[str] = field(default_factory=list)
     rejects_path: str = ""
     embedded: int | None = None
+    embedding_error: str = ""  # one line for stderr when the embedding step failed
 
     @property
     def exit_code(self) -> int:
