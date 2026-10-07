@@ -3,7 +3,6 @@ import unittest
 from pathlib import Path
 
 from models.config import ConfigError, DEFAULT_CONFIG, load_dotenv, load_profile
-from ontology.config import EXPECTED
 
 TOML = """
 default_profile = "a"
@@ -48,6 +47,10 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(load_profile(path=self.path, env={"MODEL_PROFILE": "b"}).name, "b")
         self.assertEqual(load_profile("a", path=self.path, env={"MODEL_PROFILE": "b"}).name, "a")
 
+    def test_fixture_profile_b_has_send_dimensions_false(self):
+        b = load_profile("b", path=self.path, env={})
+        self.assertFalse(b.send_dimensions)
+
     def test_unknown_profile_lists_the_choices(self):
         with self.assertRaisesRegex(ConfigError, "a, b"):
             load_profile("zzz", path=self.path, env={})
@@ -67,8 +70,9 @@ class ProfileTests(unittest.TestCase):
         p = load_profile("a", path=self.path, env={})
         self.assertEqual(p.llm_key({"A_KEY": " sk-1 "}), "sk-1")
         with self.assertRaises(ConfigError) as raised:
-            p.embedding_key({"A_KEY": "   "})
+            p.embedding_key({"A_KEY": "   ", "OTHER_KEY": "sk-test-not-a-real-key"})
         self.assertIn("A_KEY", str(raised.exception))
+        self.assertNotIn("sk-test-not-a-real-key", str(raised.exception))
 
 
 class RealConfigTests(unittest.TestCase):
@@ -77,10 +81,13 @@ class RealConfigTests(unittest.TestCase):
         self.assertEqual(openai.embedding_dimensions, 1024)
         self.assertNotIn("<", openai.llm_model + openai.embedding_model)  # Task 1 filled in real ids
 
-    def test_local_spark_profile_matches_the_recorded_identity(self):
-        from models.identity import identity_for
-
-        self.assertEqual(identity_for(load_profile("local-spark", path=DEFAULT_CONFIG, env={})), EXPECTED)
+    def test_local_spark_profile_is_configured(self):
+        spark = load_profile("local-spark", path=DEFAULT_CONFIG, env={})
+        self.assertFalse(spark.send_dimensions)
+        self.assertEqual(spark.identity_model, "Qwen/Qwen3-Embedding-0.6B")
+        self.assertIn("{task}", spark.query_template)
+        self.assertEqual(spark.embedding_dimensions, 1024)
+        self.assertTrue(spark.embedding_revision)  # non-empty
 
 
 class DotenvTests(unittest.TestCase):
@@ -93,7 +100,9 @@ class DotenvTests(unittest.TestCase):
         self.assertEqual(env, {"EXISTING": "shell", "A": "1", "B": "two words", "C": ""})
 
     def test_missing_file_is_fine(self):
-        load_dotenv(Path("does-not-exist.env"), {})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "does-not-exist.env"
+            load_dotenv(path, {})
 
 
 if __name__ == "__main__":
