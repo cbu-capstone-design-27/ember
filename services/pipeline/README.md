@@ -41,9 +41,23 @@ under Docker give the full list:
       --tenant brandon-dev --input /data/raw/brandon-dev --rejects /data/out/rejects.jsonl --reset
 
 With the default `PIPELINE_NEO4J_URI` (`bolt://neo4j:7687`) the compose Neo4j must be up first:
-`docker compose -f infra/docker-compose.yml --env-file .env up -d neo4j`. On Linux hosts
+`docker compose -f infra/docker-compose.yml --env-file .env up -d neo4j`. To load into the shared
+cluster instead, set `PIPELINE_NEO4J_URI` to its `bolt://` address and the cluster's
+`PIPELINE_NEO4J_USER` / `PIPELINE_NEO4J_PASSWORD` in `.env`. The pipeline reads these instead of
+`NEO4J_USER` / `NEO4J_PASSWORD`, which keep configuring the local compose Neo4j. To load another
+data folder (for example Ryan's synthetic data), mount it under `data/` and set
+`PIPELINE_INPUT=/data/raw/<folder>` (a path inside the container); the default is
+`/data/raw/<EMBER_TENANT>`. On Linux hosts
 `data/out` must be writable by the container user (`nobody`) for `rejects.jsonl`:
 `mkdir -p data/out && chmod a+rwX data/out`.
+
+A rerun without `--reset` only adds or updates data: it never removes properties or edges. When two
+records describe the same node and disagree, the later line in the input wins, except `embed_text`,
+where the longer value wins. Use `--reset` to start the tenant from scratch.
+
+The loader exits 2 without touching the database if the input folder is missing or holds no
+`*.jsonl` (files inside `*.parts` folders are ignored), and refuses `--reset` when no record in the
+input maps to a node, so a wrong path can never wipe a tenant.
 
 Records the loader cannot map go to `rejects.jsonl` (`data/out/rejects.jsonl` under compose) with
 a reason. The file is removed at the start of every run, so it only ever describes the latest run.
