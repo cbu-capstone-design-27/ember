@@ -10,7 +10,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <div className={styles.page}>
       <section className={styles.story} aria-hidden="true">
-        <Link href="/" className={styles.storyBrand} tabIndex={-1}>
+        <Link href="/" className={`${styles.storyBrand} on-dark`} tabIndex={-1}>
           <Wordmark size={30} />
         </Link>
         <div className={styles.storyBody}>

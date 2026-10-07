@@ -670,3 +670,9 @@ code,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* The logo glows on dark backgrounds, like the artwork. */
+:root[data-theme="dark"] .ember-mark,
+.on-dark .ember-mark {
+  filter: drop-shadow(0 0 5px rgba(255, 116, 32, 0.45));
+}

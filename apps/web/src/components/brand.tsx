@@ -4,36 +4,44 @@
 import type { JSX } from "react";
 import type { SourceId } from "../lib/sources.ts";
 
+/**
+ * The Ember logo: an orange flame, a yellow core, and a small graph of five
+ * nodes. app/icon.svg is the same drawing, used as the browser tab icon.
+ */
 export function EmberMark({ size = 28, className }: { size?: number; className?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" className={className} aria-hidden="true">
-      <defs>
-        <linearGradient id="ember-flame" x1="16" y1="2" x2="16" y2="30" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#fdba74" />
-          <stop offset="0.45" stopColor="#f97316" />
-          <stop offset="1" stopColor="#c2410c" />
-        </linearGradient>
-        <linearGradient id="ember-core" x1="16" y1="14" x2="16" y2="29" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#fef3c7" />
-          <stop offset="1" stopColor="#fbbf24" />
-        </linearGradient>
-      </defs>
+    <svg
+      width={size}
+      height={size}
+      viewBox="128 187 900 900"
+      className={className ? `ember-mark ${className}` : "ember-mark"}
+      aria-hidden="true"
+    >
       <path
-        fill="url(#ember-flame)"
-        d="M16 2.5c.9 3.8 3.3 6.1 5.4 8.5 2.1 2.3 4.1 5 4.1 8.7A9.5 9.5 0 0 1 16 29.3a9.5 9.5 0 0 1-9.5-9.6c0-3.4 1.6-5.8 3.5-7.8.3 2.3 1.3 3.8 3 4.5-.6-5.2 1.1-9.7 3-13.9z"
+        fill="#ff7420"
+        d="M575 1083C400 1083 285 985 285 850C285 775 303 720 330 683C337 730 357 765 392 787C366 702 372 600 430 503C486 410 548 320 525 192C625 248 702 345 702 475C702 565 678 615 686 670C716 600 757 556 800 527C792 600 830 662 856 722C872 762 872 812 868 852C858 990 740 1083 575 1083Z"
       />
       <path
-        fill="url(#ember-core)"
-        d="M16 28a4.8 4.8 0 0 1-4.8-4.8c0-2.5 1.8-4.3 3.3-6.1.4 1.6 1.2 2.6 2.4 3 .2-1.2.7-2.1 1.5-2.9 1.2 1.5 2.4 3.2 2.4 5.9A4.8 4.8 0 0 1 16 28z"
+        fill="#fdb73b"
+        d="M575 1080C452 1080 362 1002 362 902C362 862 365 836 372 815C392 840 412 853 444 863C414 790 412 700 462 620C504 556 572 500 583 428C640 482 652 560 652 632C654 702 680 742 712 772C716 745 722 722 730 703C774 750 795 820 790 882C784 1000 700 1080 575 1080Z"
       />
+      <path fill="none" stroke="#fbf3e6" strokeWidth="13" strokeLinecap="round" d="M568 822 497 698M568 822 447 937M568 822 715 853 751 938" />
+      <g fill="#fbf3e6">
+        <circle cx="568" cy="822" r="45" />
+        <circle cx="497" cy="698" r="27" />
+        <circle cx="447" cy="937" r="29" />
+        <circle cx="715" cy="853" r="24" />
+        <circle cx="751" cy="938" r="20" />
+      </g>
     </svg>
   );
 }
 
 export function Wordmark({ size = 28 }: { size?: number }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: size * 0.32 }}>
-      <EmberMark size={size} />
+    // The flame is tall and narrow, so it's drawn a little larger than the text to read at the same weight.
+    <span style={{ display: "inline-flex", alignItems: "center", gap: size * 0.2 }}>
+      <EmberMark size={Math.round(size * 1.25)} />
       <span style={{ fontWeight: 700, fontSize: size * 0.64, letterSpacing: "-0.03em" }}>ember</span>
     </span>
   );
