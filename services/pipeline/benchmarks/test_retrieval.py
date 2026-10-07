@@ -1,3 +1,4 @@
+import math
 import unittest
 
 from benchmarks.retrieval import BM25, cosine, mrr, rank_of, recall_at, rrf, tokenize, vector_rank
@@ -55,12 +56,20 @@ class BM25Tests(unittest.TestCase):
     def test_k_limits_the_list(self):
         self.assertEqual(len(BM25(self.DOCS).rank("the", 1)), 1)
 
-    def test_single_doc_ranks_by_idf(self):
-        # Single-doc corpus: {"a": "x"}, query "x"
-        # Verifies rank() works and score uses idf (vs constant)
-        bm = BM25({"a": "x"})
-        result = bm.rank("x", 10)
-        self.assertEqual(result, ["a"])
+    def test_idf_matches_formula_and_rare_term_outranks_common(self):
+        # N=3, "x" appears in 1 doc: idf = ln(1 + (3 - 1 + 0.5) / (1 + 0.5)) = ln(8/3) ~= 0.98083
+        bm = BM25({"a": "x y", "b": "y z z z", "c": "z w"})
+        self.assertAlmostEqual(bm.idf["x"], math.log(1 + (3 - 1 + 0.5) / (1 + 0.5)), places=9)
+        self.assertAlmostEqual(bm.idf["x"], 0.9808292530, places=6)
+        # "y" has df=2: idf = ln(1 + 1.5/2.5) ~= 0.47000, strictly below the rare term's idf
+        self.assertAlmostEqual(bm.idf["y"], math.log(1 + (3 - 2 + 0.5) / (2 + 0.5)), places=9)
+        self.assertLess(bm.idf["y"], bm.idf["x"])
+
+    def test_rare_term_match_outranks_common_term_match(self):
+        # Equal-length docs, tf=1 each: only idf separates "rare" (df=1) from "common" (df=2).
+        bm = BM25({"a": "common pad", "b": "rare pad", "c": "common pad"})
+        self.assertEqual(bm.rank("rare common", 10), ["b", "a", "c"])
+        # Under a constant idf all three docs tie and fall back to ref order: ["a", "b", "c"].
 
 
 class VectorTests(unittest.TestCase):
@@ -110,20 +119,15 @@ class FusionAndMetricTests(unittest.TestCase):
         result_rev = rrf([["b"], ["a"]])
         self.assertEqual(result_rev, ["a", "b"])
 
-    def test_rrf_c_parameter_affects_scores(self):
-        # c parameter changes the denominator: score += 1.0 / (c + position)
-        # With c=1: rank 1 gets 1/2=0.5, rank 2 gets 1/3≈0.333
-        # With c=60: rank 1 gets 1/61≈0.0164, rank 2 gets 1/62≈0.0161
-        # Rankings [["a", "b"], ["b", "c"]] with c=1: b gets 1/2+1/3≈0.833, a gets 0.5, c gets 0.333
-        result_c1 = rrf([["a", "b"], ["b", "c"]], c=1)
-        result_c60 = rrf([["a", "b"], ["b", "c"]], c=60)
-        # Both should have same order (b first), but scores differ
-        self.assertEqual(result_c1[0], "b")
-        self.assertEqual(result_c60[0], "b")
-        # Verify c=1 has larger score differences
-        # For c=1: b=1/2+1/3, a=1/2, c=1/3
-        self.assertAlmostEqual(1.0 / 2.0 + 1.0 / 3.0, 0.8333, places=4)
-        self.assertAlmostEqual(1.0 / 2.0, 0.5, places=4)
+    def test_rrf_c_parameter_changes_order(self):
+        # d is rank 4 in both lists; a is rank 1 in one list only.
+        # c=60: d = 2/64 = 0.03125 > a = 1/61 = 0.01639  -> d first
+        # c=1:  a = 1/2  = 0.5     > d = 2/5  = 0.4      -> a first
+        rankings = [["a", "x", "y", "d"], ["b", "u", "v", "d"]]
+        r60 = rrf(rankings, c=60)
+        r1 = rrf(rankings, c=1)
+        self.assertLess(r60.index("d"), r60.index("a"))
+        self.assertLess(r1.index("a"), r1.index("d"))
 
     def test_rank_of(self):
         self.assertEqual(rank_of(["x", "y", "z"], {"z", "q"}), 3)
