@@ -27,8 +27,26 @@ def _rel(name: str) -> str:
 
 
 def node_query(label: str) -> str:
-    return (f"UNWIND $rows AS row MERGE (n:{_label(label)} {{group_id: row.group_id, uuid: row.uuid}}) "
+    """Source-backed labels merge on the key the uniqueness constraints in schema.cypher cover,
+    (group_id, source, external_id), then stamp the uuid, so a node that already exists under a
+    different or missing uuid is adopted instead of tripping the constraint. Labels without a
+    source (Person) merge on (group_id, uuid)."""
+    if _label(label) in SOURCE_BACKED:
+        return (f"UNWIND $rows AS row MERGE (n:{label} "
+                "{group_id: row.group_id, source: row.source, external_id: row.external_id}) "
+                "SET n += row.props SET n.uuid = row.uuid")
+    return (f"UNWIND $rows AS row MERGE (n:{label} {{group_id: row.group_id, uuid: row.uuid}}) "
             "SET n += row.props")
+
+
+def _node_row(node: NodeRec) -> dict:
+    row = {"group_id": node.group_id, "uuid": node.uuid, "props": node.props}
+    if node.label in SOURCE_BACKED:
+        for key in ("source", "external_id"):
+            if not node.props.get(key):
+                raise ValueError(f"{node.label} {node.key!r} has no {key}; cannot merge on the schema key")
+            row[key] = node.props[key]
+    return row
 
 
 def edge_query(rel: str, src: str, dst: str) -> str:
@@ -72,7 +90,7 @@ class Neo4jWriter:
 
     def write_nodes(self, nodes: list[NodeRec]) -> int:
         for label, group in groupby(sorted(nodes, key=lambda n: n.label), key=lambda n: n.label):
-            rows = [{"group_id": n.group_id, "uuid": n.uuid, "props": n.props} for n in group]
+            rows = [_node_row(n) for n in group]
             for chunk in _chunks(rows):
                 self._run(node_query(label), rows=chunk)
         return len(nodes)

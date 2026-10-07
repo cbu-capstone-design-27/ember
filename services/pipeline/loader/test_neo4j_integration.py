@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 from loader.neo4j_writer import Neo4jWriter
+from loader.records import node_uuid
 from ontology import tenant_subgraphs
 
 URI = os.environ.get("NEO4J_TEST_URI")
@@ -70,6 +71,31 @@ class Neo4jIntegrationTests(unittest.TestCase):
             self.assertFalse(any(e and e.endswith("abc1234def") for e, _ in after))  # stale node removed
             self.assertTrue(after)
             self.assertEqual(self._external_ids(OTHER), theirs)  # the other tenant is untouched
+
+
+    def test_node_with_the_same_schema_key_but_another_uuid_is_adopted(self):
+        from loader.run import run
+        from loader.testdata import write_sample
+
+        group = tenant_subgraphs(TENANT)[0]  # the github subgraph
+        self.writer._run("CREATE (:WorkItem {group_id: $g, source: 'github', external_id: 'acme/widget#42', "
+                         "kind: 'issue', uuid: 'stale-uuid'})", g=group)
+        self.writer._run("CREATE (:Container {group_id: $g, source: 'github', external_id: 'acme/widget', "
+                         "kind: 'repository'})", g=group)  # exists with no uuid at all
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "raw"
+            write_sample(root, include_bad=False)
+            report = run(TENANT, root, self.writer, Path(tmp) / "rejects.jsonl")
+        self.assertEqual(report.problems, [], report.render())
+        for label, external_id in (("WorkItem", "acme/widget#42"), ("Container", "acme/widget")):
+            rows = self.writer._run(f"MATCH (n:{label}) WHERE n.group_id = $g AND n.external_id = $e "
+                                    "RETURN n.uuid AS u, n.source AS s", g=group, e=external_id)
+            self.assertEqual(len(rows), 1, (label, rows))
+            self.assertEqual(rows[0]["u"], node_uuid(group, label, external_id))
+        # edges still attach to the adopted node
+        linked = self.writer._run("MATCH (:Container {group_id: $g, external_id: 'acme/widget'})-[:CONTAINS]->"
+                                  "(w:WorkItem {external_id: 'acme/widget#42'}) RETURN count(w) AS c", g=group)
+        self.assertEqual(linked[0]["c"], 1)
 
 
 if __name__ == "__main__":

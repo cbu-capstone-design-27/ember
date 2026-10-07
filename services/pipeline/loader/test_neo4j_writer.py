@@ -37,7 +37,11 @@ class FakeDriver:
 
 class QueryTests(unittest.TestCase):
     def test_queries_use_only_whitelisted_names(self):
-        self.assertIn("MERGE (n:WorkItem {group_id: row.group_id, uuid: row.uuid})", node_query("WorkItem"))
+        self.assertIn("MERGE (n:WorkItem {group_id: row.group_id, source: row.source, external_id: row.external_id})",
+                      node_query("WorkItem"))
+        self.assertIn("SET n.uuid = row.uuid", node_query("WorkItem"))
+        self.assertIn("MERGE (n:Person {group_id: row.group_id, uuid: row.uuid})", node_query("Person"))
+        self.assertNotIn("external_id", node_query("Person"))
         self.assertIn("(a)-[r:AUTHORED]->(b)", edge_query("AUTHORED", "Person", "WorkItem"))
         with self.assertRaises(ValueError):
             node_query("WorkItem) DETACH DELETE (n")
@@ -57,6 +61,21 @@ class WriterTests(unittest.TestCase):
         rows = next(p["rows"] for q, p in driver.log if "n:WorkItem" in q)
         self.assertEqual(rows[0]["uuid"], n1.uuid)
         self.assertEqual(rows[0]["props"]["external_id"], "a#1")
+        self.assertEqual((rows[0]["source"], rows[0]["external_id"]), ("github", "a#1"))
+
+    def test_person_rows_carry_no_source_key_and_merge_on_uuid(self):
+        driver = FakeDriver()
+        w = Neo4jWriter("bolt://x", "u", "p", driver=driver)
+        person = NodeRec("Person", G, "github:octocat", {"name": "Octo"})
+        w.write_nodes([person])
+        query, params = driver.log[0]
+        self.assertIn("{group_id: row.group_id, uuid: row.uuid}", query)
+        self.assertEqual(params["rows"], [{"group_id": G, "uuid": person.uuid, "props": {"name": "Octo"}}])
+
+    def test_source_backed_node_without_a_schema_key_is_refused(self):
+        w = Neo4jWriter("bolt://x", "u", "p", driver=FakeDriver())
+        with self.assertRaisesRegex(ValueError, "external_id"):
+            w.write_nodes([NodeRec("WorkItem", G, "a#1", {"source": "github", "kind": "issue"})])
 
     def test_write_edges_sums_the_counts_neo4j_returns(self):
         driver = FakeDriver(rows=[[{"n": 2}]])
