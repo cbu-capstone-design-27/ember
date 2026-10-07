@@ -24,6 +24,7 @@ DATA = Path(__file__).parent / "data"
 PROFILE = Profile(name="test", llm_base_url="http://x", llm_model="chat-test", llm_key_env="K",
                   embedding_base_url="http://x", embedding_model="emb-test", embedding_dimensions=64,
                   embedding_key_env="K")
+KEY_ENV = {"OPENAI_API_KEY": "sk-x", "MODEL_PROFILE": "openai-dev"}
 
 
 class ResultsTests(unittest.TestCase):
@@ -32,6 +33,8 @@ class ResultsTests(unittest.TestCase):
         self.assertEqual(data_version([a, b]), data_version([b, a]))
         self.assertNotEqual(data_version([a, b]), data_version([a, Doc("x:2", "two!", [0.0])]))
         self.assertEqual(len(data_version([a])), 12)
+        self.assertEqual(data_version([a]), data_version([a], extra=""))
+        self.assertNotEqual(data_version([a]), data_version([a], extra="questions-v1"))
 
     def test_meta_names_the_models_and_carries_the_disclaimer(self):
         meta = build_meta("brandon-dev", "sample", PROFILE, [Doc("x:1", "one", [0.0])], today=date(2026, 10, 7))
@@ -55,6 +58,19 @@ class ResultsTests(unittest.TestCase):
         self.assertIn("not comparable", text)
         self.assertIn("llm l, embedding e", text)
 
+    def test_profiles_on_the_same_day_do_not_overwrite_each_other(self):
+        def result(suite, profile=None):
+            meta = {"date": "2026-10-07", "tenant": "t", "note": DEV_NOTE}
+            if profile:
+                meta["profile"] = profile
+            return {"suite": suite, "meta": meta, "scores": {}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            names = {save_result(result("retrieval", p), Path(tmp)).name for p in ("openai-dev", "local/spark")}
+            names.add(save_result(result("loading"), Path(tmp)).name)
+        self.assertEqual(names, {"2026-10-07-retrieval-t-openai-dev.json", "2026-10-07-retrieval-t-local-spark.json",
+                                 "2026-10-07-loading-t.json"})
+
 
 class RunSuitesTests(unittest.TestCase):
     def test_both_suites_on_the_sample_data(self):
@@ -73,13 +89,32 @@ class RunSuitesTests(unittest.TestCase):
             self.assertEqual(results[1]["scores"]["hybrid"]["recall@10"], 1.0)
             self.assertEqual(results[1]["meta"]["embedding_model"], "emb-test")
             self.assertEqual(results[1]["meta"]["note"], DEV_NOTE)
-            self.assertEqual(sorted(p.name for p in out.iterdir()),
-                             [f"{date.today()}-loading-brandon-dev.json", f"{date.today()}-retrieval-brandon-dev.json"])
-            self.assertEqual(len(results[0]["checks"]), len(json.loads((out / f"{date.today()}-loading-brandon-dev.json")
-                                                                       .read_text(encoding="utf-8"))["checks"]))
+            # File names are checked against the date recorded in the results, so a run across midnight cannot flake.
+            day = results[0]["meta"]["date"]
+            names = sorted(p.name for p in out.iterdir())
+            self.assertEqual(names, [f"{day}-loading-brandon-dev.json", f"{day}-retrieval-brandon-dev-test.json"])
+            self.assertEqual(results[1]["meta"]["date"], day)
+            self.assertEqual((results[0]["meta"]["rejected"], results[0]["meta"]["problems"]), (0, 0))
+            saved = json.loads((out / names[0]).read_text(encoding="utf-8"))
+            self.assertEqual(len(results[0]["checks"]), len(saved["checks"]))
 
 
 class CliTests(unittest.TestCase):
+    def _run_cli(self, tmp, *extra, env=None, client=None, suite="loading", spec=None, questions=None):
+        out, err = io.StringIO(), io.StringIO()
+        argv = ["run", "--suite", suite, "--tenant", "brandon-dev", "--input", str(Path(tmp) / "raw"),
+                "--no-dotenv", "--out", str(Path(tmp) / "out"), "--rejects", str(Path(tmp) / "r.jsonl"),
+                "--spec", str(spec or DATA / "loading_sample.json"),
+                "--questions", str(questions or DATA / "questions_sample.json"), *extra]
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.dict(os.environ, env or {}, clear=True))
+            if client is not None:
+                stack.enter_context(mock.patch("benchmarks.__main__.Client", client))
+            stack.enter_context(contextlib.redirect_stdout(out))
+            stack.enter_context(contextlib.redirect_stderr(err))
+            code = main(argv)
+        return code, out.getvalue(), err.getvalue()
+
     def test_retrieval_without_a_key_exits_one_naming_the_variable(self):
         with tempfile.TemporaryDirectory() as tmp:
             write_sample(Path(tmp) / "raw", include_bad=False)
@@ -88,6 +123,7 @@ class CliTests(unittest.TestCase):
                     contextlib.redirect_stderr(err):
                 code = main(["run", "--suite", "retrieval", "--tenant", "brandon-dev",
                              "--input", str(Path(tmp) / "raw"), "--no-dotenv",
+                             "--rejects", str(Path(tmp) / "r.jsonl"),
                              "--questions", str(DATA / "questions_sample.json")])
         self.assertEqual(code, 1)
         self.assertIn("OPENAI_API_KEY", err.getvalue())
@@ -115,15 +151,132 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("github:acme/widget#42\tLogin redirect drops the query string", out.getvalue())
 
-    def test_missing_input_folder_exits_two(self):
+    def test_missing_input_folder_exits_two_and_keeps_the_previous_rejects_file(self):
         with tempfile.TemporaryDirectory() as tmp:
+            rejects = Path(tmp) / "r.jsonl"
+            rejects.write_text("previous run\n", encoding="utf-8")
             err = io.StringIO()
             with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stderr(err):
                 code = main(["run", "--suite", "loading", "--tenant", "brandon-dev",
-                             "--input", str(Path(tmp) / "nope"), "--no-dotenv",
+                             "--input", str(Path(tmp) / "nope"), "--no-dotenv", "--rejects", str(rejects),
                              "--spec", str(DATA / "loading_sample.json"), "--out", str(Path(tmp) / "out")])
+            self.assertEqual(code, 2)
+            self.assertIn("input folder does not exist", err.getvalue())
+            self.assertEqual(rejects.read_text(encoding="utf-8"), "previous run\n")
+
+    def test_bad_spec_or_questions_exit_two_before_anything_is_loaded_or_sent(self):
+        class ForbiddenClient:
+            def __init__(self, profile):
+                raise AssertionError("the model client must not be created")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            bad_json, bad_shape, no_answers = (Path(tmp) / n for n in ("a.json", "b.json", "c.json"))
+            bad_json.write_text("{not json", encoding="utf-8")
+            bad_shape.write_text('{"nodes": [1, 2]}', encoding="utf-8")
+            no_answers.write_text('{"questions": [{"id": "q1", "question": "why?"}]}', encoding="utf-8")
+            missing = Path(tmp) / "missing.json"
+            cases = [("loading", {"spec": missing}, "cannot read the loading spec"),
+                     ("loading", {"spec": bad_json}, "not valid JSON"),
+                     ("loading", {"spec": bad_shape}, "malformed"),
+                     ("retrieval", {"questions": missing}, "cannot read the questions"),
+                     ("retrieval", {"questions": bad_json}, "not valid JSON"),
+                     ("retrieval", {"questions": no_answers}, "at least one answer"),
+                     ("all", {"spec": bad_json}, "not valid JSON")]
+            with mock.patch("benchmarks.__main__.run_loader") as loader:
+                for suite, files, expected in cases:
+                    with self.subTest(suite=suite, files=files):
+                        code, _, err = self._run_cli(tmp, suite=suite, client=ForbiddenClient, env=KEY_ENV, **files)
+                        self.assertEqual(code, 2)
+                        self.assertIn(expected, err)
+                        self.assertNotIn("Traceback", err)
+                loader.assert_not_called()
+
+    def test_unknown_answer_refs_exit_two_before_any_embedding(self):
+        calls = []
+
+        class CountingClient:
+            def __init__(self, profile):
+                pass
+
+            def embed(self, texts, **kwargs):
+                calls.append(len(texts))
+                return bag_of_words_embed(texts)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            questions = Path(tmp) / "q.json"
+            questions.write_text(json.dumps({"questions": [
+                {"id": "q1", "question": "login redirect", "answers": ["github:acme/widget#9999"]}]}),
+                encoding="utf-8")
+            code, _, err = self._run_cli(tmp, suite="retrieval", client=CountingClient, questions=questions,
+                                         env=KEY_ENV)
         self.assertEqual(code, 2)
-        self.assertIn("input folder does not exist", err.getvalue())
+        self.assertIn("github:acme/widget#9999", err)
+        self.assertEqual(calls, [])
+
+    def test_docs_with_neo4j_only_reads_and_never_resets_or_loads(self):
+        class ReadOnlyWriter:
+            closed = False
+
+            def embed_candidates(self, group_ids):
+                return [{"label": "WorkItem", "uuid": "u", "group_id": group_ids[0], "key": "acme/widget#1",
+                         "text": "Existing  node", "hash": None, "vector": None}]
+
+            def close(self):
+                self.closed = True
+
+            def __getattr__(self, name):  # reset, write_nodes, ensure_schema, ...
+                raise AssertionError(f"docs must not call {name}")
+
+        writer = ReadOnlyWriter()
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch("benchmarks.__main__._writer", return_value=writer), \
+                mock.patch("benchmarks.__main__.run_loader") as loader, contextlib.redirect_stdout(out):
+            code = main(["docs", "--tenant", "brandon-dev", "--neo4j", "--no-dotenv"])
+        self.assertEqual(code, 0)
+        loader.assert_not_called()
+        self.assertTrue(writer.closed)
+        self.assertIn("github:acme/widget#1\tExisting node", out.getvalue())
+
+    def test_run_with_neo4j_resets_the_tenant_through_the_loader(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            with mock.patch("benchmarks.__main__._writer", return_value=MemoryWriter()), \
+                    mock.patch("benchmarks.__main__.run_loader", wraps=run) as loader:
+                code, _, err = self._run_cli(tmp, "--neo4j")
+        self.assertEqual(code, 0, err)
+        self.assertIs(loader.call_args.kwargs["reset"], True)
+
+    def test_failed_loading_check_exits_one_after_saving_the_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            spec = json.loads((DATA / "loading_sample.json").read_text(encoding="utf-8"))
+            spec["nodes"]["github"]["WorkItem"] = 99
+            spec_path = Path(tmp) / "spec.json"
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+            code, out, err = self._run_cli(tmp, spec=spec_path)
+            saved = list((Path(tmp) / "out").glob("*-loading-brandon-dev.json"))
+        self.assertEqual(code, 1)
+        self.assertEqual(len(saved), 1)
+        self.assertIn("FAILED", out)
+        self.assertIn("1 loading checks failed", err)
+
+    def test_rejected_records_exit_one_and_are_recorded_in_the_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_sample(Path(tmp) / "raw", include_bad=True)
+            spec = json.loads((DATA / "loading_sample.json").read_text(encoding="utf-8"))
+            spec["max_reject_rate"] = 1.0  # tolerate rejects, so only the clean-load rule is under test
+            spec_path = Path(tmp) / "spec.json"
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+            code, out, err = self._run_cli(tmp, spec=spec_path)
+            (path,) = (Path(tmp) / "out").glob("*-loading-brandon-dev.json")
+            meta = json.loads(path.read_text(encoding="utf-8"))["meta"]
+        self.assertEqual(code, 1, out)
+        self.assertGreater(meta["rejected"], 0)
+        self.assertIn("records were rejected", err)
+        self.assertIn("load was not clean", out)
 
     def test_retrieval_cli_with_a_fake_client_records_models_and_no_key(self):
         secret = "sk-test-secret-value"
@@ -137,23 +290,20 @@ class CliTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             write_sample(Path(tmp) / "raw", include_bad=False)
-            out, out_dir = io.StringIO(), Path(tmp) / "out"
-            env = {"OPENAI_API_KEY": secret, "MODEL_PROFILE": "openai-dev"}
-            with mock.patch.dict(os.environ, env, clear=True), mock.patch("benchmarks.__main__.Client", FakeClient), \
-                    contextlib.redirect_stdout(out):
-                code = main(["run", "--suite", "retrieval", "--tenant", "brandon-dev",
-                             "--input", str(Path(tmp) / "raw"), "--no-dotenv", "--out", str(out_dir),
-                             "--questions", str(DATA / "questions_sample.json"),
-                             "--rejects", str(Path(tmp) / "r.jsonl")])
-            self.assertEqual(code, 0, out.getvalue())
-            saved = (out_dir / f"{date.today()}-retrieval-brandon-dev.json").read_text(encoding="utf-8")
+            out_dir = Path(tmp) / "out"
+            code, out, err = self._run_cli(tmp, suite="retrieval", client=FakeClient,
+                                           env={"OPENAI_API_KEY": secret, "MODEL_PROFILE": "openai-dev"})
+            self.assertEqual(code, 0, out + err)
+            (path,) = out_dir.glob("*-retrieval-brandon-dev-openai-dev.json")
+            saved = path.read_text(encoding="utf-8")
             meta = json.loads(saved)["meta"]
             self.assertEqual(meta["embedding_model"], "text-embedding-3-small")
             self.assertEqual(meta["llm_model"], "gpt-5-nano")
             self.assertEqual(meta["note"], DEV_NOTE)
+            self.assertEqual((meta["rejected"], meta["problems"]), (0, 0))
             self.assertNotIn(secret, saved)
-            self.assertNotIn(secret, out.getvalue())
-            self.assertIn("not comparable", out.getvalue())
+            self.assertNotIn(secret, out + err)
+            self.assertIn("not comparable", out)
 
 
 if __name__ == "__main__":
