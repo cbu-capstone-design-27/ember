@@ -52,6 +52,14 @@ class Neo4jSnapshotTests(unittest.TestCase):
         snap = Neo4jWriter("bolt://x", "u", "p", driver=driver).snapshot(["t_github"])
         self.assertIn("external_id IS NOT NULL", driver.log[0][0])
         self.assertEqual(driver.log[0][1]["gids"], ["t_github"])
+        node_query, edge_query = driver.log[0][0], driver.log[1][0]
+        self.assertEqual(driver.log[1][1]["gids"], ["t_github"])
+        for text in ("a.group_id IN $gids", "b.group_id IN $gids", "r.group_id IN $gids"):
+            self.assertIn(text, edge_query)
+        for text in ("n.external_id <> ''", "n.source <> ''"):
+            self.assertIn(text, node_query)
+        for text in ("a.external_id <> ''", "b.external_id <> ''", "a.source <> ''", "b.source <> ''"):
+            self.assertIn(text, edge_query)
         self.assertEqual(snap.nodes, [{"label": "WorkItem", "ref": "github:a#1", "source": "github",
                                        "props": {"source": "github", "external_id": "a#1", "status": "open"}}])
         self.assertEqual(snap.edges, [{"type": "CONTAINS", "src_label": "Container", "src": "github:a",
