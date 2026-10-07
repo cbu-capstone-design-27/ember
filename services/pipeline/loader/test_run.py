@@ -67,17 +67,41 @@ class RunTests(unittest.TestCase):
         self.assertIn("repository", "\n".join(r["reason"] for r in rejects))
         self.assertGreater(report.node_counts["WorkItem"], 0)   # good records still loaded
 
-    def test_reset_clears_only_the_tenant(self):
+    def test_reset_removes_the_tenants_stale_nodes_and_keeps_other_tenants(self):
         write_sample(self.root, include_bad=False)
         writer = MemoryWriter()
-        writer.write_nodes([])
         run("brandon-dev", self.root, writer, self.rejects)
         other = Path(self.tmp.name) / "other"
         write_sample(other, include_bad=False)
         run("someone-else", other, writer, self.rejects)
-        total = len(writer.nodes)
-        run("brandon-dev", self.root, writer, self.rejects, reset=True)
-        self.assertEqual(len(writer.nodes), total)
+
+        def keys(group_prefix):
+            return {k for k, v in writer.nodes.items() if v["group_id"].startswith(group_prefix)}
+
+        def has_commit(group_prefix):
+            return any(v.get("external_id", "").endswith("abc1234def")
+                       for v in writer.nodes.values() if v["group_id"].startswith(group_prefix))
+
+        self.assertTrue(has_commit("brandon-dev_"))
+        other_nodes = {k: dict(v) for k, v in writer.nodes.items() if v["group_id"].startswith("someone-else_")}
+        other_edges = {k for k, v in writer.edges.items() if v["group_id"].startswith("someone-else_")}
+
+        trimmed = Path(self.tmp.name) / "trimmed"   # the same sample without the commit record
+        write_sample(trimmed, include_bad=False)
+        github = trimmed / "github" / "github.jsonl"
+        kept = [line for line in github.read_text(encoding="utf-8").splitlines() if '"sha"' not in line]
+        self.assertEqual(len(kept), 3)
+        github.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+        run("brandon-dev", trimmed, writer, self.rejects)                 # no reset: the stale commit stays
+        self.assertTrue(has_commit("brandon-dev_"))
+        run("brandon-dev", trimmed, writer, self.rejects, reset=True)
+        self.assertFalse(has_commit("brandon-dev_"))                       # the stale node is gone
+        self.assertTrue(keys("brandon-dev_"))                              # the rest was reloaded
+        self.assertEqual({k: v for k, v in writer.nodes.items() if v["group_id"].startswith("someone-else_")},
+                         other_nodes)                                      # the other tenant is untouched
+        self.assertEqual({k for k, v in writer.edges.items() if v["group_id"].startswith("someone-else_")},
+                         other_edges)
 
     def test_render_mentions_every_section(self):
         write_sample(self.root, include_bad=True)
