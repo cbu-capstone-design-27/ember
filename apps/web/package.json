@@ -2,7 +2,7 @@
   "name": "ember-web",
   "private": true,
   "version": "0.1.0",
-  "description": "Ember web app: sign-up, sign-in and the dashboard (EMBER-51).",
+  "description": "Ember web app: sign-up, onboarding, the dashboard and the knowledge graph (EMBER-51, EMBER-13).",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -17,12 +17,14 @@
   },
   "dependencies": {
     "better-auth": "^1.7.7",
+    "d3-force": "^3.0.0",
     "next": "^16.4.0",
     "pg": "^8.23.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^26.6.4",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",

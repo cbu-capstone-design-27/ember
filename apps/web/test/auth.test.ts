@@ -100,6 +100,42 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       assert.equal(session.json, null, "the old cookie no longer has a session");
     });
 
+    test("a new account has no sources until onboarding picks them", async () => {
+      const login = await call(auth, "/sign-in/email", { body: { email, password } });
+      const session = await call(auth, "/get-session", { cookie: login.cookie });
+      assert.deepEqual(session.json.user.sources, []);
+    });
+
+    test("sources are saved deduplicated and in catalog order", async () => {
+      const login = await call(auth, "/sign-in/email", { body: { email, password } });
+      const res = await call(auth, "/update-user", {
+        body: { sources: ["slack", "github", "slack"] },
+        cookie: login.cookie,
+      });
+      assert.equal(res.status, 200, JSON.stringify(res.json));
+      const session = await call(auth, "/get-session", { cookie: login.cookie });
+      assert.deepEqual(session.json.user.sources, ["github", "slack"]);
+    });
+
+    test("unknown or empty source lists are refused", async () => {
+      const login = await call(auth, "/sign-in/email", { body: { email, password } });
+      for (const sources of [["github", "myspace"], [], "github"]) {
+        const res = await call(auth, "/update-user", { body: { sources }, cookie: login.cookie });
+        assert.equal(res.status, 400, `${JSON.stringify(sources)} should be refused`);
+      }
+      const session = await call(auth, "/get-session", { cookie: login.cookie });
+      assert.deepEqual(session.json.user.sources, ["github", "slack"], "a refused update changes nothing");
+    });
+
+    test("sources can be set at sign-up", async () => {
+      const res = await call(auth, "/sign-up/email", {
+        body: { name: "Grace", email: `grace-${Date.now()}@example.com`, password, sources: ["jira"] },
+      });
+      assert.equal(res.status, 200, JSON.stringify(res.json));
+      const session = await call(auth, "/get-session", { cookie: res.cookie });
+      assert.deepEqual(session.json.user.sources, ["jira"]);
+    });
+
     test("passwords are not stored in plain text", async () => {
       const db = auth.options.database as unknown;
       let stored: string;
