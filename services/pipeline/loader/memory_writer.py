@@ -26,7 +26,7 @@ class MemoryWriter:
              "text": props["embed_text"], "hash": props.get("embedding_text_hash"),
              "vector": props.get("embedding")}
             for (label, uuid_), props in self.nodes.items()
-            if props["group_id"] in wanted and props.get("embed_text")
+            if props["group_id"] in wanted and (props.get("embed_text") or "").strip()
         ]
 
     def write_embeddings(self, rows: list[dict]) -> None:

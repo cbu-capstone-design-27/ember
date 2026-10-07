@@ -124,6 +124,24 @@ class WriterTests(unittest.TestCase):
         self.assertIn("MATCH (n:WorkItem", query)
         self.assertIn("SET n.embedding = row.vector", query)
         self.assertEqual(params["rows"][0]["vector"], [0.5])
+        self.assertEqual(params["rows"][0]["hash"], "h")
+
+    def test_embed_candidates_queries_each_source_backed_label_and_skips_blank_text(self):
+        from loader.facts import SOURCE_BACKED
+
+        row = {"uuid": "u1", "group_id": G, "key": "a#1", "text": "hello", "hash": None, "vector": None}
+        driver = FakeDriver(rows=[[row]])
+        found = Neo4jWriter("bolt://x", "u", "p", driver=driver).embed_candidates([G])
+        self.assertEqual(len(driver.log), len(SOURCE_BACKED))
+        for query, params in driver.log:
+            self.assertEqual(params["gids"], [G])
+            self.assertIn("n.group_id IN $gids", query)
+            self.assertIn("n.embed_text IS NOT NULL", query)
+            self.assertIn("trim(n.embed_text) <> ''", query)
+        queried = sorted(q.split("MATCH (n:")[1].split(")")[0] for q, _ in driver.log)
+        self.assertEqual(queried, sorted(SOURCE_BACKED))
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0], {"label": sorted(SOURCE_BACKED)[0], **row})
 
     def test_reloading_a_node_never_sends_the_embedding_so_it_is_not_wiped(self):
         driver = FakeDriver()

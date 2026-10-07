@@ -61,6 +61,13 @@ class EmbedGraphTests(unittest.TestCase):
         embed_graph(w, c, IDENTITY, [G], batch=2)
         self.assertEqual([len(call) for call in c.calls], [2, 2, 1])
 
+    def test_blank_text_is_not_a_candidate_and_never_reaches_the_client(self):
+        w, c = MemoryWriter(), FakeClient()
+        w.write_nodes([node("a#1", ""), node("a#2", " " + chr(10) + chr(9) + " "), node("a#3", "real")])
+        self.assertEqual([cand["key"] for cand in w.embed_candidates([G])], ["a#3"])
+        self.assertEqual(embed_graph(w, c, IDENTITY, [G]), 1)
+        self.assertEqual(c.calls, [["real"]])
+
     def test_candidates_expose_what_the_benchmark_needs(self):
         w, c = MemoryWriter(), FakeClient()
         w.write_nodes([node("a#1", "hello")])

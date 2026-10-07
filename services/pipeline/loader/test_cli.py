@@ -45,6 +45,16 @@ class CliTests(unittest.TestCase):
             write_sample(Path(tmp) / "raw", include_bad=False)
             with self.assertRaises(SystemExit) as raised:
                 run_cli("--tenant", "brandon-dev", "--input", str(Path(tmp) / "raw"), "--dry-run",
+                        "--embed", "--profile", "openai-dev", "--no-dotenv",
+                        "--rejects", str(Path(tmp) / "r.jsonl"))
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["raw"])  # nothing loaded or written
+        self.assertIn("OPENAI_API_KEY", str(raised.exception))
+
+    def test_embed_key_error_fires_before_the_neo4j_writer_is_built(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {}, clear=True),                 mock.patch("loader.__main__._neo4j_writer", side_effect=AssertionError("Neo4j was touched")):
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            with self.assertRaises(SystemExit) as raised:
+                run_cli("--tenant", "brandon-dev", "--input", str(Path(tmp) / "raw"),
                         "--embed", "--profile", "openai-dev", "--no-dotenv")
         self.assertIn("OPENAI_API_KEY", str(raised.exception))
 

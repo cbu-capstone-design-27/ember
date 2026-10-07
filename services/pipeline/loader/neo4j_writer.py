@@ -125,6 +125,7 @@ class Neo4jWriter:
         for label in sorted(SOURCE_BACKED):
             rows = self._run(
                 f"MATCH (n:{_label(label)}) WHERE n.group_id IN $gids AND n.embed_text IS NOT NULL "
+                "AND trim(n.embed_text) <> '' "
                 "RETURN n.uuid AS uuid, n.group_id AS group_id, n.external_id AS key, "
                 "n.embed_text AS text, n.embedding_text_hash AS hash, n.embedding AS vector",
                 gids=group_ids)
