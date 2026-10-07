@@ -6,7 +6,7 @@ from unittest import mock
 
 from loader.memory_writer import MemoryWriter
 from loader.reader import Line
-from loader.run import run
+from loader.run import InputError, run
 from loader.testdata import JIRA, write_sample
 
 FIXTURES = Path(__file__).resolve().parents[3] / "packages" / "ingestion-envelope" / "fixtures"
@@ -142,11 +142,50 @@ class RunTests(unittest.TestCase):
 
     def test_envelope_missing_type_or_body_is_rejected_not_raised(self):
         # The reader normally flags these; guard anyway in case one gets through.
+        write_lines(self.root, "github", ["{}"])  # the folder must hold a *.jsonl; the reader is mocked
         lines = [Line("f.jsonl", 1, {"body": {}}, None), Line("f.jsonl", 2, {"type": "github"}, None)]
         with mock.patch("loader.run.read_envelopes", return_value=iter(lines)):
             report = run("brandon-dev", self.root, MemoryWriter(), self.rejects)
         self.assertEqual(report.rejected, 2)
         self.assertEqual(report.records, 2)
+
+    # Input problems stop the run before anything is written.
+    def test_missing_input_folder_is_an_input_error(self):
+        writer = MemoryWriter()
+        with self.assertRaisesRegex(InputError, "does not exist"):
+            run("brandon-dev", self.root, writer, self.rejects)
+        self.assertFalse(self.rejects.exists())
+
+    def test_empty_input_folder_is_an_input_error(self):
+        self.root.mkdir(parents=True)
+        with self.assertRaisesRegex(InputError, r"no \*\.jsonl"):
+            run("brandon-dev", self.root, MemoryWriter(), self.rejects)
+
+    def test_folder_with_only_parts_files_is_an_input_error(self):
+        parts = self.root / "slack" / "C1.jsonl.parts"
+        parts.mkdir(parents=True)
+        (parts / "0001.jsonl").write_text("{}\n", encoding="utf-8")
+        with self.assertRaisesRegex(InputError, r"no \*\.jsonl"):
+            run("brandon-dev", self.root, MemoryWriter(), self.rejects)
+
+    def test_reset_with_nothing_mapped_leaves_existing_nodes_untouched(self):
+        other = Path(self.tmp.name) / "loaded"
+        write_sample(other, include_bad=False)
+        writer = MemoryWriter()
+        run("brandon-dev", other, writer, self.rejects)
+        before = (dict(writer.nodes), dict(writer.edges))
+        self.assertTrue(before[0])
+        write_lines(self.root, "github", ["{not json"])  # a *.jsonl exists but maps to nothing
+        with self.assertRaisesRegex(InputError, "--reset refused"):
+            run("brandon-dev", self.root, writer, self.rejects, reset=True)
+        self.assertEqual((writer.nodes, writer.edges), before)
+
+    def test_reset_is_called_only_after_nodes_were_mapped(self):
+        write_sample(self.root, include_bad=False)
+        writer = MemoryWriter()
+        with mock.patch.object(writer, "reset", wraps=writer.reset) as reset:
+            run("brandon-dev", self.root, writer, self.rejects, reset=True)
+        reset.assert_called_once()
 
 
 if __name__ == "__main__":

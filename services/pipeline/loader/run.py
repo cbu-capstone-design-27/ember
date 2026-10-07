@@ -10,8 +10,12 @@ from ontology import tenant_subgraphs
 from .check import check_graph
 from .conform import validate_mapped
 from .mappers import MapContext, Reject, Skip, issue_index, map_record
-from .reader import read_envelopes
+from .reader import input_files, read_envelopes
 from .report import Report
+
+
+class InputError(Exception):
+    """The run cannot start because of the input folder or the flags; the CLI exits 2."""
 
 
 def _merge_props(existing: dict, incoming: dict) -> None:
@@ -46,6 +50,10 @@ def _envelope_problem(envelope) -> str | None:
 def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False) -> Report:
     report = Report(rejects_path=str(rejects_path))
     group_ids = tenant_subgraphs(tenant)  # also validates the tenant name
+    if not Path(root).is_dir():
+        raise InputError(f"input folder does not exist: {root}")
+    if not input_files(Path(root)):
+        raise InputError(f"no *.jsonl files found under {root} (files inside *.parts folders are ignored)")
     lines = list(read_envelopes(Path(root)))  # whole input in memory; fine at capstone scale
 
     ctx = MapContext(tenant)
@@ -99,6 +107,10 @@ def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False
             existing = edges.setdefault(key, edge)
             if existing is not edge:
                 _merge_props(existing.props, edge.props)
+
+    if reset and not nodes:
+        raise InputError("--reset refused: no nodes were mapped from the input, so nothing would be "
+                         "loaded after wiping the tenant; the database was not touched")
 
     writer.ensure_schema()
     if reset:

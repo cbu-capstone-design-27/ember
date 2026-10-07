@@ -20,12 +20,22 @@ class Line(NamedTuple):
     error: str | None
 
 
+def input_files(root: Path) -> list[Path]:
+    """The *.jsonl files under root, minus anything inside a *.parts directory.
+
+    Only directory names below root count, so a root that itself lives under a folder
+    called something.parts still loads.
+    """
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    return sorted(path for path in root.rglob("*.jsonl")
+                  if path.is_file() and not any(part.endswith(".parts") for part in path.relative_to(root).parts[:-1]))
+
+
 def read_envelopes(root: Path) -> Iterator[Line]:
     schema = envelope_validate.load_schema()
-    for path in sorted(Path(root).rglob("*.jsonl")):
-        # Skip files with .parts directory in their path
-        if any(part.endswith(".parts") for part in path.parts):
-            continue
+    for path in input_files(root):
         with path.open(encoding="utf-8") as handle:
             for number, text in enumerate(handle, 1):
                 if not text.strip():

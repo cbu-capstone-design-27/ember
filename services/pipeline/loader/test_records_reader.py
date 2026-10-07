@@ -62,6 +62,15 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(lines[0].envelope, good)
         self.assertIsNone(lines[0].error)
 
+    def test_parent_folder_named_parts_does_not_hide_the_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "x.parts" / "raw"
+            (root / "github").mkdir(parents=True)
+            good = {"type": "github", "body": {"number": 1}}
+            (root / "github" / "a.jsonl").write_text(json.dumps(good) + "\n", encoding="utf-8")
+            lines = list(read_envelopes(root))
+        self.assertEqual([line.envelope for line in lines], [good])
+
 
 if __name__ == "__main__":
     unittest.main()

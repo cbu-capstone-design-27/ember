@@ -4,7 +4,8 @@
   python -m loader --tenant brandon-dev --input data/raw/brandon-dev --dry-run   (no Neo4j)
 
 Exit code 0 means every record loaded and the graph matches the schema; 1 means
-records were rejected or the schema check found mismatches.
+records were rejected or the schema check found mismatches; 2 means the run did not
+start (input folder missing or without *.jsonl, or --reset with nothing mapped).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from pathlib import Path
 from ontology import subgraph_id
 
 from .memory_writer import MemoryWriter
-from .run import run
+from .run import InputError, run
 
 
 def _neo4j_writer():
@@ -52,6 +53,9 @@ def main(argv: list[str] | None = None) -> int:
     args.rejects.unlink(missing_ok=True)
     try:
         report = run(args.tenant, root, writer, args.rejects, reset=args.reset)
+    except InputError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     finally:
         if hasattr(writer, "close"):
             writer.close()

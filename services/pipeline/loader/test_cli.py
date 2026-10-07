@@ -76,6 +76,33 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertTrue(rejects.exists())
 
+    def test_missing_input_folder_exits_two_with_a_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code, _ = run_cli("--tenant", "brandon-dev", "--input", str(Path(tmp) / "nope"),
+                                  "--rejects", str(Path(tmp) / "r.jsonl"), "--dry-run")
+        self.assertEqual(code, 2)
+        self.assertIn("does not exist", err.getvalue())
+
+    def test_empty_input_folder_exits_two(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code, _ = run_cli("--tenant", "brandon-dev", "--input", tmp, "--dry-run")
+        self.assertEqual(code, 2)
+        self.assertIn("no *.jsonl", err.getvalue())
+
+    def test_reset_with_nothing_mapped_exits_two(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "a.jsonl").write_text("{not json\n", encoding="utf-8")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code, _ = run_cli("--tenant", "brandon-dev", "--input", tmp,
+                                  "--rejects", str(Path(tmp) / "out" / "r.jsonl"), "--dry-run", "--reset")
+        self.assertEqual(code, 2)
+        self.assertIn("--reset refused", err.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
