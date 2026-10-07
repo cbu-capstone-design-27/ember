@@ -3,6 +3,8 @@
 // team without Jira still gets the GitHub and Slack ones.
 
 import type { SourceId } from "../sources.ts";
+import type { EditBody } from "./edits.ts";
+import { slackPermalink } from "./edits.ts";
 import { contextRefs, nodeId, personName, stageOf, type Model } from "./model.ts";
 import { plainSlackText, titleSimilarity } from "./text.ts";
 import { ago, DAY, duration } from "./time.ts";
@@ -44,8 +46,33 @@ export interface Insight {
   /** When the newest piece of evidence happened. */
   at: string;
   evidence: Evidence[];
-  /** What a person would do about it. Actions run once sources are connected. */
-  action: string;
+  /** What a person would do about it, in words. */
+  suggestion: string;
+  /** The same, as changes the app can make. The first is the main one. */
+  actions: InsightAction[];
+}
+
+export interface InsightAction {
+  label: string;
+  edit: EditBody;
+  /** What to say once it's done: "Moved CHK-131 to Done". */
+  done: string;
+}
+
+/** Status names the project uses for each stage, so actions move tickets to statuses that exist. */
+function statusFor(model: Model, stage: "in_progress" | "in_review" | "done"): string {
+  const names = new Set<string>();
+  for (const i of model.issues.values()) {
+    names.add(i.status);
+    for (const h of i.history) names.add(h.to);
+  }
+  const fallback = { in_progress: "In Progress", in_review: "In Review", done: "Done" }[stage];
+  return [...names].find((n) => stageOf(n) === stage) ?? fallback;
+}
+
+function moveTo(model: Model, key: string, stage: "in_progress" | "in_review" | "done"): InsightAction {
+  const to = statusFor(model, stage);
+  return { label: `Move ${key} to ${to}`, edit: { kind: "issue_status", key, to }, done: `Moved ${key} to ${to}` };
 }
 
 /** Open pull requests nobody has reviewed for this long are flagged. */
@@ -162,7 +189,10 @@ function blockers(model: Model, now: number): Insight[] {
       subject: nodeId.issue(issue.key),
       at: newest(evidence),
       evidence,
-      action: `Flag ${issue.key} as blocked`,
+      suggestion: `Flag ${issue.key} as blocked`,
+      actions: [
+        { label: `Flag ${issue.key} as blocked`, edit: { kind: "issue_flag", key: issue.key, flagged: true }, done: `Flagged ${issue.key} as blocked` },
+      ],
     });
   }
   return out;
@@ -205,7 +235,11 @@ function failingChecks(model: Model, now: number): Insight[] {
       subject: inReview ? nodeId.issue(inReview.key) : nodeId.change(id),
       at: newest(evidence),
       evidence,
-      action: inReview ? `Fix ${checks}, or move ${inReview.key} back to In Development` : `Fix ${checks}`,
+      suggestion: inReview ? `Fix ${checks}, or move ${inReview.key} back to In Development` : `Fix ${checks}`,
+      actions: [
+        { label: "Re-run checks", edit: { kind: "pr_checks", change: id, checks: "passing" }, done: `Checks pass on ${id} now` },
+        ...(inReview ? [moveTo(model, inReview.key, "in_progress")] : []),
+      ],
     });
   }
   return out;
@@ -243,7 +277,8 @@ function statusDrift(model: Model, now: number): Insight[] {
           : `The pull request merged ${ago(pr.mergedAt!, now)} and nothing else is open for the ticket.`,
         at: newest(evidence),
         evidence,
-        action: `Move ${issue.key} to Done`,
+        suggestion: `Move ${issue.key} to Done`,
+        actions: [moveTo(model, issue.key, "done")],
       });
     } else if (saidDone && !merged.length && !open.length) {
       const evidence = [messageEvidence(model, saidDone, now), issueEvidence(model, issue)];
@@ -255,7 +290,8 @@ function statusDrift(model: Model, now: number): Insight[] {
         summary: `${personName(model, "slack", saidDone.user)} said so in ${channelName(model, saidDone)} ${ago(saidDone.at, now)}. No pull request is linked to the ticket.`,
         at: newest(evidence),
         evidence,
-        action: `Check ${issue.key} and move it to Done`,
+        suggestion: `Check ${issue.key} and move it to Done`,
+        actions: [moveTo(model, issue.key, "done")],
       });
     } else if (open.length && (stage === "todo" || stage === "in_progress")) {
       const pr = open.sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
@@ -272,7 +308,8 @@ function statusDrift(model: Model, now: number): Insight[] {
         summary: `${pr.repo}#${pr.number} has been ready for review for ${duration(now - Date.parse(pr.createdAt))}. Jira still shows the work as ${issue.status.toLowerCase()}.`,
         at: newest(evidence),
         evidence,
-        action: `Move ${issue.key} to In Review`,
+        suggestion: `Move ${issue.key} to In Review`,
+        actions: [moveTo(model, issue.key, "in_review")],
       });
     }
   }
@@ -304,7 +341,8 @@ function staleReviews(model: Model, now: number): Insight[] {
       subject: nodeId.change(id),
       at: newest(evidence),
       evidence,
-      action: requested.length ? `Nudge ${requested[0]}` : "Request a reviewer",
+      suggestion: requested.length ? `Nudge ${requested[0]}` : "Request a reviewer",
+      actions: nudge(model, pr, nudges[0], now),
     });
   }
   return out;
@@ -334,7 +372,16 @@ function missingLinks(model: Model, now: number): Insight[] {
       subject: nodeId.issue(issue.key),
       at: newest(evidence),
       evidence,
-      action: match ? `Add ${issue.key} to the title of ${match.id}` : `Link a pull request to ${issue.key}`,
+      suggestion: match ? `Add ${issue.key} to the title of ${match.id}` : `Link a pull request to ${issue.key}`,
+      actions: match
+        ? [
+            {
+              label: `Add ${issue.key} to ${match.id}`,
+              edit: { kind: "pr_title", change: match.id, title: `${issue.key}: ${match.pr.title}` },
+              done: `Linked ${match.id} to ${issue.key}`,
+            },
+          ]
+        : [],
     });
   }
   return out;
@@ -358,10 +405,42 @@ function decisions(model: Model, now: number): Insight[] {
       subject: nodeId.decision(d.ts),
       at: newest(evidence),
       evidence,
-      action: `Add the decision to ${key}`,
+      suggestion: `Add the decision to ${key}`,
+      actions: [
+        {
+          label: `Add it to ${key}`,
+          edit: {
+            kind: "issue_comment",
+            key,
+            body: `Decision from ${channelName(model, m)}: ${d.statement} ${slackPermalink(model.ws, m.channel, m.ts)}`,
+          },
+          done: `Added the decision to ${key}`,
+        },
+      ],
     });
   }
   return out;
+}
+
+/** Ask the first requested reviewer in Slack, in the channel the PR was last mentioned in. */
+function nudge(model: Model, pr: PullRequest, lastMention: SlackMessage | undefined, now: number): InsightAction[] {
+  const reviewer = pr.reviews.find((r) => r.state === "requested");
+  const person = reviewer ? model.byAccount.github.get(reviewer.reviewer) : undefined;
+  const slackId = person?.accounts.slack;
+  const channel = lastMention?.channel ?? model.ws.slack?.channels[0]?.id;
+  if (!person || !slackId || !channel || !model.byAccount.slack.has(slackId)) return [];
+  const id = `${pr.repo}#${pr.number}`;
+  return [
+    {
+      label: `Nudge ${person.name.split(" ")[0]} in Slack`,
+      edit: {
+        kind: "slack_message",
+        channel,
+        text: `<@${slackId}> could you review ${id} when you get a chance? It's been waiting ${duration(now - Date.parse(pr.createdAt))}.`,
+      },
+      done: `Asked ${person.name} to review ${id}`,
+    },
+  ];
 }
 
 function listOf(names: string[]): string {

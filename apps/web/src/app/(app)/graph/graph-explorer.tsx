@@ -19,37 +19,16 @@ import {
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from "d3-force";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { initials } from "../../../components/avatar.tsx";
 import { SourceLogo } from "../../../components/brand.tsx";
-import {
-  ContainerIcon,
-  DecisionIcon,
-  FitIcon,
-  FilterIcon,
-  IdentityIcon,
-  MessageIcon,
-  MinusIcon,
-  ModuleIcon,
-  PlusIcon,
-  PullRequestIcon,
-  RefreshIcon,
-  SearchIcon,
-  ThreadIcon,
-  TicketIcon,
-  UserIcon,
-  XIcon,
-} from "../../../components/icons.tsx";
+import { FitIcon, FilterIcon, MinusIcon, PlusIcon, RefreshIcon, SearchIcon, XIcon } from "../../../components/icons.tsx";
+import { TYPE_COLOR, TYPE_ICON } from "../../../components/node-style.ts";
+import { ItemDetails } from "../../../components/preview/item-details.tsx";
+import { usePreview } from "../../../components/preview/store.tsx";
 import type { SourceId } from "../../../lib/sources.ts";
-import { NODE_TYPES, type EdgeType, type GraphEdge, type GraphNode, type KnowledgeGraph, type NodeType } from "../../../lib/workspace/graph.ts";
-import type { Severity } from "../../../lib/workspace/insights.ts";
+import { NODE_TYPES, type EdgeType, type GraphEdge, type GraphNode, type NodeType } from "../../../lib/workspace/graph.ts";
 import styles from "./graph.module.css";
-
-export interface NodeFlag {
-  severity: Severity;
-  insights: Array<{ title: string; action: string; severity: Severity }>;
-}
 
 type GroupKey = "github" | "jira" | "slack" | "people";
 
@@ -73,30 +52,6 @@ interface View {
 
 const TYPE_ORDER: NodeType[] = ["WorkItem", "Change", "Message", "Person", "Decision", "Conversation", "Container", "Module", "Identity"];
 
-const TYPE_COLOR: Record<NodeType, string> = {
-  WorkItem: "var(--node-workitem)",
-  Change: "var(--node-change)",
-  Message: "var(--node-message)",
-  Person: "var(--node-person)",
-  Decision: "var(--node-decision)",
-  Conversation: "var(--node-conversation)",
-  Container: "var(--node-container)",
-  Module: "var(--node-module)",
-  Identity: "var(--node-identity)",
-};
-
-const TYPE_ICON: Record<NodeType, typeof UserIcon> = {
-  WorkItem: TicketIcon,
-  Change: PullRequestIcon,
-  Message: MessageIcon,
-  Person: UserIcon,
-  Decision: DecisionIcon,
-  Conversation: ThreadIcon,
-  Container: ContainerIcon,
-  Module: ModuleIcon,
-  Identity: IdentityIcon,
-};
-
 const RADIUS: Record<NodeType, number> = {
   Person: 16,
   Container: 14,
@@ -112,13 +67,48 @@ const RADIUS: Record<NodeType, number> = {
 /** Types whose labels show at any zoom; the rest appear when zoomed in or highlighted. */
 const MAJOR = new Set<NodeType>(["Person", "Container", "WorkItem", "Change", "Decision", "Module"]);
 
-/** Where each source's subgraph sits when the layout is grouped. People sit between them. */
+/**
+ * Where each source's subgraph sits when the layout is grouped: one region
+ * per source, people (who span sources) in the middle, and the links between
+ * regions drawn across the gap.
+ */
 const GROUP_CENTER: Record<GroupKey, { x: number; y: number }> = {
-  jira: { x: 0, y: -320 },
-  github: { x: -420, y: 210 },
-  slack: { x: 420, y: 210 },
-  people: { x: 0, y: 40 },
+  jira: { x: 0, y: -430 },
+  github: { x: -560, y: 290 },
+  slack: { x: 560, y: 290 },
+  people: { x: 0, y: 30 },
 };
+
+const GROUP_STYLE: Record<GroupKey, { label: string; color: string }> = {
+  jira: { label: "Jira", color: "var(--src-jira)" },
+  github: { label: "GitHub", color: "var(--src-github)" },
+  slack: { label: "Slack", color: "var(--src-slack)" },
+  people: { label: "People", color: "var(--node-person)" },
+};
+
+/** Padding around a group's nodes, drawn as a thick round stroke on its hull. */
+const HULL_PAD = 46;
+
+/** Convex hull of points (Andrew's monotone chain), as an SVG path. */
+function hullPath(points: Array<[number, number]>): string {
+  if (points.length === 0) return "";
+  if (points.length === 1) return `M${points[0][0]},${points[0][1]}l0.1,0`;
+  const pts = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: Array<[number, number]> = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: Array<[number, number]> = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+  return `M${hull.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("L")}Z`;
+}
 
 const LINK_DISTANCE: Partial<Record<EdgeType, number>> = {
   RESOLVES_TO: 26,
@@ -159,13 +149,7 @@ function useMounted() {
   return mounted;
 }
 
-export function GraphExplorer(props: {
-  graph: KnowledgeGraph;
-  flags: Record<string, NodeFlag>;
-  focus?: string;
-  tenant: string;
-  organization: string;
-}) {
+export function GraphExplorer(props: { focus?: string }) {
   // The layout needs real screen size and runs only in the browser.
   const mounted = useMounted();
   return (
@@ -181,28 +165,10 @@ export function GraphExplorer(props: {
   );
 }
 
-function Explorer({
-  graph,
-  flags,
-  focus,
-  tenant,
-  organization,
-}: {
-  graph: KnowledgeGraph;
-  flags: Record<string, NodeFlag>;
-  focus?: string;
-  tenant: string;
-  organization: string;
-}) {
-  const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
-  const adjacency = useMemo(() => {
-    const adj = new Map<string, Array<{ edge: GraphEdge; other: string; out: boolean }>>();
-    for (const e of graph.edges) {
-      (adj.get(e.source) ?? adj.set(e.source, []).get(e.source)!).push({ edge: e, other: e.target, out: true });
-      (adj.get(e.target) ?? adj.set(e.target, []).get(e.target)!).push({ edge: e, other: e.source, out: false });
-    }
-    return adj;
-  }, [graph]);
+function Explorer({ focus }: { focus?: string }) {
+  // The graph, its insights and every edit come from the shared preview store.
+  const { graph, flags, model, nodes: byId, adjacency } = usePreview();
+  const { tenant, name: organization } = model.ws.organization;
 
   const availableSources = useMemo(
     () => [...new Set(graph.nodes.map(sourceKey).filter((s): s is SourceId => !!s))],
@@ -256,9 +222,18 @@ function Explorer({
   const nodeEls = useRef(new Map<string, SVGGElement>());
   const edgeEls = useRef(new Map<string, SVGLineElement>());
   const labelEls = useRef(new Map<string, SVGTextElement>());
+  const hullPaths = useRef(new Map<GroupKey, SVGPathElement>());
+  const hullLabels = useRef(new Map<GroupKey, SVGTextElement>());
   const view = useRef<View>({ x: 0, y: 0, k: 1 });
   const frame = useRef(0);
   const firstLayout = useRef(true);
+
+  // Re-run the layout only when the set of nodes or edges changes, not when a
+  // label does (an edit that renames a PR shouldn't shake the whole graph).
+  const shapeKey = useMemo(
+    () => `${visibleNodes.map((n) => n.id).join("|")}#${visibleEdges.map((e) => e.id).join("|")}`,
+    [visibleNodes, visibleEdges],
+  );
 
   const sim = useMemo(() => {
     const nodes: SimNode[] = visibleNodes.map((n) => {
@@ -291,13 +266,17 @@ function Explorer({
         forceLink<SimNode, SimLink>(links)
           .id((d) => d.id)
           .distance((l) => LINK_DISTANCE[l.type] ?? 65)
-          .strength((l) => (l.type === "CONTAINS" ? 0.12 : l.type === "RESOLVES_TO" ? 0.9 : 0.45)),
+          .strength((l) => {
+            // Links between groups stay drawn but barely pull, so each source keeps its own region.
+            if (grouped && (l.source as SimNode).group !== (l.target as SimNode).group) return 0.015;
+            return l.type === "CONTAINS" ? 0.12 : l.type === "RESOLVES_TO" ? 0.9 : 0.45;
+          }),
       )
-      .force("charge", forceManyBody<SimNode>().strength((d) => (MAJOR.has(d.type) ? -320 : -90)).distanceMax(520))
+      .force("charge", forceManyBody<SimNode>().strength((d) => (MAJOR.has(d.type) ? -300 : -90)).distanceMax(grouped ? 320 : 520))
       // Major nodes keep room for their label underneath.
       .force("collide", forceCollide<SimNode>((d) => d.r + (MAJOR.has(d.type) ? 16 : 5)).iterations(2))
-      .force("x", forceX<SimNode>((d) => (grouped ? GROUP_CENTER[d.group].x : 0)).strength(grouped ? 0.09 : 0.03))
-      .force("y", forceY<SimNode>((d) => (grouped ? GROUP_CENTER[d.group].y : 0)).strength(grouped ? 0.09 : 0.03))
+      .force("x", forceX<SimNode>((d) => (grouped ? GROUP_CENTER[d.group].x : 0)).strength(grouped ? 0.16 : 0.03))
+      .force("y", forceY<SimNode>((d) => (grouped ? GROUP_CENTER[d.group].y : 0)).strength(grouped ? 0.16 : 0.03))
       .stop();
 
     if (firstLayout.current) {
@@ -309,8 +288,8 @@ function Explorer({
       simulation.alpha(0.6);
     }
     return { simulation, nodes, links, byId: new Map(nodes.map((n) => [n.id, n])) };
-    // degree and adjacency follow visibleNodes/visibleEdges; grouped changes the forces.
-  }, [visibleNodes, visibleEdges, grouped]);
+    // shapeKey stands for visibleNodes/visibleEdges (and so degree); grouped changes the forces.
+  }, [shapeKey, grouped]);
 
   const writePositions = useCallback(() => {
     for (const n of sim.nodes) {
@@ -334,6 +313,18 @@ function Explorer({
       if (label) {
         label.setAttribute("x", ((s.x! + t.x!) / 2).toFixed(1));
         label.setAttribute("y", ((s.y! + t.y!) / 2).toFixed(1));
+      }
+    }
+    for (const [group, path] of hullPaths.current) {
+      const members = sim.nodes.filter((n) => n.group === group);
+      if (!members.length) continue;
+      path.setAttribute("d", hullPath(members.map((n) => [n.x!, n.y!])));
+      const label = hullLabels.current.get(group);
+      if (label) {
+        const xs = members.map((n) => n.x!);
+        const top = Math.min(...members.map((n) => n.y! - n.r));
+        label.setAttribute("x", ((Math.min(...xs) + Math.max(...xs)) / 2).toFixed(1));
+        label.setAttribute("y", (top - HULL_PAD + 6).toFixed(1));
       }
     }
   }, [sim]);
@@ -635,6 +626,34 @@ function Explorer({
             </marker>
           </defs>
           <g ref={viewportRef}>
+            {grouped && (
+              <g className={styles.hulls} aria-hidden="true">
+                {(Object.keys(GROUP_STYLE) as GroupKey[])
+                  .filter((g) => sim.nodes.some((n) => n.group === g))
+                  .map((g) => (
+                    <g key={g} style={{ ["--hull" as string]: GROUP_STYLE[g].color }}>
+                      <path
+                        className={styles.hull}
+                        strokeWidth={HULL_PAD * 2}
+                        ref={(el) => {
+                          if (el) hullPaths.current.set(g, el);
+                          else hullPaths.current.delete(g);
+                        }}
+                      />
+                      <text
+                        className={styles.hullLabel}
+                        ref={(el) => {
+                          if (el) hullLabels.current.set(g, el);
+                          else hullLabels.current.delete(g);
+                        }}
+                      >
+                        {GROUP_STYLE[g].label}
+                        <tspan className={styles.hullSub}>{g === "people" ? "  resolved across sources" : `  ${tenant}_${g}`}</tspan>
+                      </text>
+                    </g>
+                  ))}
+              </g>
+            )}
             <g className={styles.edges}>
               {visibleEdges.map((e) => (
                 <line
@@ -667,7 +686,7 @@ function Explorer({
             <g>
               {visibleNodes.map((n) => {
                 const s = sim.byId.get(n.id)!;
-                const flag = flags[n.id];
+                const flag = flags.get(n.id);
                 const Icon = TYPE_ICON[n.type];
                 return (
                   <g
@@ -872,115 +891,18 @@ function Explorer({
       </p>
 
       {selectedNode && (
-        <DetailPanel
-          node={selectedNode}
-          flag={flags[selectedNode.id]}
-          connections={adjacency.get(selectedNode.id) ?? []}
-          byId={byId}
-          isVisible={(id) => visibleIds.has(id)}
-          onSelect={reveal}
-          onClose={() => select(null)}
-        />
+        <aside className={styles.panel} aria-label={`Details for ${selectedNode.title}`}>
+          <div className={styles.panelHead}>
+            <span className={styles.panelHeadTitle}>Details</span>
+            <button type="button" className="btn btn-ghost btn-icon btn-sm" onClick={() => select(null)} aria-label="Close details" style={{ marginLeft: "auto" }}>
+              <XIcon />
+            </button>
+          </div>
+          <div className={styles.panelBody}>
+            <ItemDetails key={selectedNode.id} id={selectedNode.id} onOpen={reveal} inGraph />
+          </div>
+        </aside>
       )}
     </>
-  );
-}
-
-function DetailPanel({
-  node,
-  flag,
-  connections,
-  byId,
-  isVisible,
-  onSelect,
-  onClose,
-}: {
-  node: GraphNode;
-  flag?: NodeFlag;
-  connections: Array<{ edge: GraphEdge; other: string; out: boolean }>;
-  byId: Map<string, GraphNode>;
-  isVisible: (id: string) => boolean;
-  onSelect: (id: string) => void;
-  onClose: () => void;
-}) {
-  const groups = useMemo(() => {
-    const map = new Map<string, Array<{ edge: GraphEdge; other: GraphNode }>>();
-    for (const c of connections) {
-      const other = byId.get(c.other);
-      if (!other) continue;
-      const key = c.out ? `${c.edge.type} →` : `← ${c.edge.type}`;
-      (map.get(key) ?? map.set(key, []).get(key)!).push({ edge: c.edge, other });
-    }
-    return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
-  }, [connections, byId]);
-  const Icon = TYPE_ICON[node.type];
-
-  return (
-    <aside className={styles.panel} aria-label={`Details for ${node.title}`}>
-      <div className={styles.panelHead}>
-        <span className={styles.panelType} style={{ ["--c" as string]: TYPE_COLOR[node.type] }}>
-          <Icon /> {NODE_TYPES[node.type].label}
-        </span>
-        {node.source && <SourceLogo source={node.source} size={16} />}
-        <button type="button" className="btn btn-ghost btn-icon btn-sm" onClick={onClose} aria-label="Close details" style={{ marginLeft: "auto" }}>
-          <XIcon />
-        </button>
-      </div>
-      <div className={styles.panelBody}>
-        <h2 className={styles.panelTitle}>{node.title}</h2>
-        <p className={styles.panelSubtitle}>{node.subtitle}</p>
-
-        {flag && (
-          <div className={styles.panelInsights}>
-            {flag.insights.map((i) => (
-              <Link key={i.title} href="/dashboard" className={styles.panelInsight} data-severity={i.severity}>
-                <span className={styles.panelInsightTitle}>{i.title}</span>
-                <span className="subtle">Suggested: {i.action}</span>
-              </Link>
-            ))}
-          </div>
-        )}
-
-        {node.body && <p className={styles.panelText}>{node.body}</p>}
-
-        {node.fields.length > 0 && (
-          <dl className={styles.fields}>
-            {node.fields.map((f) => (
-              <div key={f.label}>
-                <dt>{f.label}</dt>
-                <dd>{f.value}</dd>
-              </div>
-            ))}
-            {node.subgraph && (
-              <div>
-                <dt>Subgraph</dt>
-                <dd className="mono">{node.subgraph}</dd>
-              </div>
-            )}
-          </dl>
-        )}
-
-        <h3 className={styles.connectionsTitle}>
-          Connections <span className="subtle">{connections.length}</span>
-        </h3>
-        {groups.map(([key, items]) => (
-          <div key={key} className={styles.connGroup}>
-            <p className={styles.connType}>{key}</p>
-            <ul>
-              {items.map(({ edge, other }) => (
-                <li key={edge.id}>
-                  <button type="button" className={styles.conn} onClick={() => onSelect(other.id)} data-hidden={!isVisible(other.id)}>
-                    <span className={styles.typeDot} style={{ background: TYPE_COLOR[other.type] }} />
-                    <span className={styles.connLabel}>{other.type === "Message" ? other.title : other.label}</span>
-                    {edge.detail && <span className={styles.connDetail}>{edge.detail}</span>}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-        <p className={styles.panelFoot}>Preview data: these items don&apos;t link out to a real {node.source ? SOURCE_LABEL[node.source] : "source"}.</p>
-      </div>
-    </aside>
   );
 }

@@ -3,7 +3,7 @@ import { SourcesForm } from "../../../components/source-picker.tsx";
 import { ThemeSwitcher } from "../../../components/theme.tsx";
 import { SignOutButton } from "../../../components/nav.tsx";
 import { requireOnboardedUser } from "../../../lib/session.ts";
-import { PasswordForm, ProfileForm } from "./forms.tsx";
+import { PasswordForm, PreviewDataForm, ProfileForm } from "./forms.tsx";
 import styles from "./settings.module.css";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -35,6 +35,16 @@ export default async function SettingsPage() {
           <p>The tools your team works in. The dashboard and the graph only show these.</p>
         </div>
         <SourcesForm initial={user.sources} mode="settings" />
+      </section>
+
+      <section id="preview-data" className={styles.section} aria-labelledby="preview">
+        <div className={styles.aside}>
+          <h2 id="preview">Preview data</h2>
+          <p>What you&apos;re looking at until real sources are connected, and how to start it over.</p>
+        </div>
+        <div className="card">
+          <PreviewDataForm />
+        </div>
       </section>
 
       <section className={styles.section} aria-labelledby="appearance">

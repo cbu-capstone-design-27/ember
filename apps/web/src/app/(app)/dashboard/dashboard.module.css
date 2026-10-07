@@ -39,11 +39,49 @@
 }
 
 .stat {
+  position: relative;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
   display: grid;
   grid-template-columns: auto 1fr;
   grid-template-rows: auto auto auto;
   column-gap: 0.7rem;
   padding: 1rem 1.1rem;
+}
+
+.stat:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.statHint {
+  position: absolute;
+  right: 0.9rem;
+  top: 1.05rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 560;
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.statHint svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.stat:hover .statHint,
+.stat:focus-visible .statHint {
+  opacity: 1;
 }
 
 .statIcon {
@@ -143,6 +181,69 @@
   padding: 1.05rem 1.15rem 1.1rem;
   border-bottom: 1px solid var(--border);
   position: relative;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.insight:hover {
+  background: var(--surface-2);
+}
+
+.dismiss {
+  margin: -0.35rem -0.4rem -0.35rem 0.1rem;
+  color: var(--text-3);
+}
+
+.insightTitleButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.insightTitleButton:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.actionsEnd {
+  display: inline-flex;
+  gap: 0.2rem;
+  margin-left: auto;
+}
+
+.dismissedList {
+  list-style: none;
+  margin: 0 1.15rem 0.9rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+
+.dismissedList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.15rem 0.3rem;
+}
+
+.inlineLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
 }
 
 .insight:last-child {
@@ -270,6 +371,11 @@
 }
 
 .evidenceRow {
+  width: 100%;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   display: grid;
   grid-template-columns: auto auto auto minmax(0, 1fr);
   align-items: center;
@@ -323,6 +429,10 @@
   gap: 0.75rem;
   margin-top: 0.45rem;
   flex-wrap: wrap;
+}
+
+.insightActions > :global(.btn-primary) svg {
+  color: inherit;
 }
 
 .suggestion {
@@ -401,10 +511,35 @@
   background: var(--surface-2);
 }
 
+.clickableRow {
+  cursor: pointer;
+}
+
+.cellButton {
+  padding: 0.2rem 0.3rem;
+  margin: -0.2rem -0.3rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cellButton:hover {
+  background: var(--surface-3);
+}
+
 .ticket {
   display: grid;
   gap: 0.1rem;
-  text-decoration: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   color: inherit;
   min-width: 12rem;
 }
@@ -533,15 +668,23 @@
   gap: 2px;
 }
 
-.sourceList li {
+.sourceRow {
   display: flex;
   align-items: center;
   gap: 0.7rem;
+  width: 100%;
   padding: 0.55rem;
+  border: 0;
   border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
 }
 
-.sourceList li:hover {
+.sourceRow:hover {
   background: var(--surface-2);
 }
 
@@ -578,17 +721,38 @@
 }
 
 .activity li {
+  position: relative;
+}
+
+.activityItem {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 0.65rem;
-  padding: 0.55rem 0;
-  position: relative;
+  width: calc(100% + 0.8rem);
+  margin: 0 -0.4rem;
+  padding: 0.55rem 0.4rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.activityItem:hover {
+  background: var(--surface-2);
+}
+
+.activityLine {
+  display: block;
 }
 
 .activity li:not(:last-child)::after {
   content: "";
   position: absolute;
   left: 0.75rem;
+  pointer-events: none;
   top: 2.05rem;
   bottom: -0.45rem;
   width: 1px;
@@ -608,6 +772,7 @@
 }
 
 .activityBody {
+  display: grid;
   min-width: 0;
   font-size: 0.8rem;
   line-height: 1.45;
@@ -620,13 +785,7 @@
 .activityTarget {
   color: var(--text);
   font-weight: 600;
-  text-decoration: none;
   white-space: nowrap;
-}
-
-.activityTarget:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 .activityText {

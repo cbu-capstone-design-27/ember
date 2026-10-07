@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import { SOURCE_IDS, parseSources, userSources } from "../src/lib/sources.ts";
+import { applyEdits, type Edit, type EditBody } from "../src/lib/workspace/edits.ts";
 import { buildGraph, type EdgeType, type NodeType } from "../src/lib/workspace/graph.ts";
 import { findInsights } from "../src/lib/workspace/insights.ts";
 import { buildModel, forSources, stageOf } from "../src/lib/workspace/model.ts";
@@ -126,12 +127,13 @@ describe("insights", () => {
     const i = byId.get("status_drift:CHK-131")!;
     assert.match(i.title, /CHK-131 looks done, but Jira says In Development/);
     assert.deepEqual(i.evidence.map((e) => e.source), ["slack", "github", "jira"]);
-    assert.equal(i.action, "Move CHK-131 to Done");
+    assert.equal(i.suggestion, "Move CHK-131 to Done");
+    assert.deepEqual(i.actions[0].edit, { kind: "issue_status", key: "CHK-131", to: "Done" });
   });
 
   test("a PR is open for review, the ticket is still in development", () => {
     const i = byId.get("status_drift:CHK-142")!;
-    assert.equal(i.action, "Move CHK-142 to In Review");
+    assert.equal(i.suggestion, "Move CHK-142 to In Review");
     assert.ok(i.evidence.some((e) => e.label === "checkout-api#482"));
   });
 
@@ -142,7 +144,7 @@ describe("insights", () => {
   });
 
   test("the unlinked PR is suggested as the match", () => {
-    assert.equal(byId.get("missing_link:CHK-151")!.action, "Add CHK-151 to the title of checkout-web#221");
+    assert.equal(byId.get("missing_link:CHK-151")!.suggestion, "Add CHK-151 to the title of checkout-web#221");
   });
 
   test("a decision recorded on its ticket is not flagged", () => {
@@ -268,5 +270,65 @@ describe("sources", () => {
     assert.deepEqual(userSources({ sources: '["slack","jira"]' }), ["jira", "slack"]);
     assert.deepEqual(userSources({ sources: null }), []);
     assert.deepEqual(userSources({}), []);
+  });
+});
+
+describe("acting on insights", () => {
+  const me = { id: "u1", name: "Payton Henry", email: "payton@example.com" };
+  let n = 0;
+  const run = (ws: Workspace, ...bodies: EditBody[]) =>
+    applyEdits(ws, bodies.map((b): Edit => ({ ...b, id: `e${++n}`, at: new Date(NOW + n * 1000).toISOString() })), me);
+  const idsAfter = (ws: Workspace) => new Set(findInsights(buildModel(ws), NOW + 60_000).map((i) => i.id));
+
+  test("every action except a nudge resolves its insight, and nothing else changes", () => {
+    for (const insight of insights) {
+      assert.ok(insight.actions.length > 0, `${insight.id} has an action`);
+      const after = idsAfter(run(workspace, insight.actions[0].edit));
+      if (insight.kind === "stale_review") {
+        assert.ok(after.has(insight.id), "a nudge asks; it doesn't review");
+      } else {
+        assert.ok(!after.has(insight.id), `${insight.actions[0].label} resolves ${insight.id}`);
+      }
+      for (const other of insights) {
+        if (other.id !== insight.id && other.subject !== insight.subject) assert.ok(after.has(other.id), `${other.id} is untouched`);
+      }
+    }
+  });
+
+  test("a status change is recorded in the ticket's history, by the user", () => {
+    const ws = run(workspace, { kind: "issue_status", key: "CHK-131", to: "Done" });
+    const issue = ws.jira!.issues.find((i) => i.key === "CHK-131")!;
+    assert.equal(issue.status, "Done");
+    assert.deepEqual(issue.history.at(-1)!.to, "Done");
+    assert.equal(buildModel(ws).byAccount.jira.get(issue.history.at(-1)!.by)!.name, "Payton Henry");
+  });
+
+  test("recording a decision links the comment to the Slack message", () => {
+    const decision = insights.find((i) => i.kind === "decision")!;
+    const model2 = buildModel(run(workspace, decision.actions[0].edit));
+    const d = model2.decisions.find((x) => decision.subject.endsWith(x.ts))!;
+    assert.deepEqual(d.recordedIn.map((r) => r.key), ["CHK-142"]);
+  });
+
+  test("a nudge is a Slack message mentioning the reviewer and the PR", () => {
+    const stale = insights.find((i) => i.kind === "stale_review")!;
+    const ws = run(workspace, stale.actions[0].edit);
+    const posted = ws.slack!.messages.at(-1)!;
+    assert.match(posted.text, /<@U0NADIA> could you review checkout-api#476/);
+    assert.ok(buildModel(ws).messageRefs.get(posted.ts)!.changes.includes("checkout-api#476"));
+  });
+
+  test("no edits, same object; edits never touch the snapshot they start from", () => {
+    assert.equal(applyEdits(workspace, [], me), workspace);
+    const before = JSON.stringify(workspace);
+    run(workspace, { kind: "issue_flag", key: "CHK-145", flagged: true });
+    assert.equal(JSON.stringify(workspace), before);
+  });
+
+  test("edits for a source the user dropped are skipped", () => {
+    const slackOnly = forSources(workspace, ["slack"]);
+    const ws = run(slackOnly, { kind: "issue_status", key: "CHK-131", to: "Done" }, { kind: "pr_checks", change: "checkout-api#479", checks: "passing" });
+    assert.equal(ws.jira, undefined);
+    assert.equal(ws.github, undefined);
   });
 });

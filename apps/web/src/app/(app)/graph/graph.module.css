@@ -34,6 +34,43 @@
   cursor: grabbing;
 }
 
+/* --- source regions -------------------------------------------------------- */
+
+.hulls {
+  pointer-events: none;
+}
+
+.hull {
+  fill: var(--hull);
+  stroke: var(--hull);
+  stroke-linejoin: round;
+  opacity: 0.075;
+}
+
+:global([data-theme="dark"]) .hull {
+  opacity: 0.11;
+}
+
+.hullLabel {
+  fill: var(--hull);
+  font-size: 15px;
+  font-weight: 760;
+  letter-spacing: 0.01em;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.hullSub {
+  fill: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
 /* --- edges ---------------------------------------------------------------- */
 
 .edge,
@@ -449,24 +486,20 @@
   right: 392px;
 }
 
+.panelHeadTitle {
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+}
+
 .panelHead {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   padding: 0.7rem 0.7rem 0.6rem 1rem;
   border-bottom: 1px solid var(--border);
-}
-
-.panelType {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.2rem 0.55rem 0.2rem 0.4rem;
-  border-radius: 999px;
-  font-size: 0.74rem;
-  font-weight: 620;
-  color: var(--c);
-  background: color-mix(in srgb, var(--c) 13%, transparent);
 }
 
 .panelBody {
@@ -481,160 +514,6 @@
 
 .panelBody > * {
   flex: none;
-}
-
-.panelTitle {
-  font-size: 1.02rem;
-  line-height: 1.35;
-  letter-spacing: -0.01em;
-}
-
-.panelSubtitle {
-  margin-top: -0.45rem;
-  font-size: 0.8rem;
-  color: var(--text-3);
-}
-
-.panelText {
-  font-size: 0.85rem;
-  color: var(--text-2);
-  line-height: 1.55;
-  padding: 0.7rem 0.8rem;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-}
-
-.panelInsights {
-  display: grid;
-  gap: 0.4rem;
-}
-
-.panelInsight {
-  display: grid;
-  gap: 0.15rem;
-  padding: 0.6rem 0.75rem;
-  border-radius: var(--radius-sm);
-  text-decoration: none;
-  color: inherit;
-  font-size: 0.78rem;
-  background: var(--info-soft);
-  border-left: 3px solid var(--info);
-}
-
-.panelInsight[data-severity="high"] {
-  background: var(--danger-soft);
-  border-left-color: var(--danger);
-}
-
-.panelInsight[data-severity="medium"] {
-  background: var(--warning-soft);
-  border-left-color: var(--warning);
-}
-
-.panelInsightTitle {
-  font-weight: 600;
-  font-size: 0.82rem;
-}
-
-.fields {
-  margin: 0;
-  display: grid;
-  gap: 0;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-}
-
-.fields > div {
-  display: grid;
-  grid-template-columns: 6.5rem minmax(0, 1fr);
-  gap: 0.6rem;
-  padding: 0.45rem 0.7rem;
-  font-size: 0.8rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.fields > div:last-child {
-  border-bottom: 0;
-}
-
-.fields dt {
-  color: var(--text-3);
-}
-
-.fields dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.connectionsTitle {
-  margin-top: 0.4rem;
-  font-size: 0.82rem;
-}
-
-.connGroup {
-  display: grid;
-  gap: 0.2rem;
-}
-
-.connGroup ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 1px;
-}
-
-.connType {
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  color: var(--text-3);
-}
-
-.conn {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  padding: 0.38rem 0.5rem;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 0.8rem;
-  text-align: left;
-  cursor: pointer;
-}
-
-.conn:hover {
-  background: var(--surface-3);
-}
-
-.conn[data-hidden="true"] {
-  color: var(--text-3);
-}
-
-.connLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.connDetail {
-  margin-left: auto;
-  flex: none;
-  font-size: 0.72rem;
-  color: var(--text-3);
-}
-
-.panelFoot {
-  margin-top: 0.4rem;
-  font-size: 0.74rem;
-  color: var(--text-3);
 }
 
 @media (max-width: 860px) {

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { PasswordInput } from "../../../components/password-input.tsx";
+import { usePreview } from "../../../components/preview/store.tsx";
 import { authClient } from "../../../lib/auth-client.ts";
 import { authErrorMessage } from "../../../lib/auth-errors.ts";
 import styles from "./settings.module.css";
@@ -109,5 +110,28 @@ export function PasswordForm() {
         </button>
       </div>
     </form>
+  );
+}
+
+export function PreviewDataForm() {
+  const { editCount, dismissed, reset, model } = usePreview();
+  const changes = editCount + dismissed.length;
+  return (
+    <div className={styles.form}>
+      <p className="muted">
+        The dashboard and the graph show <b>{model.ws.organization.name}</b>, a made-up team. You can act on it like real
+        data: move tickets, comment, re-run checks, post in Slack. Changes are saved in this browser only.
+      </p>
+      <p>
+        {changes === 0
+          ? "You haven't changed anything yet."
+          : `${editCount} change${editCount === 1 ? "" : "s"} and ${dismissed.length} dismissed insight${dismissed.length === 1 ? "" : "s"}.`}
+      </p>
+      <div className={styles.formActions}>
+        <button type="button" className="btn btn-secondary" disabled={changes === 0} onClick={reset}>
+          Reset preview data
+        </button>
+      </div>
+    </div>
   );
 }

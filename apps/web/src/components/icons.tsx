@@ -283,6 +283,10 @@ export const LockIcon = icon(
 
 export const FilterIcon = icon(<path d="M3.5 5h17l-6.5 7.5V19l-4 2v-8.5z" />);
 
+export const FlagIcon = icon(<path d="M5 21V4M5 4h12.5l-2.5 4.5 2.5 4.5H5" />);
+
+export const ArrowLeftIcon = icon(<path d="M19 12H5M11 6l-6 6 6 6" />);
+
 export const MenuIcon = icon(<path d="M4 7h16M4 12h16M4 17h16" />);
 
 export const ExternalIcon = icon(

@@ -12,9 +12,9 @@ Next.js (App Router, TypeScript) serves the pages and the auth API from one Node
 | `/signup` | Step 1 of 2: name, email, password (at least 8 characters, with a strength meter). Signing up also logs in. |
 | `/onboarding` | Step 2 of 2: a grid of the launch sources (GitHub, GitLab, Jira, Slack, Teams). Pick one or more. Anyone signed in without sources lands here. |
 | `/login` | Email and password. Goes back to `?next=` (same-site paths only). |
-| `/dashboard` | **Needs attention** (where the sources disagree, with the evidence from each), summary numbers, **work in flight** (each ticket with its PR and where it was last discussed), your sources, and recent activity. |
-| `/graph` | The knowledge graph: drag, zoom, search, filter by subgraph and node type, click a node for its fields and connections. `?focus=<node id>` opens on one node. Every "View in graph" link uses it. |
-| `/settings` | Name, sources, theme (light, dark, system), password, log out. |
+| `/dashboard` | **Needs attention** (where the sources disagree, with the evidence from each, and a one-click fix), summary numbers, **work in flight** (each ticket with its PR and where it was last discussed), your sources, and recent activity. Everything is clickable: cards, evidence, rows, numbers and activity open a detail drawer. |
+| `/graph` | The knowledge graph, one shaded region per source (GitHub, Jira, Slack) with people in the middle and the cross-source links between them. Drag, zoom, search, filter by subgraph and node type. Click a node for the same details and actions as the drawer. `?focus=<node id>` opens on one node, and every "Show in graph" link uses it. |
+| `/settings` | Name, sources, preview data (reset), theme (light, dark, system), password, log out. |
 | `/api/auth/*` | Better Auth's endpoints (`sign-up/email`, `sign-in/email`, `sign-out`, `get-session`, `update-user`, `change-password`, …). |
 
 Light and dark mode follow the system until the user picks one. The choice is saved in the browser and applied before the first paint, so there's no flash.
@@ -37,11 +37,24 @@ It's written so each kind of insight shows up once or more. For example, someone
 
 The records are a simplified form of what the connectors emit, keyed the way each source keys them (GitHub login, Jira account id, Slack user id). All timestamps are shifted at load time so that `anchor` reads as "now". To change the story, edit the JSON and keep times relative to `anchor`. `test/workspace.test.ts` checks that every account, epic, link and thread points at something real.
 
+### Acting on it
+
+The preview works like the real product would.
+- Each insight has an action: move a ticket, flag it, re-run checks, link a PR to its ticket, record a decision on its ticket, or nudge a reviewer in Slack.
+- The detail drawer adds more: change a ticket's status, comment on it, reply in a thread, post in a channel.
+
+Each action is saved as a small edit (`src/lib/workspace/edits.ts`). Edits are replayed on top of the snapshot, so insights, numbers and the graph are recalculated and a fixed problem goes away. A message offers Undo.
+
+Edits are kept per user in the browser's localStorage (`src/components/preview/store.tsx`). Settings → Preview data resets them. Once real sources are connected, each kind of edit becomes a call to that source's API.
+
 The rest is real code that keeps working when the data comes from the graph instead:
 
 | File | Job |
 | --- | --- |
 | `src/lib/workspace/load.ts` | The only place that reads the JSON. Swap this for the graph API later. |
+| `src/lib/workspace/edits.ts` | The changes a user can make, and replaying them onto a workspace. |
+| `src/lib/workspace/locate.ts` | From a graph node id back to the record behind it, for the detail views. |
+| `src/components/preview/` | The browser-side store, the detail drawer, the item details shared with the graph, and the Undo message. |
 | `src/lib/workspace/model.ts` | Resolves people across sources. Links PRs to tickets (key in title or branch). Reads what each message mentions; replies inherit their thread's subject. |
 | `src/lib/workspace/text.ts` | Ticket keys, `repo#123`, PR links, Slack mentions and permalinks. Done, blocked and decision signals (keyword rules, standing in for the pipeline's extraction). |
 | `src/lib/workspace/insights.ts` | The rules: blockers, failing checks, status drift, stale reviews, missing links, unrecorded decisions. Each rule needs only the sources it reads. |
@@ -108,6 +121,7 @@ TEST_POSTGRES_URL=postgres://user:pass@localhost:5432/ember npm test   # SQLite 
   - filtering by source
   - the dashboard numbers
   - the graph's fit to the ontology
+  - that each insight's action resolves it, and only it
 
 CI runs both against a Postgres service container.
 
