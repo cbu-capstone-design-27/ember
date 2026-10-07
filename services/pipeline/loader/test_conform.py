@@ -45,5 +45,28 @@ class ConformTests(unittest.TestCase):
             validate_mapped(Mapped([], [edge]), "github")
 
 
+    def test_primitive_and_list_props_pass(self):
+        node = NodeRec("WorkItem", G, "a#1", {"source": "github", "kind": "issue", "external_id": "a#1",
+                                              "labels": ["bug", "ui"], "points": 3, "ratio": 0.5, "flag": True})
+        validate_mapped(Mapped([node]), "github")
+
+    def test_map_valued_node_property_is_rejected(self):
+        bad = NodeRec("WorkItem", G, "a#1", {"source": "github", "kind": "issue", "external_id": "a#1",
+                                             "extra": {"nested": 1}})
+        with self.assertRaisesRegex(Reject, "extra"):
+            validate_mapped(Mapped([bad]), "github")
+
+    def test_list_of_maps_node_property_is_rejected(self):
+        bad = NodeRec("WorkItem", G, "a#1", {"source": "github", "kind": "issue", "external_id": "a#1",
+                                             "labels": [{"name": "bug"}]})
+        with self.assertRaisesRegex(Reject, "labels"):
+            validate_mapped(Mapped([bad]), "github")
+
+    def test_map_valued_edge_property_is_rejected(self):
+        edge = EdgeRec("CONTAINS", G, "Container", "a", "WorkItem", "a#1", {"meta": {"x": 1}})
+        with self.assertRaisesRegex(Reject, "meta"):
+            validate_mapped(Mapped([good_item()], [edge]), "github")
+
+
 if __name__ == "__main__":
     unittest.main()
