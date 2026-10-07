@@ -7,3 +7,8 @@ dist/
 build/
 *.log
 .DS_Store
+# Next.js (apps/web)
+.next/
+next-env.d.ts
+*.tsbuildinfo
+apps/web/data/

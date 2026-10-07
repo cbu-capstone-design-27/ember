@@ -1,0 +1,1094 @@
+{
+  "anchor": "2026-10-06T16:00:00.000Z",
+  "organization": {
+    "name": "Kestrel Labs",
+    "tenant": "kestrel"
+  },
+  "people": [
+    {
+      "id": "nadia",
+      "name": "Nadia Brooks",
+      "title": "Engineering lead",
+      "email": "nadia.brooks@kestrel.example",
+      "accounts": {
+        "github": "nbrooks",
+        "jira": "acc-nadia",
+        "slack": "U0NADIA"
+      }
+    },
+    {
+      "id": "diego",
+      "name": "Diego Alvarez",
+      "title": "Backend engineer",
+      "email": "diego.alvarez@kestrel.example",
+      "accounts": {
+        "github": "dalvarez",
+        "jira": "acc-diego",
+        "slack": "U0DIEGO"
+      }
+    },
+    {
+      "id": "priya",
+      "name": "Priya Natarajan",
+      "title": "Frontend engineer",
+      "email": "priya.natarajan@kestrel.example",
+      "accounts": {
+        "github": "priya-n",
+        "jira": "acc-priya",
+        "slack": "U0PRIYA"
+      }
+    },
+    {
+      "id": "sam",
+      "name": "Sam Whitfield",
+      "title": "Product manager",
+      "email": "sam.whitfield@kestrel.example",
+      "accounts": {
+        "jira": "acc-sam",
+        "slack": "U0SAM"
+      }
+    },
+    {
+      "id": "lena",
+      "name": "Lena Fischer",
+      "title": "Product designer",
+      "email": "lena.fischer@kestrel.example",
+      "accounts": {
+        "jira": "acc-lena",
+        "slack": "U0LENA"
+      }
+    },
+    {
+      "id": "theo",
+      "name": "Theo Park",
+      "title": "QA and release",
+      "email": "theo.park@kestrel.example",
+      "accounts": {
+        "github": "theopark",
+        "jira": "acc-theo",
+        "slack": "U0THEO"
+      }
+    }
+  ],
+  "github": {
+    "org": "kestrel-labs",
+    "repositories": [
+      {
+        "name": "checkout-api",
+        "description": "Payments and checkout service"
+      },
+      {
+        "name": "checkout-web",
+        "description": "Checkout front end"
+      },
+      {
+        "name": "platform-infra",
+        "description": "Infrastructure as code"
+      }
+    ],
+    "pullRequests": [
+      {
+        "repo": "platform-infra",
+        "number": 88,
+        "base": "main",
+        "reviews": [
+          {
+            "reviewer": "dalvarez",
+            "state": "approved",
+            "at": "2026-09-28T12:00:00.000Z"
+          }
+        ],
+        "title": "CHK-135: Upgrade the payments database to Postgres 17",
+        "author": "nbrooks",
+        "state": "merged",
+        "branch": "CHK-135-postgres-17",
+        "createdAt": "2026-09-26T16:00:00.000Z",
+        "updatedAt": "2026-09-28T14:00:00.000Z",
+        "mergedAt": "2026-09-28T14:00:00.000Z",
+        "checks": "passing",
+        "additions": 64,
+        "deletions": 41,
+        "paths": [
+          "terraform/payments-db"
+        ]
+      },
+      {
+        "repo": "checkout-web",
+        "number": 210,
+        "base": "main",
+        "reviews": [
+          {
+            "reviewer": "nbrooks",
+            "state": "approved",
+            "at": "2026-10-01T11:00:00.000Z"
+          },
+          {
+            "reviewer": "theopark",
+            "state": "approved",
+            "at": "2026-10-01T12:00:00.000Z"
+          }
+        ],
+        "title": "CHK-128: Address autocomplete on the shipping step",
+        "author": "priya-n",
+        "state": "merged",
+        "branch": "feature/CHK-128-address-autocomplete",
+        "createdAt": "2026-09-29T13:00:00.000Z",
+        "updatedAt": "2026-10-01T14:00:00.000Z",
+        "mergedAt": "2026-10-01T14:00:00.000Z",
+        "checks": "passing",
+        "additions": 412,
+        "deletions": 58,
+        "paths": [
+          "app/checkout/shipping"
+        ]
+      },
+      {
+        "repo": "checkout-web",
+        "number": 214,
+        "base": "main",
+        "reviews": [
+          {
+            "reviewer": "nbrooks",
+            "state": "approved",
+            "at": "2026-10-04T13:00:00.000Z"
+          }
+        ],
+        "title": "CHK-127: Card brand icons on the payment form",
+        "author": "priya-n",
+        "state": "merged",
+        "branch": "feature/CHK-127-card-brand-icons",
+        "createdAt": "2026-10-03T14:00:00.000Z",
+        "updatedAt": "2026-10-04T16:00:00.000Z",
+        "mergedAt": "2026-10-04T16:00:00.000Z",
+        "checks": "passing",
+        "additions": 186,
+        "deletions": 12,
+        "paths": [
+          "components/payment-form"
+        ]
+      },
+      {
+        "repo": "checkout-web",
+        "number": 219,
+        "base": "main",
+        "reviews": [
+          {
+            "reviewer": "nbrooks",
+            "state": "approved",
+            "at": "2026-10-06T09:00:00.000Z"
+          },
+          {
+            "reviewer": "theopark",
+            "state": "approved",
+            "at": "2026-10-06T10:00:00.000Z"
+          }
+        ],
+        "title": "CHK-131: Saved cards list and default card",
+        "author": "priya-n",
+        "state": "merged",
+        "branch": "feature/CHK-131-saved-cards",
+        "createdAt": "2026-10-04T10:00:00.000Z",
+        "updatedAt": "2026-10-06T11:00:00.000Z",
+        "mergedAt": "2026-10-06T11:00:00.000Z",
+        "checks": "passing",
+        "additions": 734,
+        "deletions": 96,
+        "paths": [
+          "app/account/cards",
+          "components/payment-form"
+        ]
+      },
+      {
+        "repo": "checkout-web",
+        "number": 220,
+        "base": "main",
+        "reviews": [
+          {
+            "reviewer": "nbrooks",
+            "state": "changes_requested",
+            "at": "2026-10-05T20:00:00.000Z"
+          },
+          {
+            "reviewer": "theopark",
+            "state": "commented",
+            "at": "2026-10-05T19:00:00.000Z"
+          }
+        ],
+        "title": "CHK-129: Express checkout button",
+        "author": "priya-n",
+        "state": "open",
+        "branch": "feature/CHK-129-express-checkout",
+        "createdAt": "2026-10-04T22:00:00.000Z",
+        "updatedAt": "2026-10-05T21:00:00.000Z",
+        "checks": "passing",
+        "additions": 298,
+        "deletions": 34,
+        "paths": [
+          "components/express-checkout"
+        ]
+      },
+      {
+        "repo": "checkout-web",
+        "number": 221,
+        "base": "main",
+        "reviews": [
+          {
+            "reviewer": "theopark",
+            "state": "approved",
+            "at": "2026-10-06T15:24:00.000Z"
+          }
+        ],
+        "title": "Refund wording on the order page",
+        "author": "priya-n",
+        "state": "open",
+        "branch": "copy/refund-wording",
+        "createdAt": "2026-10-06T14:48:00.000Z",
+        "updatedAt": "2026-10-06T15:12:00.000Z",
+        "checks": "passing",
+        "additions": 22,
+        "deletions": 18,
+        "paths": [
+          "app/orders"
+        ]
+      },
+      {
+        "repo": "checkout-web",
+        "number": 223,
+        "base": "main",
+        "reviews": [],
+        "title": "CHK-150: 3-D Secure challenge flow (WIP)",
+        "author": "priya-n",
+        "state": "draft",
+        "branch": "feature/CHK-150-3ds-challenge",
+        "createdAt": "2026-10-05T12:00:00.000Z",
+        "updatedAt": "2026-10-06T13:00:00.000Z",
+        "checks": "pending",
+        "additions": 351,
+        "deletions": 20,
+        "paths": [
+          "app/checkout/3ds",
+          "components/payment-form"
+        ]
+      },
+      {
+        "repo": "checkout-api",
+        "number": 476,
+        "base": "main",
+        "reviews": [
+          {
+            "reviewer": "nbrooks",
+            "state": "requested"
+          },
+          {
+            "reviewer": "theopark",
+            "state": "requested"
+          }
+        ],
+        "title": "CHK-138: Tokenize card data through the vault service",
+        "author": "dalvarez",
+        "state": "open",
+        "branch": "feature/CHK-138-vault-tokens",
+        "createdAt": "2026-10-02T13:00:00.000Z",
+        "updatedAt": "2026-10-02T15:00:00.000Z",
+        "checks": "passing",
+        "additions": 528,
+        "deletions": 77,
+        "paths": [
+          "src/vault",
+          "src/payments"
+        ]
+      },
+      {
+        "repo": "checkout-api",
+        "number": 479,
+        "base": "main",
+        "reviews": [
+          {
+            "reviewer": "nbrooks",
+            "state": "requested"
+          }
+        ],
+        "title": "CHK-133: Default payment method endpoint",
+        "author": "dalvarez",
+        "state": "open",
+        "branch": "feature/CHK-133-default-payment-method",
+        "createdAt": "2026-10-04T16:00:00.000Z",
+        "updatedAt": "2026-10-05T14:00:00.000Z",
+        "checks": "failing",
+        "failingChecks": [
+          "integration-tests"
+        ],
+        "additions": 241,
+        "deletions": 15,
+        "paths": [
+          "src/payment-methods",
+          "test/integration"
+        ]
+      },
+      {
+        "repo": "checkout-api",
+        "number": 482,
+        "base": "main",
+        "reviews": [
+          {
+            "reviewer": "nbrooks",
+            "state": "requested"
+          }
+        ],
+        "title": "CHK-142: Retry failed webhooks with exponential backoff",
+        "author": "dalvarez",
+        "state": "open",
+        "branch": "feature/CHK-142-webhook-retries",
+        "createdAt": "2026-10-05T18:00:00.000Z",
+        "updatedAt": "2026-10-05T18:00:00.000Z",
+        "checks": "passing",
+        "additions": 389,
+        "deletions": 61,
+        "paths": [
+          "src/webhooks"
+        ]
+      },
+      {
+        "repo": "checkout-api",
+        "number": 484,
+        "base": "main",
+        "reviews": [],
+        "title": "CHK-153: Idempotency key on payment capture",
+        "author": "dalvarez",
+        "state": "draft",
+        "branch": "fix/CHK-153-idempotent-capture",
+        "createdAt": "2026-10-05T16:00:00.000Z",
+        "updatedAt": "2026-10-06T14:00:00.000Z",
+        "checks": "pending",
+        "additions": 143,
+        "deletions": 29,
+        "paths": [
+          "src/webhooks",
+          "src/payments"
+        ]
+      }
+    ]
+  },
+  "jira": {
+    "site": "kestrel-labs.atlassian.net",
+    "project": {
+      "key": "CHK",
+      "name": "Checkout"
+    },
+    "issues": [
+      {
+        "key": "CHK-100",
+        "priority": "Medium",
+        "history": [
+          {
+            "at": "2026-09-15T16:00:00.000Z",
+            "by": "acc-nadia",
+            "from": "To Do",
+            "to": "In Development"
+          }
+        ],
+        "type": "Epic",
+        "summary": "Saved payment methods",
+        "status": "In Development",
+        "reporter": "acc-sam",
+        "assignee": "acc-nadia",
+        "description": "Returning customers can save cards, pick a default, and pay without re-entering card details.",
+        "createdAt": "2026-09-06T16:00:00.000Z",
+        "updatedAt": "2026-10-06T11:00:00.000Z"
+      },
+      {
+        "key": "CHK-120",
+        "priority": "Medium",
+        "history": [
+          {
+            "at": "2026-09-22T16:00:00.000Z",
+            "by": "acc-sam",
+            "from": "To Do",
+            "to": "In Development"
+          }
+        ],
+        "type": "Epic",
+        "summary": "Checkout v2 redesign",
+        "status": "In Development",
+        "reporter": "acc-sam",
+        "assignee": "acc-priya",
+        "description": "A faster checkout with fewer steps, express payment buttons, and clearer order and refund pages.",
+        "createdAt": "2026-09-08T16:00:00.000Z",
+        "updatedAt": "2026-09-29T20:00:00.000Z",
+        "comments": [
+          {
+            "id": "10401",
+            "author": "acc-sam",
+            "at": "2026-09-29T20:00:00.000Z",
+            "body": "Recording the layout decision from #design-crit: we go with option B, the single-page layout. https://kestrel-labs.slack.com/archives/C0DESIGN/p1790704800000500"
+          }
+        ]
+      },
+      {
+        "key": "CHK-140",
+        "priority": "High",
+        "history": [
+          {
+            "at": "2026-09-26T16:00:00.000Z",
+            "by": "acc-nadia",
+            "from": "To Do",
+            "to": "In Development"
+          }
+        ],
+        "type": "Epic",
+        "summary": "Webhook reliability",
+        "status": "In Development",
+        "reporter": "acc-nadia",
+        "assignee": "acc-diego",
+        "description": "Payment webhooks are retried safely, never double-charge, and failures are visible to support.",
+        "createdAt": "2026-09-16T16:00:00.000Z",
+        "updatedAt": "2026-10-05T16:00:00.000Z"
+      },
+      {
+        "key": "CHK-127",
+        "priority": "Medium",
+        "history": [
+          {
+            "at": "2026-09-30T16:00:00.000Z",
+            "by": "acc-priya",
+            "from": "To Do",
+            "to": "In Development"
+          },
+          {
+            "at": "2026-10-03T16:00:00.000Z",
+            "by": "acc-priya",
+            "from": "In Development",
+            "to": "In Review"
+          }
+        ],
+        "type": "Story",
+        "summary": "Show card brand icons on the payment form",
+        "status": "In Review",
+        "reporter": "acc-lena",
+        "assignee": "acc-priya",
+        "epic": "CHK-120",
+        "description": "Detect the card brand from the first digits and show its icon in the card number field.",
+        "createdAt": "2026-09-27T16:00:00.000Z",
+        "updatedAt": "2026-10-03T16:00:00.000Z"
+      },
+      {
+        "key": "CHK-128",
+        "priority": "Medium",
+        "history": [
+          {
+            "at": "2026-09-27T16:00:00.000Z",
+            "by": "acc-priya",
+            "from": "To Do",
+            "to": "In Development"
+          },
+          {
+            "at": "2026-09-29T14:00:00.000Z",
+            "by": "acc-priya",
+            "from": "In Development",
+            "to": "In Review"
+          },
+          {
+            "at": "2026-10-01T16:00:00.000Z",
+            "by": "acc-theo",
+            "from": "In Review",
+            "to": "Done"
+          }
+        ],
+        "type": "Story",
+        "summary": "Address autocomplete on the shipping step",
+        "status": "Done",
+        "reporter": "acc-sam",
+        "assignee": "acc-priya",
+        "epic": "CHK-120",
+        "description": "Suggest addresses as the customer types, and fill the rest of the form from the pick.",
+        "createdAt": "2026-09-24T16:00:00.000Z",
+        "updatedAt": "2026-10-01T16:00:00.000Z"
+      },
+      {
+        "key": "CHK-129",
+        "priority": "High",
+        "history": [
+          {
+            "at": "2026-10-01T16:00:00.000Z",
+            "by": "acc-priya",
+            "from": "To Do",
+            "to": "In Development"
+          },
+          {
+            "at": "2026-10-04T22:00:00.000Z",
+            "by": "acc-priya",
+            "from": "In Development",
+            "to": "In Review"
+          }
+        ],
+        "type": "Story",
+        "summary": "Express checkout button (Apple Pay and Google Pay)",
+        "status": "In Review",
+        "reporter": "acc-sam",
+        "assignee": "acc-priya",
+        "epic": "CHK-120",
+        "description": "One-tap payment at the top of checkout when the browser supports Apple Pay or Google Pay.",
+        "createdAt": "2026-09-25T16:00:00.000Z",
+        "updatedAt": "2026-10-04T22:00:00.000Z"
+      },
+      {
+        "key": "CHK-131",
+        "priority": "High",
+        "history": [
+          {
+            "at": "2026-09-30T16:00:00.000Z",
+            "by": "acc-priya",
+            "from": "To Do",
+            "to": "In Development"
+          }
+        ],
+        "type": "Story",
+        "summary": "Save cards for returning customers",
+        "status": "In Development",
+        "reporter": "acc-sam",
+        "assignee": "acc-priya",
+        "epic": "CHK-100",
+        "description": "Customers can save a card at checkout and see, rename or remove saved cards from their account.",
+        "createdAt": "2026-09-22T16:00:00.000Z",
+        "updatedAt": "2026-10-04T10:00:00.000Z"
+      },
+      {
+        "key": "CHK-133",
+        "priority": "Medium",
+        "history": [
+          {
+            "at": "2026-10-02T16:00:00.000Z",
+            "by": "acc-diego",
+            "from": "To Do",
+            "to": "In Development"
+          },
+          {
+            "at": "2026-10-04T16:00:00.000Z",
+            "by": "acc-diego",
+            "from": "In Development",
+            "to": "In Review"
+          }
+        ],
+        "type": "Story",
+        "summary": "Let customers pick a default payment method",
+        "status": "In Review",
+        "reporter": "acc-sam",
+        "assignee": "acc-diego",
+        "epic": "CHK-100",
+        "description": "One saved card is the default and is preselected at checkout.",
+        "createdAt": "2026-09-23T16:00:00.000Z",
+        "updatedAt": "2026-10-05T16:00:00.000Z",
+        "comments": [
+          {
+            "id": "10422",
+            "author": "acc-theo",
+            "at": "2026-10-05T16:00:00.000Z",
+            "body": "Integration tests fail on the default-card endpoint when the customer has no saved cards."
+          }
+        ]
+      },
+      {
+        "key": "CHK-135",
+        "priority": "Medium",
+        "history": [
+          {
+            "at": "2026-09-25T16:00:00.000Z",
+            "by": "acc-nadia",
+            "from": "To Do",
+            "to": "In Development"
+          },
+          {
+            "at": "2026-09-26T16:00:00.000Z",
+            "by": "acc-nadia",
+            "from": "In Development",
+            "to": "In Review"
+          },
+          {
+            "at": "2026-09-28T16:00:00.000Z",
+            "by": "acc-nadia",
+            "from": "In Review",
+            "to": "Done"
+          }
+        ],
+        "type": "Task",
+        "summary": "Upgrade the payments database to Postgres 17",
+        "status": "Done",
+        "reporter": "acc-nadia",
+        "assignee": "acc-nadia",
+        "description": "Move the payments database from Postgres 15 to 17 with no downtime.",
+        "createdAt": "2026-09-20T16:00:00.000Z",
+        "updatedAt": "2026-09-28T16:00:00.000Z"
+      },
+      {
+        "key": "CHK-138",
+        "priority": "High",
+        "history": [
+          {
+            "at": "2026-09-27T16:00:00.000Z",
+            "by": "acc-diego",
+            "from": "To Do",
+            "to": "In Development"
+          },
+          {
+            "at": "2026-10-02T13:00:00.000Z",
+            "by": "acc-diego",
+            "from": "In Development",
+            "to": "In Review"
+          }
+        ],
+        "type": "Story",
+        "summary": "Tokenize card data through the vault service",
+        "status": "In Review",
+        "reporter": "acc-nadia",
+        "assignee": "acc-diego",
+        "epic": "CHK-100",
+        "description": "Card numbers never touch our database: the vault returns a token we store instead.",
+        "createdAt": "2026-09-21T16:00:00.000Z",
+        "updatedAt": "2026-10-02T16:00:00.000Z",
+        "comments": [
+          {
+            "id": "10388",
+            "author": "acc-diego",
+            "at": "2026-10-02T14:00:00.000Z",
+            "body": "PR is up: checkout-api#476."
+          }
+        ]
+      },
+      {
+        "key": "CHK-142",
+        "priority": "High",
+        "history": [
+          {
+            "at": "2026-10-03T12:00:00.000Z",
+            "by": "acc-diego",
+            "from": "To Do",
+            "to": "In Development"
+          }
+        ],
+        "type": "Story",
+        "summary": "Retry failed payment webhooks with backoff",
+        "status": "In Development",
+        "reporter": "acc-nadia",
+        "assignee": "acc-diego",
+        "epic": "CHK-140",
+        "description": "When a payment provider webhook fails, retry it with exponential backoff instead of dropping it.",
+        "createdAt": "2026-09-26T16:00:00.000Z",
+        "updatedAt": "2026-10-03T16:00:00.000Z",
+        "links": [
+          {
+            "type": "relates to",
+            "key": "CHK-153"
+          }
+        ],
+        "comments": [
+          {
+            "id": "10397",
+            "author": "acc-nadia",
+            "at": "2026-10-03T16:00:00.000Z",
+            "body": "Retries have to be idempotent on our side too, see CHK-153."
+          }
+        ]
+      },
+      {
+        "key": "CHK-145",
+        "priority": "Medium",
+        "history": [
+          {
+            "at": "2026-10-04T16:00:00.000Z",
+            "by": "acc-diego",
+            "from": "To Do",
+            "to": "In Development"
+          }
+        ],
+        "type": "Story",
+        "summary": "Verify our domain for Apple Pay",
+        "status": "In Development",
+        "reporter": "acc-priya",
+        "assignee": "acc-diego",
+        "epic": "CHK-120",
+        "description": "Host Apple's domain association file and register the checkout domain with our merchant ID.",
+        "createdAt": "2026-09-28T16:00:00.000Z",
+        "updatedAt": "2026-10-04T16:00:00.000Z",
+        "links": [
+          {
+            "type": "blocks",
+            "key": "CHK-129"
+          }
+        ]
+      },
+      {
+        "key": "CHK-148",
+        "priority": "Low",
+        "history": [],
+        "type": "Task",
+        "summary": "Remove the legacy /cart/checkout route",
+        "status": "To Do",
+        "reporter": "acc-nadia",
+        "epic": "CHK-120",
+        "description": "Delete the old three-step checkout route once Checkout v2 is at 100%.",
+        "createdAt": "2026-09-29T16:00:00.000Z",
+        "updatedAt": "2026-09-29T16:00:00.000Z"
+      },
+      {
+        "key": "CHK-150",
+        "priority": "Medium",
+        "history": [
+          {
+            "at": "2026-10-05T12:00:00.000Z",
+            "by": "acc-priya",
+            "from": "To Do",
+            "to": "In Development"
+          }
+        ],
+        "type": "Story",
+        "summary": "3-D Secure challenge flow",
+        "status": "In Development",
+        "reporter": "acc-sam",
+        "assignee": "acc-priya",
+        "epic": "CHK-100",
+        "description": "Show the bank's 3-D Secure challenge in a modal and resume checkout when it completes.",
+        "createdAt": "2026-09-27T16:00:00.000Z",
+        "updatedAt": "2026-10-05T12:00:00.000Z"
+      },
+      {
+        "key": "CHK-151",
+        "priority": "Low",
+        "history": [
+          {
+            "at": "2026-10-05T16:00:00.000Z",
+            "by": "acc-priya",
+            "from": "To Do",
+            "to": "In Development"
+          },
+          {
+            "at": "2026-10-06T14:30:00.000Z",
+            "by": "acc-priya",
+            "from": "In Development",
+            "to": "In Review"
+          }
+        ],
+        "type": "Task",
+        "summary": "Update the refund wording on the order page",
+        "status": "In Review",
+        "reporter": "acc-lena",
+        "assignee": "acc-priya",
+        "epic": "CHK-120",
+        "description": "Say when the refund reaches the customer's bank, not just that it was issued.",
+        "createdAt": "2026-10-02T16:00:00.000Z",
+        "updatedAt": "2026-10-06T14:30:00.000Z"
+      },
+      {
+        "key": "CHK-153",
+        "priority": "Highest",
+        "history": [
+          {
+            "at": "2026-10-05T15:00:00.000Z",
+            "by": "acc-diego",
+            "from": "To Do",
+            "to": "In Development"
+          }
+        ],
+        "type": "Bug",
+        "summary": "Some customers are charged twice when a webhook is retried",
+        "status": "In Development",
+        "reporter": "acc-theo",
+        "assignee": "acc-diego",
+        "epic": "CHK-140",
+        "description": "A retried capture webhook can capture the same payment twice. Seen on three orders overnight.",
+        "createdAt": "2026-10-03T14:00:00.000Z",
+        "updatedAt": "2026-10-05T16:00:00.000Z",
+        "links": [
+          {
+            "type": "relates to",
+            "key": "CHK-142"
+          }
+        ]
+      },
+      {
+        "key": "CHK-155",
+        "priority": "Medium",
+        "history": [],
+        "type": "Story",
+        "summary": "Admin view of dead-lettered webhooks",
+        "status": "To Do",
+        "reporter": "acc-sam",
+        "epic": "CHK-140",
+        "description": "Support can see webhooks that ran out of retries, and replay one by hand.",
+        "createdAt": "2026-10-05T15:48:00.000Z",
+        "updatedAt": "2026-10-05T15:48:00.000Z",
+        "links": [
+          {
+            "type": "relates to",
+            "key": "CHK-142"
+          }
+        ]
+      }
+    ]
+  },
+  "slack": {
+    "workspace": "kestrel-labs",
+    "channels": [
+      {
+        "id": "C0CHKDEV",
+        "name": "checkout-dev",
+        "topic": "Day-to-day checkout engineering"
+      },
+      {
+        "id": "C0RELEASE",
+        "name": "checkout-releases",
+        "topic": "Deploys and release notes"
+      },
+      {
+        "id": "C0DESIGN",
+        "name": "design-crit",
+        "topic": "Design reviews and decisions"
+      },
+      {
+        "id": "C0INCIDENT",
+        "name": "incidents",
+        "topic": "Production incidents"
+      }
+    ],
+    "messages": [
+      {
+        "ts": "1790607600.000200",
+        "channel": "C0RELEASE",
+        "user": "U0NADIA",
+        "at": "2026-09-28T15:00:00.000Z",
+        "text": "platform-infra#88 merged: the payments database is on Postgres 17 now (CHK-135). No downtime.",
+        "reactions": [
+          {
+            "name": "tada",
+            "count": 4
+          }
+        ]
+      },
+      {
+        "ts": "1790697600.000300",
+        "channel": "C0DESIGN",
+        "user": "U0LENA",
+        "at": "2026-09-29T16:00:00.000Z",
+        "text": "Two layouts for Checkout v2 are in Figma. A keeps the three steps, B puts everything on one page. Leaning B: fewer drop-offs in the prototype test. Thoughts? (CHK-120)"
+      },
+      {
+        "ts": "1790701200.000400",
+        "channel": "C0DESIGN",
+        "user": "U0PRIYA",
+        "at": "2026-09-29T17:00:00.000Z",
+        "text": "B is easier to build too. The address and payment forms already work on their own.",
+        "threadTs": "1790697600.000300"
+      },
+      {
+        "ts": "1790704800.000500",
+        "channel": "C0DESIGN",
+        "user": "U0SAM",
+        "at": "2026-09-29T18:00:00.000Z",
+        "text": "Decision: we go with B, the single-page layout. I'll note it on CHK-120.",
+        "threadTs": "1790697600.000300",
+        "reactions": [
+          {
+            "name": "white_check_mark",
+            "count": 3
+          }
+        ]
+      },
+      {
+        "ts": "1790870400.000600",
+        "channel": "C0RELEASE",
+        "user": "U0THEO",
+        "at": "2026-10-01T16:00:00.000Z",
+        "text": "Released checkout-web 2.14: address autocomplete (CHK-128) is live.",
+        "reactions": [
+          {
+            "name": "rocket",
+            "count": 5
+          }
+        ]
+      },
+      {
+        "ts": "1790949600.000800",
+        "channel": "C0CHKDEV",
+        "user": "U0DIEGO",
+        "at": "2026-10-02T14:00:00.000Z",
+        "text": "Vault tokenization is up for review: checkout-api#476 (CHK-138). <@U0NADIA> <@U0THEO> could you take a look?"
+      },
+      {
+        "ts": "1791025200.000700",
+        "channel": "C0CHKDEV",
+        "user": "U0NADIA",
+        "at": "2026-10-03T11:00:00.000Z",
+        "text": "Standup moves to 10:30 tomorrow. The platform all-hands overlaps."
+      },
+      {
+        "ts": "1791057600.000900",
+        "channel": "C0CHKDEV",
+        "user": "U0SAM",
+        "at": "2026-10-03T20:00:00.000Z",
+        "text": "Who's on call this weekend? I need a name for the support rota."
+      },
+      {
+        "ts": "1791061200.001000",
+        "channel": "C0CHKDEV",
+        "user": "U0THEO",
+        "at": "2026-10-03T21:00:00.000Z",
+        "text": "Me. I'll swap with Diego next week.",
+        "threadTs": "1791057600.000900"
+      },
+      {
+        "ts": "1791118800.001100",
+        "channel": "C0CHKDEV",
+        "user": "U0NADIA",
+        "at": "2026-10-04T13:00:00.000Z",
+        "text": "For CHK-142, decision: we cap webhook retries at 8 attempts over 24h, then move the event to the dead-letter queue. Anything dead-lettered pages on-call."
+      },
+      {
+        "ts": "1791122400.001200",
+        "channel": "C0CHKDEV",
+        "user": "U0DIEGO",
+        "at": "2026-10-04T14:00:00.000Z",
+        "text": "Makes sense, I'll build it that way.",
+        "threadTs": "1791118800.001100"
+      },
+      {
+        "ts": "1791126000.001300",
+        "channel": "C0CHKDEV",
+        "user": "U0SAM",
+        "at": "2026-10-04T15:00:00.000Z",
+        "text": "Works for me. Can we show dead-lettered events in the admin? Support will ask.",
+        "threadTs": "1791118800.001100"
+      },
+      {
+        "ts": "1791133200.001400",
+        "channel": "C0CHKDEV",
+        "user": "U0NADIA",
+        "at": "2026-10-04T17:00:00.000Z",
+        "text": "Good call. <@U0SAM> can you file a ticket?",
+        "threadTs": "1791118800.001100"
+      },
+      {
+        "ts": "1791208800.001500",
+        "channel": "C0INCIDENT",
+        "user": "U0THEO",
+        "at": "2026-10-05T14:00:00.000Z",
+        "text": "Three orders were charged twice overnight (88412, 88419, 88433). Same pattern as CHK-153: the capture webhook retried after a timeout. Refunds are issued."
+      },
+      {
+        "ts": "1791212400.001600",
+        "channel": "C0INCIDENT",
+        "user": "U0DIEGO",
+        "at": "2026-10-05T15:00:00.000Z",
+        "text": "Fix is in progress in checkout-api#484: an idempotency key on capture. Should be ready for review tomorrow.",
+        "threadTs": "1791208800.001500"
+      },
+      {
+        "ts": "1791214200.001700",
+        "channel": "C0INCIDENT",
+        "user": "U0NADIA",
+        "at": "2026-10-05T15:30:00.000Z",
+        "text": "Thanks both. Until #484 ships, let's keep webhook retries manual.",
+        "threadTs": "1791208800.001500"
+      },
+      {
+        "ts": "1791215280.001800",
+        "channel": "C0CHKDEV",
+        "user": "U0SAM",
+        "at": "2026-10-05T15:48:00.000Z",
+        "text": "Filed CHK-155 for the dead-letter admin view.",
+        "threadTs": "1791118800.001100"
+      },
+      {
+        "ts": "1791216000.001900",
+        "channel": "C0CHKDEV",
+        "user": "U0DIEGO",
+        "at": "2026-10-05T16:00:00.000Z",
+        "text": "Could someone review checkout-api#476? It's been waiting a few days and saved cards needs it."
+      },
+      {
+        "ts": "1791223200.002000",
+        "channel": "C0CHKDEV",
+        "user": "U0DIEGO",
+        "at": "2026-10-05T18:00:00.000Z",
+        "text": "Webhook retries with backoff: checkout-api#482 is ready for review."
+      },
+      {
+        "ts": "1791230400.002100",
+        "channel": "C0DESIGN",
+        "user": "U0LENA",
+        "at": "2026-10-05T20:00:00.000Z",
+        "text": "Express checkout button spacing is updated in Figma after the review on checkout-web#220."
+      },
+      {
+        "ts": "1791270000.002200",
+        "channel": "C0DESIGN",
+        "user": "U0LENA",
+        "at": "2026-10-06T07:00:00.000Z",
+        "text": "The new icon set is in the shared Figma library. Please use it for anything new."
+      },
+      {
+        "ts": "1791280800.002300",
+        "channel": "C0CHKDEV",
+        "user": "U0DIEGO",
+        "at": "2026-10-06T10:00:00.000Z",
+        "text": "Heads up: CHK-145 is blocked. We still don't have the Apple merchant ID from finance, so I can't verify the domain."
+      },
+      {
+        "ts": "1791282600.002400",
+        "channel": "C0CHKDEV",
+        "user": "U0SAM",
+        "at": "2026-10-06T10:30:00.000Z",
+        "text": "I'll chase finance today.",
+        "threadTs": "1791280800.002300"
+      },
+      {
+        "ts": "1791288000.002500",
+        "channel": "C0CHKDEV",
+        "user": "U0PRIYA",
+        "at": "2026-10-06T12:00:00.000Z",
+        "text": "Saved cards (CHK-131) is done! checkout-web#219 merged, and it's behind the saved_cards flag for now.",
+        "reactions": [
+          {
+            "name": "tada",
+            "count": 6
+          }
+        ]
+      },
+      {
+        "ts": "1791288720.002600",
+        "channel": "C0CHKDEV",
+        "user": "U0NADIA",
+        "at": "2026-10-06T12:12:00.000Z",
+        "text": "Nice work <@U0PRIYA>!",
+        "threadTs": "1791288000.002500"
+      },
+      {
+        "ts": "1791289440.002700",
+        "channel": "C0CHKDEV",
+        "user": "U0THEO",
+        "at": "2026-10-06T12:24:00.000Z",
+        "text": "I'll run the regression suite against it tomorrow morning.",
+        "threadTs": "1791288000.002500"
+      },
+      {
+        "ts": "1791295200.002800",
+        "channel": "C0RELEASE",
+        "user": "U0THEO",
+        "at": "2026-10-06T14:00:00.000Z",
+        "text": "Deploying checkout-api 3.8 to staging. The default payment method (CHK-133) isn't in this one: its integration tests are failing."
+      },
+      {
+        "ts": "1791298800.002900",
+        "channel": "C0CHKDEV",
+        "user": "U0PRIYA",
+        "at": "2026-10-06T15:00:00.000Z",
+        "text": "Refund wording PR is up: checkout-web#221. Lena signed off on the copy."
+      },
+      {
+        "ts": "1791300600.003000",
+        "channel": "C0CHKDEV",
+        "user": "U0SAM",
+        "at": "2026-10-06T15:30:00.000Z",
+        "text": "Reminder: the Checkout v2 demo for leadership is Thursday. Let's keep CHK-129 and CHK-127 moving."
+      }
+    ]
+  }
+}

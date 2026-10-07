@@ -1,0 +1,9 @@
+# Used only for apps/web/Dockerfile (BuildKit reads <Dockerfile>.dockerignore).
+# The context is the repo root; send only the web app, without local builds.
+**
+!apps/web/**
+apps/web/node_modules
+apps/web/.next
+apps/web/data
+apps/web/*.tsbuildinfo
+apps/web/next-env.d.ts
