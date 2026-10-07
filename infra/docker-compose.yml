@@ -181,6 +181,9 @@ services:
   # EMBER-51. The web app: sign-up, log-in, dashboard. Not part of the default `up`.
   # DATABASE_URL picks the database: file:/data/ember.db (SQLite, default) or
   # postgres://user:pass@host:5432/db (Postgres) with no other change.
+  # BETTER_AUTH_SECRET is required: the server refuses to start without it.
+  # It isn't marked required here (`:?`) so `docker compose config` works
+  # without a .env, like the other services' secrets.
   web:
     profiles: ["web"]
     build:
@@ -191,7 +194,7 @@ services:
       - "${WEB_PORT:-3000}:3000"
     environment:
       DATABASE_URL: "${DATABASE_URL:-file:/data/ember.db}"
-      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env (openssl rand -hex 32)}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:-}"
       BETTER_AUTH_URL: "${BETTER_AUTH_URL:-http://localhost:3000}"
     volumes:
       - web-data:/data
