@@ -188,5 +188,22 @@ class RunTests(unittest.TestCase):
         reset.assert_called_once()
 
 
+    def test_rejects_file_survives_a_writer_failure(self):
+        write_sample(self.root, include_bad=True)
+
+        class Boom(MemoryWriter):
+            def write_nodes(self, nodes):
+                raise RuntimeError("neo4j went away")
+
+        with self.assertRaises(RuntimeError):
+            run("brandon-dev", self.root, Boom(), self.rejects)
+        rejects = [json.loads(line) for line in self.rejects.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(rejects), 3)
+
+    def test_no_rejects_file_when_nothing_was_rejected(self):
+        write_sample(self.root, include_bad=False)
+        run("brandon-dev", self.root, MemoryWriter(), self.rejects)
+        self.assertFalse(self.rejects.exists())
+
 if __name__ == "__main__":
     unittest.main()
