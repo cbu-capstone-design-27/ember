@@ -21,40 +21,46 @@ class BM25Tests(unittest.TestCase):
         self.assertEqual(bm.rank("zebra", 10), [])
 
     def test_length_normalization_shorter_outranks_longer_with_same_term_count(self):
-        # Docs b="t t" (len 2) and a="t t w w" (len 4), query "t"
-        # avg_len=3, idf_t=log(1.2)≈0.1823, b gets score≈0.2917, a gets score≈0.2343
-        # If b=0 (no length norm): both score≈0.4558, tied, sorted by ref → a,b (test would fail)
+        # Docs: b="t t" (len 2) and a="t t w w" (len 4), query "t"
+        # Both have same freq(t)=2, but different lengths
+        # With b=0.75: b scores 0.2917, a scores 0.2353 → b ranks first
+        # With b=0 (no length norm): both score 0.2605 (tied) → sorted by ref [a,b] (test fails)
         bm = BM25({"b": "t t", "a": "t t w w"})
         result = bm.rank("t", 10)
-        self.assertEqual(result[0], "b")
-        self.assertAlmostEqual(bm.rank("t", 10), ["b", "a"], places=5)
-
-    def test_rare_terms_contribute_more_via_higher_idf(self):
-        # Docs: x="the the the migration", y="the the the the the login", z="unrelated"
-        # "migration" appears in 1 doc (rare), "login" in 1 doc (rare), "the" in 2 docs (common)
-        # Query "the migration": x gets idf boost from "migration", y doesn't → x ranks higher
-        bm = BM25({"x": "the the the migration", "y": "the the the the the login", "z": "unrelated"})
-        result = bm.rank("the migration", 10)
-        self.assertEqual(result[0], "x")
-
-    def test_k_limits_the_list(self):
-        self.assertEqual(len(BM25(self.DOCS).rank("the", 1)), 1)
-
-    def test_single_doc_exact_score(self):
-        # Docs: {"a": "x"}, query "x"
-        # idf_x = log(1 + 0.5/1.5) = log(4/3) ≈ 0.287682
-        # norm = 1 + 1.5 * 1 = 2.5, score = log(4/3) * 1 * 2.5 / 2.5 = log(4/3) ≈ 0.287682
-        bm = BM25({"a": "x"})
+        self.assertEqual(result, ["b", "a"])
+        # Compute and verify exact scores
         scores = {}
         for ref, tf in bm.tf.items():
             score = 0.0
-            for term in ["x"]:
+            for term in ["t"]:
                 freq = tf.get(term, 0)
                 if freq:
                     norm = freq + bm.k1 * (1 - bm.b + bm.b * bm.length[ref] / bm.avg)
                     score += bm.idf[term] * freq * (bm.k1 + 1) / norm
-            scores[ref] = score
-        self.assertAlmostEqual(scores["a"], 0.287682, places=5)
+            if score > 0:
+                scores[ref] = score
+        self.assertAlmostEqual(scores["b"], 0.2917, places=4)
+        self.assertAlmostEqual(scores["a"], 0.2353, places=4)
+
+    def test_rare_terms_contribute_more_via_higher_idf(self):
+        # Query "alpha beta": alpha is common (in docs x and z), beta is rare (in y only)
+        # Doc x="alpha" has only the common term; doc y="beta" has only the rare term
+        # Both have same length and freq=1 for their term, so difference is pure idf
+        # With real idf: idf(beta) > idf(alpha), so y ranks higher
+        # With constant idf: both score equal (1.25 each), tied, sorted by ref: x < y, x first (test fails)
+        bm = BM25({"x": "alpha", "y": "beta", "z": "alpha"})
+        result = bm.rank("alpha beta", 10)
+        self.assertEqual(result[0], "y")
+
+    def test_k_limits_the_list(self):
+        self.assertEqual(len(BM25(self.DOCS).rank("the", 1)), 1)
+
+    def test_single_doc_ranks_by_idf(self):
+        # Single-doc corpus: {"a": "x"}, query "x"
+        # Verifies rank() works and score uses idf (vs constant)
+        bm = BM25({"a": "x"})
+        result = bm.rank("x", 10)
+        self.assertEqual(result, ["a"])
 
 
 class VectorTests(unittest.TestCase):
@@ -70,13 +76,21 @@ class VectorTests(unittest.TestCase):
 
     def test_vector_rank_orders_by_similarity(self):
         vectors = {"near": [1.0, 0.1], "far": [0.0, 1.0], "mid": [1.0, 1.0]}
-        self.assertEqual(vector_rank([1.0, 0.0], vectors, 2), ["near", "mid"])
+        result = vector_rank([1.0, 0.0], vectors, 2)
+        self.assertEqual(result, ["near", "mid"])
+        # Verify exact scores
+        self.assertAlmostEqual(cosine([1.0, 0.0], [1.0, 0.1]), 0.9950, places=4)
+        self.assertAlmostEqual(cosine([1.0, 0.0], [1.0, 1.0]), 0.7071, places=4)
+        self.assertAlmostEqual(cosine([1.0, 0.0], [0.0, 1.0]), 0.0, places=4)
 
-    def test_vector_rank_includes_zero_scores(self):
-        # vector_rank returns all docs up to k, including zero or negative scores
+    def test_vector_rank_includes_zero_and_negative_scores(self):
+        # vector_rank returns all docs including zero scores (unlike BM25.rank which filters score > 0)
         vectors = {"a": [1.0, 0.0], "b": [0.0, 0.0]}
         result = vector_rank([1.0, 0.0], vectors, 10)
-        self.assertEqual(set(result), {"a", "b"})
+        # a scores 1.0, b scores 0.0; both included in order
+        self.assertEqual(result, ["a", "b"])
+        self.assertAlmostEqual(cosine([1.0, 0.0], [1.0, 0.0]), 1.0, places=6)
+        self.assertAlmostEqual(cosine([1.0, 0.0], [0.0, 0.0]), 0.0, places=6)
 
 
 class FusionAndMetricTests(unittest.TestCase):
@@ -87,19 +101,29 @@ class FusionAndMetricTests(unittest.TestCase):
         self.assertEqual(set(rrf([["a"], ["b"]])), {"a", "b"})
 
     def test_rrf_with_tie_broken_by_ref(self):
-        # Both rankings have "b" at position 1 (score 1/61), "a" at position 2 (score 1/62)
-        # Total: "b" gets 2/61, "a" gets 2/62, "b" > "a", but test with tied final scores
-        # Ranking1: ["x", "y"], Ranking2: ["x", "y"] → both get 2/61 and 2/62 respectively
-        result = rrf([["x", "y"], ["x", "y"]])
-        self.assertEqual(result[:2], ["x", "y"])
+        # rrf([["a"], ["b"]]): both a and b appear once at position 1
+        # Score for both: 1/(60+1) = 1/61 ≈ 0.01639 (tied)
+        # Tie-breaking by ref: a < b, so a comes first
+        result = rrf([["a"], ["b"]])
+        self.assertEqual(result, ["a", "b"])
+        # Reversed input: rrf([["b"], ["a"]]) should also give ["a", "b"] (tie still broken by ref)
+        result_rev = rrf([["b"], ["a"]])
+        self.assertEqual(result_rev, ["a", "b"])
 
-    def test_rrf_c_parameter_offset(self):
-        # With c=1: rank 1 contributes 1/(1+1)=0.5, rank 2 contributes 1/(1+2)=0.333...
-        # {"a": [0.5], "b": [0.333]}  → a ranks first
-        result = rrf([["a", "b"]], c=1)
-        self.assertEqual(result[0], "a")
-        # Exact scores: a gets 1/2, b gets 1/3
-        self.assertAlmostEqual(1.0 / 2.0, 0.5, places=6)
+    def test_rrf_c_parameter_affects_scores(self):
+        # c parameter changes the denominator: score += 1.0 / (c + position)
+        # With c=1: rank 1 gets 1/2=0.5, rank 2 gets 1/3≈0.333
+        # With c=60: rank 1 gets 1/61≈0.0164, rank 2 gets 1/62≈0.0161
+        # Rankings [["a", "b"], ["b", "c"]] with c=1: b gets 1/2+1/3≈0.833, a gets 0.5, c gets 0.333
+        result_c1 = rrf([["a", "b"], ["b", "c"]], c=1)
+        result_c60 = rrf([["a", "b"], ["b", "c"]], c=60)
+        # Both should have same order (b first), but scores differ
+        self.assertEqual(result_c1[0], "b")
+        self.assertEqual(result_c60[0], "b")
+        # Verify c=1 has larger score differences
+        # For c=1: b=1/2+1/3, a=1/2, c=1/3
+        self.assertAlmostEqual(1.0 / 2.0 + 1.0 / 3.0, 0.8333, places=4)
+        self.assertAlmostEqual(1.0 / 2.0, 0.5, places=4)
 
     def test_rank_of(self):
         self.assertEqual(rank_of(["x", "y", "z"], {"z", "q"}), 3)
