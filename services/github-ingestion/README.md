@@ -4,6 +4,8 @@ GitHub App webhook connector. Each delivery is emitted as EMBER-39 intake: `{"ty
 
 Jira: EMBER-35. Floor scaffold. The worker is repo- and account-agnostic. It does not clean or sort the payload. Embeddings stay out (EMBER-3). No live tunnel and no App registration in this change.
 
+Rate limits for a GitHub App installation token and for a personal access token, and how the backfill waits them out: [`docs/ingestion/github.md`](../../docs/ingestion/github.md) (EMBER-44).
+
 Installing the App on an account or org defaults to all repositories. Choosing which of those repositories feed Ember is a later webapp concern, not this service.
 
 ## Status
@@ -198,7 +200,9 @@ For the one test repo, in JSONL order:
 
 Issues and pull requests are full GETs. The other rows are the list objects for those routes, because a second GET would store the same comment, review, commit, or release again.
 
-List pages inside one collection stay in order, 100 per page, and stop with an error after 200 pages (20,000 objects) instead of truncating quietly. Independent lists run together. The detail wave (issue GETs, pull GETs, reviews, per-branch commits, pull-request commits, annotated tags) runs together, then the JSONL is written in the order above. Tune in-flight requests with `--concurrency N` or `GITHUB_PULL_CONCURRENCY` (default 32, allowed 1–80). If GitHub returns `Retry-After`, a primary rate limit with `x-ratelimit-remaining: 0`, or a secondary rate-limit / abuse-detection response, every worker shares one gate, waits (at most 120 seconds), and retries that request.
+List pages inside one collection stay in order, 100 per page, and stop with an error after 200 pages (20,000 objects) instead of truncating quietly. Independent lists run together. The detail wave (issue GETs, pull GETs, reviews, per-branch commits, pull-request commits, annotated tags) runs together, then the JSONL is written in the order above. Tune in-flight requests with `--concurrency N` or `GITHUB_PULL_CONCURRENCY` (default 32, allowed 1–80).
+
+Every worker shares one gate (EMBER-44). It pauses when `x-ratelimit-remaining` (or `RateLimit-Remaining`) is at or under 50, or under a tenth of a smaller limit, until `x-ratelimit-reset`. A 403/429 waits out `Retry-After` or that reset, up to an hour, because GitHub's primary window is an hour and the docs say not to call again before the reset. A secondary limit with primary quota still left waits 60 seconds, then 120. A 429 with no server delay, a 5xx, or a dropped connection backs off 1s, 2s, 4s, … with jitter, each sleep at most 120 seconds. Five tries, then the pull stops. A permission 403 is not retried. Details and the PAT versus installation-token budgets: [`docs/ingestion/github.md`](../../docs/ingestion/github.md).
 
 ### What this cut does not pull
 
