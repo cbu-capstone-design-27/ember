@@ -31,8 +31,24 @@ def _github(body: dict[str, Any]) -> str | None:
     return None
 
 
+_GITLAB_HOOK_KINDS = {"merge_request": "merge_request", "issue": "issue", "work_item": "issue", "note": "note"}
+
+
 def _gitlab(body: dict[str, Any]) -> str | None:
-    return {"merge_request": "merge_request", "issue": "issue", "note": "note"}.get(body.get("object_kind"))
+    # Webhook bodies name themselves in object_kind.
+    if "object_kind" in body:
+        return _GITLAB_HOOK_KINDS.get(body["object_kind"])
+    # REST objects from the backfill (services/gitlab-ingestion/pull.py) carry no
+    # object_kind, so they are classified by the fields only that object type has.
+    if "noteable_type" in body:
+        return "note"
+    if "iid" in body and "source_branch" in body:
+        return "merge_request"
+    if "iid" in body and "issue_type" in body:
+        return "issue"
+    if "path_with_namespace" in body:
+        return "project"
+    return None
 
 
 def _jira(body: dict[str, Any]) -> str | None:
