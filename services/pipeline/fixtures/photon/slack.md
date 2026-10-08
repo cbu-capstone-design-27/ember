@@ -1,0 +1,675 @@
+# Slack: Photon (synthetic)
+
+Workspace `T08PHOTON01` at https://photon-synthetic.slack.com/. Generated for EMBER-43 from the ryan-stoffel/photon history. Times are Pacific. Thread replies are indented under their parent.
+
+## Members
+
+- Ryan Stoffel (`U08RSTOFFEL`, person, stoffel.thomas.ryan@gmail.com)
+- Maya Okafor (`U08MOKAFOR1`, person, maya.okafor@example.com)
+- Daniel Reyes (`U08DREYES01`, person, daniel.reyes@example.com)
+- Slackbot (`USLACKBOT`, person)
+- GitHub (`U08GITHUB01`, bot)
+- Jira Cloud (`U08JIRACLD1`, bot)
+- Ember (`U08EMBERBOT`, bot)
+
+## #general
+
+_Workspace announcements._ 4 messages.
+
+- **Ryan Stoffel** 2026-09-13 19:31 PT: Setting this workspace up for Photon. Code is at https://github.com/ryan-stoffel/photon and tickets are on the PHO board. #photon-dev is for decisions and conventions, #photon-github and #photon-releases are bot feeds, and #photon-bugs is for regressions.
+    - **Maya Okafor** 2026-09-13 19:40 PT: Joined. Design notes and mocks will go in #photon-dev.
+    - **Daniel Reyes** 2026-09-13 19:41 PT: Here. I'll triage in #photon-bugs and test every release on a 14 and a 15 machine before it goes out.
+- **Ryan Stoffel** 2026-10-05 09:05 PT: Added @Ember to #general, #photon-dev, #photon-github, #photon-releases, and #photon-bugs. It reads only channels it is invited to, so #random stays out.
+
+## #photon-dev
+
+_Decisions, conventions, and working notes for Photon._ 55 messages.
+
+- **Ryan Stoffel** 2026-09-13 19:35 PT: Scope for Photon, written down so we stop relitigating it: applications, clipboard history, notes, file search, and keybinds. No AI, no extensions, no account, no cloud sync, no telemetry. Swift 6 with AppKit for the panel and process behavior and SwiftUI for content. macOS 14 and later. :pushpin:
+    - **Ryan Stoffel** 2026-09-13 19:37 PT: Branching is git-flow. `develop` is the default branch, `main` only takes release merges, and `main` is back-merged into `develop` after every tag.
+    - **Ryan Stoffel** 2026-09-13 19:38 PT: Branch names: `feature/GH-<issue>-<slug>` and `bug/GH-<issue>-<slug>`. CI checks the name, so a PR on a bad branch fails before build.
+    - **Maya Okafor** 2026-09-13 19:45 PT: Agreed on no extensions. Raycast is the visual reference for the bar, not the feature list.
+- **Ryan Stoffel** 2026-09-13 20:55 PT: Clipboard and file search both take over the launcher panel, but through two paths: clipboard uses `LauncherSession.clipboard`, files use the `LauncherMode` protocol. Folding clipboard onto `LauncherMode` is the right end state, not now. Filed GH-17 so it does not happen as a side effect of the file search PR.
+    - **Daniel Reyes** 2026-09-13 21:00 PT: Fine by me as long as `Cmd+Shift+V` behaves the same when it lands. I'll keep a regression checklist for it.
+- **Ryan Stoffel** 2026-09-13 21:52 PT: v0.1.0 is out, ad-hoc signed. Developer ID signing and notarization are wired into the release workflow but wait on Apple secrets (GH-11). Until then Gatekeeper needs Open Anyway on first launch.
+    - **Ryan Stoffel** 2026-09-13 21:55 PT: The README has the Control-click and `xattr -dr com.apple.quarantine` workaround for now.
+    - **Daniel Reyes** 2026-09-13 21:58 PT: Installed 0.1.0 from the cask. Open Anyway works on 15 and Control-click works on 14.
+- **Ryan Stoffel** 2026-09-14 06:26 PT: Lost a release PR to the branch-name check. Dots are not allowed in `chore/` slugs, so `chore/merge-main-into-develop-v0.1.1` fails. Use `chore/backmerge-main-0-2-0` style. Writing it here because I will forget. :pushpin:
+    - **Ryan Stoffel** 2026-09-14 10:04 PT: Did it again with `chore/backmerge-main-0.2.0` (#60). Closed it and recreated as #61.
+    - **Daniel Reyes** 2026-09-14 10:06 PT: Could the check print the allowed pattern when it fails?
+    - **Ryan Stoffel** 2026-09-14 10:09 PT: Maybe later. Not touching CI on a release day.
+    - **Ryan Stoffel** 2026-09-14 13:22 PT: And again with #74. Keeping the rule. It is the right rule, I just need to stop typing dots.
+- **Ryan Stoffel** 2026-09-14 14:30 PT: Switched file search to Spotlight `mdfind` scoped to the home folder (GH-79) instead of walking the filesystem. Daniel's `ember` case is the test: it should find `Ember_Individual_Pitch.pdf` in Documents.
+    - **Ryan Stoffel** 2026-09-14 16:24 PT: `mdfind -onlyin $HOME` still missed that file. Added an `mdfind -name` filename fallback and a timeout so Files cannot stick on Searching (GH-91).
+    - **Daniel Reyes** 2026-09-14 16:40 PT: 0.2.3 finds it now, from Files mode and from the main bar.
+- **Ryan Stoffel** 2026-09-14 23:53 PT: Going to try a Rust + GPUI rewrite (GH-100). The Swift UI keeps shipping clipped clipboard overlays and stuck file search, and I want layout and ranking in crates I can test. Same compact bar, same cask, no new visual language.
+    - **Maya Okafor** 2026-09-14 23:58 PT: If you do this, match the v0.2.3 stills exactly. I don't want to redesign the bar a second time.
+    - **Ryan Stoffel** 2026-09-15 00:02 PT: CI has to build this on `macos-latest`. Linux cannot compile GPUI against AppKit.
+- **Ryan Stoffel** 2026-09-15 07:34 PT: New rule after Daniel's 0.3.0 report: no release unless a parity harness launches the packaged Photon.app on `macos-latest` and checks panel style, activation policy, menu bar, appearance, frame, icons, and the `Cmd+Shift+V` clipboard session. :pushpin:
+    - **Ryan Stoffel** 2026-09-15 07:36 PT: If GPUI cannot pass that, the v0.2.3 Swift tree comes back. I am not shipping known-broken GPUI to get the rewrite out.
+    - **Maya Okafor** 2026-09-15 07:38 PT: Appearance stuck on light is the one people will notice first. Please have the harness screenshot light and dark.
+    - **Daniel Reyes** 2026-09-15 07:45 PT: I'll keep my manual pass too. The harness can't tell me whether it feels right.
+    - **Ryan Stoffel** 2026-09-15 09:05 PT: Decided. GPUI did not pass. v0.3.1 restores Swift 6 + SwiftUI/AppKit as the release stack. The rewrite stays in history as 0.3.0 and nowhere else.
+- **Ryan Stoffel** 2026-09-15 09:35 PT: Cleaned up the PR pile from the rollback. #108, #110, and #112 are closed as superseded by #109, #111, and #113. None of them had anything unique.
+- **Ryan Stoffel** 2026-09-16 21:15 PT: Cursor Bugbot posts "usage limit reached" on every PR now. Not paying for more usage. Those comments are not reviews, ignore them.
+- **Maya Okafor** 2026-09-17 11:30 PT: Proposal for panel size: one frame for launcher Suggestions, Files, and expanded clipboard. 760 x 502, and drop the expansion animation. Three sizes look like three apps. :thumbsup:
+    - **Ryan Stoffel** 2026-09-17 12:05 PT: Done in #161 (GH-159). The parity gate compares the three frames for exact equality.
+- **Ryan Stoffel** 2026-09-17 11:47 PT: GitHub renamed my account from `RyanStoffel` to `ryan-stoffel`. Repo links redirect, but Homebrew records tap trust by name, so the old `ryanstoffel/homebrew-tap` breaks `brew trust`. Docs use `ryan-stoffel/taps` everywhere now (#158). :pushpin:
+    - **Daniel Reyes** 2026-09-17 11:55 PT: Re-tapped with `ryan-stoffel/taps` on both test machines. `brew trust` works again.
+- **Ryan Stoffel** 2026-09-17 16:45 PT: Issues do not auto-close when a release PR merges to `main`, because `develop` is the default branch. Close them by hand with a "Shipped in vX" comment. :pushpin:
+    - **Daniel Reyes** 2026-09-17 16:50 PT: I'll close them after I verify each release, so closed means tested.
+- **Ryan Stoffel** 2026-09-20 23:20 PT: For GH-178, Photon now hides itself first, then activates the target with `yieldActivation`. Doing the launcher perf pass on the same branch.
+- **Ryan Stoffel** 2026-09-21 09:45 PT: Caps Lock as Hyper was turning Caps Lock on (GH-194). The remap now swallows the lock-state change while Hyper is held. A tap can still be set to nothing, Escape, or Caps Lock.
+    - **Daniel Reyes** 2026-09-21 11:20 PT: Held Hyper through twenty window commands on 0.4.2. Caps Lock never latched.
+- **Ryan Stoffel** 2026-09-21 12:45 PT: Pinning running apps to the top of the launcher felt wrong after a day. 0.4.3 replaces it with Suggestions ranked by how often each app is opened on this Mac. The running dots stay.
+    - **Maya Okafor** 2026-09-21 12:50 PT: Agree. Running apps on top reordered the list every time I opened something.
+    - **Ryan Stoffel** 2026-09-28 10:50 PT: Suggestions rank commands by open count too now (GH-232). Files, single notes, and Settings panes stay in the catalog below.
+- **Maya Okafor** 2026-09-22 09:00 PT: Onboarding has had three versions in two days: the 0.4.3 walkthrough, the interactive tour in 0.4.4, and the full-screen sequence in 0.4.5. The full-screen one covers everything, which is too much. Can it play in a window?
+    - **Ryan Stoffel** 2026-09-22 09:05 PT: Yes. 0.4.6 will play it in a window (GH-221).
+    - **Ryan Stoffel** 2026-09-22 11:30 PT: Splitting onboarding into phases (GH-226). Phase 1 is the arrival. Phase 2 is the feature tour and permission prompts.
+- **Ryan Stoffel** 2026-09-22 12:20 PT: Running a dev build kills the release Photon because they share a bundle id and hotkeys. Adding a Photon-Dev app with its own bundle id that can run beside it (GH-228).
+    - **Daniel Reyes** 2026-09-22 12:25 PT: That helps me too. I can keep the release build as my baseline while I test a branch.
+- **Ryan Stoffel** 2026-09-28 10:05 PT: Scrapping the cinematic Phase 1. No beam, flash, stars, full-screen veil, or Desktop 2 pin. It becomes one small native welcome window: how to open Photon, where Settings are, and one Continue. Phase 2 is not in this pass. :pushpin:
+    - **Maya Okafor** 2026-09-28 10:07 PT: Good. That is the small window I mocked last week.
+    - **Ryan Stoffel** 2026-09-28 10:09 PT: Sora stays in `Resources/Fonts`, but the welcome window uses the system font.
+- **Ryan Stoffel** 2026-09-28 20:20 PT: v0.4.7 is the first notarized build. The tag workflow signed with Developer ID, notarized, stapled, and bumped the cask on its own. GH-11 is closed after two weeks. :tada:
+    - **Daniel Reyes** 2026-09-28 20:35 PT: Downloaded the zip on a clean account. No Gatekeeper prompt.
+- **Ryan Stoffel** 2026-09-29 09:55 PT: Tried an outlined Photon mark for the menu bar (GH-243). Not the direction. The current menu bar icon stays.
+    - **Maya Okafor** 2026-09-29 09:58 PT: Agreed. The filled mark reads better at menu bar size.
+- **Daniel Reyes** 2026-10-03 19:30 PT: Audited 0.4.8 against Raycast. Root search fills with loose System Settings matches, `saf` never lists Safari, root queries flip into Files mode, there is no Cmd+K action panel, and Esc does not clear text first. The calculator crashes on `2^64` and gets `2*-3` wrong.
+    - **Ryan Stoffel** 2026-10-03 19:45 PT: Filed all of it as GH-248.
+    - **Ryan Stoffel** 2026-10-03 20:10 PT: Still no AI and no extensions. Parity means the core interactions, not the store.
+    - **Maya Okafor** 2026-10-03 20:15 PT: I'll mock the Cmd+K action panel and the footer before you start on it.
+
+## #photon-github
+
+_GitHub activity for ryan-stoffel/photon._ 493 messages.
+
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/1|#1 Launcher hotkey (Cmd+Space) with Spotlight conflict guidance>
+    - **GitHub** 2026-09-13 19:56 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/1|#1 Launcher hotkey (Cmd+Space) with Spotlight conflict guidance>
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/2|#2 Launch applications via fuzzy search and frecency>
+    - **GitHub** 2026-09-13 19:56 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/2|#2 Launch applications via fuzzy search and frecency>
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/3|#3 Clipboard history>
+    - **GitHub** 2026-09-13 20:42 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/3|#3 Clipboard history>
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/4|#4 Simple notes>
+    - **GitHub** 2026-09-13 21:03 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/4|#4 Simple notes>
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/5|#5 File search>
+    - **GitHub** 2026-09-13 20:56 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/5|#5 File search>
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/6|#6 Keybinds and window management>
+    - **GitHub** 2026-09-13 21:09 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/6|#6 Keybinds and window management>
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/7|#7 Settings window>
+    - **GitHub** 2026-09-13 19:56 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/7|#7 Settings window>
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/8|#8 CI pipeline>
+    - **GitHub** 2026-09-13 19:56 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/8|#8 CI pipeline>
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/9|#9 Release pipeline>
+    - **GitHub** 2026-09-13 21:53 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/9|#9 Release pipeline>
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/10|#10 Homebrew cask in ryanstoffel/taps>
+    - **GitHub** 2026-09-13 21:53 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/10|#10 Homebrew cask in ryanstoffel/taps>
+- **GitHub** 2026-09-13 19:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/11|#11 Developer ID signing and notarization>
+    - **GitHub** 2026-09-28 20:17 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/11|#11 Developer ID signing and notarization>
+- **GitHub** 2026-09-13 19:50 PT: Pull request opened by dependabot[bot]: <https://github.com/ryan-stoffel/photon/pull/12|#12 chore(deps): bump actions/checkout from 5 to 7> (`dependabot/github_actions/actions/checkout-7` into `develop`)
+    - **GitHub** 2026-09-13 22:09 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/12|#12 chore(deps): bump actions/checkout from 5 to 7>
+- **GitHub** 2026-09-13 19:50 PT: Pull request opened by dependabot[bot]: <https://github.com/ryan-stoffel/photon/pull/13|#13 chore(deps): bump actions/cache from 4 to 6> (`dependabot/github_actions/actions/cache-6` into `develop`)
+    - **GitHub** 2026-09-13 22:12 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/13|#13 chore(deps): bump actions/cache from 4 to 6>
+- **GitHub** 2026-09-13 19:50 PT: Pull request opened by dependabot[bot]: <https://github.com/ryan-stoffel/photon/pull/14|#14 chore(deps): bump actions/upload-artifact from 4 to 7> (`dependabot/github_actions/actions/upload-artifact-7` into `develop`)
+    - **GitHub** 2026-09-13 22:16 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/14|#14 chore(deps): bump actions/upload-artifact from 4 to 7>
+- **GitHub** 2026-09-13 19:51 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/15|#15 feat(launcher): add hotkey, panel, app provider, and settings> (`feature/GH-1-launcher-core` into `develop`)
+    - **GitHub** 2026-09-13 19:56 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/15|#15 feat(launcher): add hotkey, panel, app provider, and settings>
+- **GitHub** 2026-09-13 20:40 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/16|#16 feat(clipboard): add clipboard history> (`feature/GH-3-clipboard-history` into `develop`)
+    - **GitHub** 2026-09-13 20:42 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/16|#16 feat(clipboard): add clipboard history>
+- **GitHub** 2026-09-13 20:53 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/17|#17 Unify clipboard session with LauncherMode protocol>
+- **GitHub** 2026-09-13 20:53 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/18|#18 feat(files): Spotlight file search with Quick Look> (`feature/GH-5-file-search` into `develop`)
+    - **GitHub** 2026-09-13 20:56 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/18|#18 feat(files): Spotlight file search with Quick Look>
+- **GitHub** 2026-09-13 20:58 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/19|#19 feat(keybinds): Hyper key, app hotkeys, and window management> (`feature/GH-6-keybinds-window-management` into `develop`)
+    - **GitHub** 2026-09-13 21:09 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/19|#19 feat(keybinds): Hyper key, app hotkeys, and window management>
+- **GitHub** 2026-09-13 21:00 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/20|#20 feat(notes): add floating markdown notes with launcher integration> (`feature/GH-4-notes` into `develop`)
+    - **GitHub** 2026-09-13 21:03 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/20|#20 feat(notes): add floating markdown notes with launcher integration>
+- **GitHub** 2026-09-13 21:18 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/21|#21 ci(release): dry-run mode, launch smoke test, and release notes> (`chore/GH-9-release-dry-run` into `develop`)
+    - **GitHub** 2026-09-13 21:33 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/21|#21 ci(release): dry-run mode, launch smoke test, and release notes>
+- **GitHub** 2026-09-13 21:34 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/22|#22 Launcher panel throws NSInternalInconsistencyException at launch>
+    - **GitHub** 2026-09-13 21:40 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/22|#22 Launcher panel throws NSInternalInconsistencyException at launch>
+- **GitHub** 2026-09-13 21:35 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/23|#23 ci(release): dry-run mode, launch smoke test, and release notes> (`chore/gh-9-release-dry-run` into `develop`)
+    - **GitHub** 2026-09-13 21:37 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/23|#23 ci(release): dry-run mode, launch smoke test, and release notes>
+- **GitHub** 2026-09-13 21:38 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/24|#24 fix(launcher): drop the conflicting moveToActiveSpace panel behaviour> (`bug/GH-22-launcher-collection-behavior` into `develop`)
+    - **GitHub** 2026-09-13 21:40 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/24|#24 fix(launcher): drop the conflicting moveToActiveSpace panel behaviour>
+- **GitHub** 2026-09-13 21:40 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/25|#25 chore(release): 0.1.0> (`chore/release-0-1-0` into `develop`)
+    - **GitHub** 2026-09-13 21:43 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/25|#25 chore(release): 0.1.0>
+- **GitHub** 2026-09-13 21:44 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/26|#26 chore(release): 0.1.0> (`release/0.1.0` into `main`)
+    - **GitHub** 2026-09-13 21:47 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/26|#26 chore(release): 0.1.0>
+- **GitHub** 2026-09-13 21:51 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/27|#27 fix(release): keep changelog link definitions out of the release notes> (`docs/release-0-1-0-follow-up` into `develop`)
+    - **GitHub** 2026-09-13 21:53 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/27|#27 fix(release): keep changelog link definitions out of the release notes>
+- **GitHub** 2026-09-13 21:58 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/28|#28 chore(release): align the generated cask with Homebrew 7> (`chore/cask-template-homebrew-7` into `develop`)
+    - **GitHub** 2026-09-13 22:03 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/28|#28 chore(release): align the generated cask with Homebrew 7>
+- **GitHub** 2026-09-13 22:34 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/29|#29 Launcher shows a placeholder square instead of app icons>
+    - **GitHub** 2026-09-13 22:53 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/29|#29 Launcher shows a placeholder square instead of app icons>
+- **GitHub** 2026-09-13 22:34 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/30|#30 Launcher visual redesign: search field, icon rows, compact by default, Appearance settings>
+    - **GitHub** 2026-09-13 23:45 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/30|#30 Launcher visual redesign: search field, icon rows, compact by default, Appearance settings>
+- **GitHub** 2026-09-13 22:41 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/31|#31 fix(launcher): show real icons for apps, panes, and provider rows> (`bug/GH-29-launcher-app-icons` into `develop`)
+    - **GitHub** 2026-09-13 22:53 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/31|#31 fix(launcher): show real icons for apps, panes, and provider rows>
+- **GitHub** 2026-09-13 22:49 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/32|#32 feat: notes window with a native sidebar and standard toolbar>
+    - **GitHub** 2026-09-13 23:50 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/32|#32 feat: notes window with a native sidebar and standard toolbar>
+- **GitHub** 2026-09-13 22:54 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/33|#33 feat(launcher): redesign the panel, compact by default, Appearance settings> (`feature/GH-30-launcher-visual-redesign` into `develop`)
+    - **GitHub** 2026-09-13 23:45 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/33|#33 feat(launcher): redesign the panel, compact by default, Appearance settings>
+- **GitHub** 2026-09-13 23:04 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/34|#34 CI screenshot harness for UI scenarios>
+    - **GitHub** 2026-09-13 23:20 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/34|#34 CI screenshot harness for UI scenarios>
+- **GitHub** 2026-09-13 23:05 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/35|#35 feat(ci): UI scenario screenshot harness> (`feature/GH-34-ci-screenshot-harness` into `develop`)
+    - **GitHub** 2026-09-13 23:20 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/35|#35 feat(ci): UI scenario screenshot harness>
+- **GitHub** 2026-09-13 23:09 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/36|#36 feat(notes): native sidebar and unified toolbar for the notes window> (`feature/GH-32-notes-sidebar` into `develop`)
+    - **GitHub** 2026-09-13 23:50 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/36|#36 feat(notes): native sidebar and unified toolbar for the notes window>
+- **GitHub** 2026-09-13 23:56 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/37|#37 bug: notes sidebar is not full height and the toolbar title precedes the sidebar controls>
+    - **GitHub** 2026-09-14 00:07 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/37|#37 bug: notes sidebar is not full height and the toolbar title precedes the sidebar controls>
+- **GitHub** 2026-09-13 23:56 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/38|#38 fix(notes): full-height sidebar and tracking separator need fullSizeContentView> (`bug/GH-37-notes-full-height-sidebar` into `develop`)
+    - **GitHub** 2026-09-14 00:07 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/38|#38 fix(notes): full-height sidebar and tracking separator need fullSizeContentView>
+- **GitHub** 2026-09-14 06:19 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/39|#39 chore(release): 0.1.1> (`release/v0.1.1` into `develop`)
+    - **GitHub** 2026-09-14 06:21 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/39|#39 chore(release): 0.1.1>
+- **GitHub** 2026-09-14 06:21 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/40|#40 release: 0.1.1> (`develop` into `main`)
+    - **GitHub** 2026-09-14 06:27 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/40|#40 release: 0.1.1>
+- **GitHub** 2026-09-14 06:23 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/41|#41 chore(release): merge main into develop for v0.1.1> (`chore/merge-main-into-develop-v0.1.1` into `develop`)
+    - **GitHub** 2026-09-14 06:25 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/41|#41 chore(release): merge main into develop for v0.1.1>
+- **GitHub** 2026-09-14 06:25 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/42|#42 chore(release): merge main into develop for v0.1.1> (`release/v0.1.1-merge-main` into `develop`)
+    - **GitHub** 2026-09-14 06:27 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/42|#42 chore(release): merge main into develop for v0.1.1>
+- **GitHub** 2026-09-14 06:27 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/43|#43 release: 0.1.1> (`release/v0.1.1-ship` into `main`)
+    - **GitHub** 2026-09-14 06:29 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/43|#43 release: 0.1.1>
+- **GitHub** 2026-09-14 06:33 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/44|#44 chore: back-merge main after v0.1.1> (`release/backmerge-main-v0.1.1` into `develop`)
+    - **GitHub** 2026-09-14 07:20 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/44|#44 chore: back-merge main after v0.1.1>
+- **GitHub** 2026-09-14 07:48 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/45|#45 feat: System Settings panes searchable by human title>
+    - **GitHub** 2026-09-14 07:57 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/45|#45 feat: System Settings panes searchable by human title>
+- **GitHub** 2026-09-14 07:48 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/46|#46 Inline calculator and unit conversions in launcher>
+    - **GitHub** 2026-09-14 08:27 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/46|#46 Inline calculator and unit conversions in launcher>
+- **GitHub** 2026-09-14 07:48 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/47|#47 File search: default to home folder, fuzzy matching, launcher-style Files UI>
+    - **GitHub** 2026-09-14 08:03 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/47|#47 File search: default to home folder, fuzzy matching, launcher-style Files UI>
+- **GitHub** 2026-09-14 07:49 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/48|#48 feat(apps): searchable System Settings pane titles> (`feature/GH-45-settings-pane-titles` into `develop`)
+    - **GitHub** 2026-09-14 07:57 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/48|#48 feat(apps): searchable System Settings pane titles>
+- **GitHub** 2026-09-14 07:49 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/49|#49 Restyle clipboard mode to match compact launcher>
+    - **GitHub** 2026-09-14 08:08 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/49|#49 Restyle clipboard mode to match compact launcher>
+- **GitHub** 2026-09-14 07:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/50|#50 Launcher: drag to reposition with center snap guides>
+    - **GitHub** 2026-09-14 08:54 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/50|#50 Launcher: drag to reposition with center snap guides>
+- **GitHub** 2026-09-14 07:50 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/51|#51 feat(launcher): inline calculator and unit conversions> (`feature/GH-46-calculator` into `develop`)
+    - **GitHub** 2026-09-14 08:27 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/51|#51 feat(launcher): inline calculator and unit conversions>
+- **GitHub** 2026-09-14 07:50 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/52|#52 File search: home scope, fuzzy matching, launcher-style Files UI> (`feature/GH-47-home-file-search` into `develop`)
+    - **GitHub** 2026-09-14 08:03 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/52|#52 File search: home scope, fuzzy matching, launcher-style Files UI>
+- **GitHub** 2026-09-14 07:51 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/53|#53 Restyle clipboard mode to match compact launcher> (`feature/GH-49-clipboard-ui` into `develop`)
+    - **GitHub** 2026-09-14 08:08 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/53|#53 Restyle clipboard mode to match compact launcher>
+- **GitHub** 2026-09-14 07:52 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/54|#54 Launcher: drag to reposition with center snap guides> (`feature/GH-50-launcher-drag-snap` into `develop`)
+    - **GitHub** 2026-09-14 08:54 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/54|#54 Launcher: drag to reposition with center snap guides>
+- **GitHub** 2026-09-14 09:17 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/55|#55 chore(screenshots): v0.2 preview scenarios (wallpaper, calculator, files)> (`cursor/screenshot-v02-scenarios-806b` into `develop`)
+- **GitHub** 2026-09-14 09:26 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/56|#56 Raycast-style inline calculator result card>
+    - **GitHub** 2026-09-14 09:49 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/56|#56 Raycast-style inline calculator result card>
+- **GitHub** 2026-09-14 09:27 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/57|#57 Raycast-style inline calculator result card> (`feature/GH-56-calculator-raycast-ui` into `develop`)
+    - **GitHub** 2026-09-14 09:49 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/57|#57 Raycast-style inline calculator result card>
+- **GitHub** 2026-09-14 09:52 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/58|#58 chore(release): 0.2.0> (`release/0.2.0-version-bump` into `develop`)
+    - **GitHub** 2026-09-14 09:53 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/58|#58 chore(release): 0.2.0>
+- **GitHub** 2026-09-14 09:54 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/59|#59 release: v0.2.0> (`release/v0.2.0-ship` into `main`)
+    - **GitHub** 2026-09-14 09:58 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/59|#59 release: v0.2.0>
+- **GitHub** 2026-09-14 10:01 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/60|#60 chore: merge main into develop after v0.2.0> (`chore/backmerge-main-0.2.0` into `develop`)
+    - **GitHub** 2026-09-14 10:03 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/60|#60 chore: merge main into develop after v0.2.0>
+- **GitHub** 2026-09-14 10:03 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/61|#61 chore: merge main into develop after v0.2.0> (`chore/backmerge-main-0-2-0` into `develop`)
+    - **GitHub** 2026-09-14 10:05 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/61|#61 chore: merge main into develop after v0.2.0>
+- **GitHub** 2026-09-14 11:20 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/62|#62 Calculator section sits too close to search hairline>
+    - **GitHub** 2026-09-14 11:26 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/62|#62 Calculator section sits too close to search hairline>
+- **GitHub** 2026-09-14 11:20 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/63|#63 File search defaults to home scope and filters system paths>
+    - **GitHub** 2026-09-14 11:44 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/63|#63 File search defaults to home scope and filters system paths>
+- **GitHub** 2026-09-14 11:20 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/64|#64 Cmd+Shift+V clipboard should use compact launcher bar>
+    - **GitHub** 2026-09-14 12:12 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/64|#64 Cmd+Shift+V clipboard should use compact launcher bar>
+- **GitHub** 2026-09-14 11:20 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/65|#65 Launcher drag guides and reliability>
+    - **GitHub** 2026-09-14 12:43 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/65|#65 Launcher drag guides and reliability>
+- **GitHub** 2026-09-14 11:20 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/66|#66 fix(launcher): calculator section spacing (GH-62)> (`bug/GH-62-calculator-heading-spacing` into `develop`)
+    - **GitHub** 2026-09-14 11:26 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/66|#66 fix(launcher): calculator section spacing (GH-62)>
+- **GitHub** 2026-09-14 11:26 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/67|#67 fix(files): home-only Spotlight scope (GH-63)> (`bug/GH-63-home-file-scope` into `develop`)
+    - **GitHub** 2026-09-14 11:44 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/67|#67 fix(files): home-only Spotlight scope (GH-63)>
+- **GitHub** 2026-09-14 11:27 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/68|#68 fix(clipboard): compact hotkey panel (GH-64)> (`bug/GH-64-compact-clipboard-hotkey` into `develop`)
+    - **GitHub** 2026-09-14 12:12 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/68|#68 fix(clipboard): compact hotkey panel (GH-64)>
+- **GitHub** 2026-09-14 11:32 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/69|#69 fix(launcher): drag guides and file compact empty (GH-65)> (`bug/GH-65-launcher-drag-guides` into `develop`)
+    - **GitHub** 2026-09-14 12:43 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/69|#69 fix(launcher): drag guides and file compact empty (GH-65)>
+- **GitHub** 2026-09-14 12:43 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/70|#70 chore(release): 0.2.1> (`release/0.2.1` into `develop`)
+    - **GitHub** 2026-09-14 12:49 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/70|#70 chore(release): 0.2.1>
+- **GitHub** 2026-09-14 12:47 PT: Pull request opened by dependabot[bot]: <https://github.com/ryan-stoffel/photon/pull/71|#71 chore(deps): bump actions/download-artifact from 4 to 8> (`dependabot/github_actions/actions/download-artifact-8` into `develop`)
+- **GitHub** 2026-09-14 12:50 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/72|#72 fix(launcher): file mode compact panel on enter> (`bug/GH-65-files-compact-update` into `develop`)
+    - **GitHub** 2026-09-14 12:56 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/72|#72 fix(launcher): file mode compact panel on enter>
+- **GitHub** 2026-09-14 12:56 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/73|#73 Release 0.2.1> (`release/0.2.1-main` into `main`)
+    - **GitHub** 2026-09-14 13:09 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/73|#73 Release 0.2.1>
+- **GitHub** 2026-09-14 13:20 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/74|#74 chore: back-merge main after v0.2.1> (`chore/backmerge-main-0.2.1` into `develop`)
+    - **GitHub** 2026-09-14 13:21 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/74|#74 chore: back-merge main after v0.2.1>
+- **GitHub** 2026-09-14 13:21 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/75|#75 chore: back-merge main after v0.2.1> (`chore/backmerge-main-after-v0-2-1` into `develop`)
+    - **GitHub** 2026-09-14 13:24 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/75|#75 chore: back-merge main after v0.2.1>
+- **GitHub** 2026-09-14 14:16 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/76|#76 Clipboard history: arrow keys do not cycle items>
+    - **GitHub** 2026-09-14 14:34 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/76|#76 Clipboard history: arrow keys do not cycle items>
+- **GitHub** 2026-09-14 14:16 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/77|#77 Remove Clipboard/Files mode pill from the search field>
+    - **GitHub** 2026-09-14 14:25 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/77|#77 Remove Clipboard/Files mode pill from the search field>
+- **GitHub** 2026-09-14 14:16 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/78|#78 Launcher drag jitters and does not follow the pointer>
+    - **GitHub** 2026-09-14 14:42 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/78|#78 Launcher drag jitters and does not follow the pointer>
+- **GitHub** 2026-09-14 14:16 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/79|#79 File search returns nothing; use Spotlight mdfind in home>
+    - **GitHub** 2026-09-14 14:38 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/79|#79 File search returns nothing; use Spotlight mdfind in home>
+- **GitHub** 2026-09-14 14:17 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/80|#80 fix(clipboard): move history with arrow keys> (`bug/GH-76-clipboard-arrow-nav` into `develop`)
+    - **GitHub** 2026-09-14 14:34 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/80|#80 fix(clipboard): move history with arrow keys>
+- **GitHub** 2026-09-14 14:18 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/81|#81 fix(launcher): drop Clipboard and Files search-field pills> (`bug/GH-77-remove-mode-pill` into `develop`)
+    - **GitHub** 2026-09-14 14:25 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/81|#81 fix(launcher): drop Clipboard and Files search-field pills>
+- **GitHub** 2026-09-14 14:20 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/82|#82 fix(launcher): track live drag in screen space> (`bug/GH-78-launcher-drag-track` into `develop`)
+    - **GitHub** 2026-09-14 14:42 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/82|#82 fix(launcher): track live drag in screen space>
+- **GitHub** 2026-09-14 14:24 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/83|#83 fix(files): search home with Spotlight mdfind> (`bug/GH-79-files-mdfind` into `develop`)
+    - **GitHub** 2026-09-14 14:38 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/83|#83 fix(files): search home with Spotlight mdfind>
+- **GitHub** 2026-09-14 14:48 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/84|#84 Files empty panel stays tall instead of compact>
+    - **GitHub** 2026-09-14 14:52 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/84|#84 Files empty panel stays tall instead of compact>
+- **GitHub** 2026-09-14 14:48 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/85|#85 fix(files): compact empty Files panel> (`bug/GH-84-files-compact-layout` into `develop`)
+    - **GitHub** 2026-09-14 14:52 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/85|#85 fix(files): compact empty Files panel>
+- **GitHub** 2026-09-14 14:52 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/86|#86 chore(release): 0.2.2> (`chore/release-022` into `develop`)
+    - **GitHub** 2026-09-14 14:56 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/86|#86 chore(release): 0.2.2>
+- **GitHub** 2026-09-14 14:56 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/87|#87 Release 0.2.2> (`release/0.2.2` into `main`)
+    - **GitHub** 2026-09-14 15:06 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/87|#87 Release 0.2.2>
+- **GitHub** 2026-09-14 15:10 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/88|#88 chore: back-merge main after v0.2.2> (`chore/backmerge-main-after-v0-2-2` into `develop`)
+    - **GitHub** 2026-09-14 15:13 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/88|#88 chore: back-merge main after v0.2.2>
+- **GitHub** 2026-09-14 16:06 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/89|#89 Clipboard reopen shows clipped overlay; arrows must expand and cycle>
+    - **GitHub** 2026-09-14 16:21 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/89|#89 Clipboard reopen shows clipped overlay; arrows must expand and cycle>
+- **GitHub** 2026-09-14 16:07 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/90|#90 Launcher drag should live-snap X between the edge guides>
+    - **GitHub** 2026-09-14 16:17 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/90|#90 Launcher drag should live-snap X between the edge guides>
+- **GitHub** 2026-09-14 16:07 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/91|#91 Files: ember misses Documents PDFs; Searching sticks; mix into main launcher>
+    - **GitHub** 2026-09-14 16:23 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/91|#91 Files: ember misses Documents PDFs; Searching sticks; mix into main launcher>
+- **GitHub** 2026-09-14 16:07 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/92|#92 Empty launcher Down should show recents; darken top of search hairline>
+    - **GitHub** 2026-09-14 16:26 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/92|#92 Empty launcher Down should show recents; darken top of search hairline>
+- **GitHub** 2026-09-14 16:10 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/93|#93 fix(launcher): live-snap drag X between edge guides> (`bug/GH-90-live-snap-x-guides` into `develop`)
+    - **GitHub** 2026-09-14 16:17 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/93|#93 fix(launcher): live-snap drag X between edge guides>
+- **GitHub** 2026-09-14 16:12 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/94|#94 fix(clipboard): reset compact panel on dismiss and cycle with arrows> (`bug/GH-89-clipboard-reopen-arrows` into `develop`)
+    - **GitHub** 2026-09-14 16:21 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/94|#94 fix(clipboard): reset compact panel on dismiss and cycle with arrows>
+- **GitHub** 2026-09-14 16:16 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/95|#95 fix(files): match Documents filenames and mix hits into the launcher> (`bug/GH-91-files-ember-mdfind` into `develop`)
+    - **GitHub** 2026-09-14 16:23 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/95|#95 fix(files): match Documents filenames and mix hits into the launcher>
+- **GitHub** 2026-09-14 16:17 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/96|#96 fix(launcher): Down on empty bar shows recents; darker search hairline> (`bug/GH-92-down-recs-hairline` into `develop`)
+    - **GitHub** 2026-09-14 16:26 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/96|#96 fix(launcher): Down on empty bar shows recents; darker search hairline>
+- **GitHub** 2026-09-14 16:27 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/97|#97 chore(release): 0.2.3> (`chore/release-0-2-3` into `develop`)
+    - **GitHub** 2026-09-14 16:29 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/97|#97 chore(release): 0.2.3>
+- **GitHub** 2026-09-14 16:30 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/98|#98 Release 0.2.3> (`release/0-2-3` into `main`)
+    - **GitHub** 2026-09-14 16:32 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/98|#98 Release 0.2.3>
+- **GitHub** 2026-09-14 16:36 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/99|#99 chore: back-merge main after v0.2.3> (`chore/backmerge-main-after-v0-2-3` into `develop`)
+    - **GitHub** 2026-09-14 16:38 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/99|#99 chore: back-merge main after v0.2.3>
+- **GitHub** 2026-09-14 23:51 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/100|#100 Rewrite Photon in Rust + GPUI (ship as Photon.app)>
+    - **GitHub** 2026-09-15 00:52 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/100|#100 Rewrite Photon in Rust + GPUI (ship as Photon.app)>
+- **GitHub** 2026-09-14 23:51 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/101|#101 Clipboard compact bar: Down expands, dismiss restores compact (no overlay)>
+    - **GitHub** 2026-09-15 00:52 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/101|#101 Clipboard compact bar: Down expands, dismiss restores compact (no overlay)>
+- **GitHub** 2026-09-14 23:51 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/102|#102 File search: ember ranks Ember_Individual_Pitch.pdf; mix into launcher; no stuck Searching>
+    - **GitHub** 2026-09-15 00:52 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/102|#102 File search: ember ranks Ember_Individual_Pitch.pdf; mix into launcher; no stuck Searching>
+- **GitHub** 2026-09-15 00:07 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/103|#103 feat: rewrite Photon in Rust + GPUI> (`feature/GH-100-gpui-rewrite` into `develop`)
+    - **GitHub** 2026-09-15 00:52 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/103|#103 feat: rewrite Photon in Rust + GPUI>
+- **GitHub** 2026-09-15 00:56 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/104|#104 chore(release): 0.3.0> (`chore/release-0-3-0` into `develop`)
+    - **GitHub** 2026-09-15 01:07 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/104|#104 chore(release): 0.3.0>
+- **GitHub** 2026-09-15 01:09 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/105|#105 release: 0.3.0> (`release/0-3-0` into `main`)
+    - **GitHub** 2026-09-15 01:19 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/105|#105 release: 0.3.0>
+- **GitHub** 2026-09-15 01:35 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/106|#106 chore: back-merge main after v0.3.0> (`chore/backmerge-main-after-v0-3-0` into `develop`)
+    - **GitHub** 2026-09-15 01:39 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/106|#106 chore: back-merge main after v0.3.0>
+- **GitHub** 2026-09-15 07:32 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/107|#107 Restore native macOS parity after the v0.3.0 GPUI rewrite>
+    - **GitHub** 2026-09-15 09:03 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/107|#107 Restore native macOS parity after the v0.3.0 GPUI rewrite>
+- **GitHub** 2026-09-15 07:40 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/108|#108 fix(mac): restore native parity after v0.3.0> (`cursor/bug-gh-107-mac-parity-v2-4cee` into `develop`)
+    - **GitHub** 2026-09-15 09:31 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/108|#108 fix(mac): restore native parity after v0.3.0>
+- **GitHub** 2026-09-15 08:55 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/109|#109 fix(mac): restore native parity after v0.3.0> (`cursor/bug-gh-107-mac-parity-v3-4cee` into `develop`)
+    - **GitHub** 2026-09-15 09:03 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/109|#109 fix(mac): restore native parity after v0.3.0>
+- **GitHub** 2026-09-15 09:06 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/110|#110 release: 0.3.1> (`develop` into `main`)
+    - **GitHub** 2026-09-15 09:31 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/110|#110 release: 0.3.1>
+- **GitHub** 2026-09-15 09:10 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/111|#111 chore(release): 0.3.1> (`cursor/release-v0-3-1-4cee` into `main`)
+    - **GitHub** 2026-09-15 09:13 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/111|#111 chore(release): 0.3.1>
+- **GitHub** 2026-09-15 09:19 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/112|#112 chore: back-merge main after v0.3.1> (`main` into `develop`)
+    - **GitHub** 2026-09-15 09:31 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/112|#112 chore: back-merge main after v0.3.1>
+- **GitHub** 2026-09-15 09:23 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/113|#113 chore: back-merge main after v0.3.1> (`cursor/chore-backmerge-v0-3-1-4cee` into `develop`)
+    - **GitHub** 2026-09-15 09:26 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/113|#113 chore: back-merge main after v0.3.1>
+- **GitHub** 2026-09-15 09:50 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/114|#114 v0.3.2: fix real file search and clipboard key routing>
+    - **GitHub** 2026-09-15 10:45 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/114|#114 v0.3.2: fix real file search and clipboard key routing>
+- **GitHub** 2026-09-15 09:55 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/115|#115 fix(runtime): restore file search and clipboard keys> (`cursor/bug-gh-114-runtime-search-keys-e5a3` into `develop`)
+    - **GitHub** 2026-09-15 10:45 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/115|#115 fix(runtime): restore file search and clipboard keys>
+- **GitHub** 2026-09-15 10:46 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/116|#116 chore(release): 0.3.2> (`cursor/release-v0-3-2-e5a3` into `main`)
+    - **GitHub** 2026-09-15 10:50 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/116|#116 chore(release): 0.3.2>
+- **GitHub** 2026-09-15 10:56 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/117|#117 chore: back-merge main after v0.3.2> (`cursor/chore-backmerge-v0-3-2-e5a3` into `develop`)
+    - **GitHub** 2026-09-15 11:00 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/117|#117 chore: back-merge main after v0.3.2>
+- **GitHub** 2026-09-15 11:32 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/118|#118 Fix trusted clipboard paste and add expanded detail view>
+    - **GitHub** 2026-09-15 12:41 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/118|#118 Fix trusted clipboard paste and add expanded detail view>
+- **GitHub** 2026-09-15 11:32 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/119|#119 Replace protected-folder prompt cascade with guided file access>
+    - **GitHub** 2026-09-15 13:59 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/119|#119 Replace protected-folder prompt cascade with guided file access>
+- **GitHub** 2026-09-15 11:32 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/120|#120 Add Files recents and persistent preview metadata>
+    - **GitHub** 2026-09-15 11:54 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/120|#120 Add Files recents and persistent preview metadata>
+- **GitHub** 2026-09-15 11:32 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/121|#121 Expand safe launcher drag surface and snap behavior>
+    - **GitHub** 2026-09-15 12:34 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/121|#121 Expand safe launcher drag surface and snap behavior>
+- **GitHub** 2026-09-15 11:33 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/122|#122 fix(clipboard): restore trusted paste and add detail view> (`bug/GH-118-clipboard-detail` into `develop`)
+    - **GitHub** 2026-09-15 12:41 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/122|#122 fix(clipboard): restore trusted paste and add detail view>
+- **GitHub** 2026-09-15 11:33 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/123|#123 fix(files): add guided persistent folder access> (`bug/GH-119-file-access` into `develop`)
+    - **GitHub** 2026-09-15 13:59 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/123|#123 fix(files): add guided persistent folder access>
+- **GitHub** 2026-09-15 11:33 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/124|#124 fix(launcher): expand safe drag chrome> (`bug/GH-121-launcher-drag` into `develop`)
+    - **GitHub** 2026-09-15 12:34 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/124|#124 fix(launcher): expand safe drag chrome>
+- **GitHub** 2026-09-15 11:37 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/125|#125 feat(files): add recents and persistent detail preview> (`feature/GH-120-files-detail` into `develop`)
+    - **GitHub** 2026-09-15 11:54 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/125|#125 feat(files): add recents and persistent detail preview>
+- **GitHub** 2026-09-15 14:00 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/126|#126 chore(release): Photon 0.3.3> (`release/0.3.3` into `main`)
+    - **GitHub** 2026-09-15 14:12 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/126|#126 chore(release): Photon 0.3.3>
+- **GitHub** 2026-09-15 14:22 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/127|#127 chore: back-merge main after v0.3.3> (`chore/backmerge-v0.3.3` into `develop`)
+    - **GitHub** 2026-09-15 14:28 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/127|#127 chore: back-merge main after v0.3.3>
+- **GitHub** 2026-09-15 14:29 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/128|#128 chore: back-merge main after v0.3.3> (`chore/backmerge-v0-3-3` into `develop`)
+    - **GitHub** 2026-09-15 14:33 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/128|#128 chore: back-merge main after v0.3.3>
+- **GitHub** 2026-09-16 20:58 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/129|#129 v0.3.4: Restore PDF file search and Files split UI from main bar>
+    - **GitHub** 2026-09-16 21:24 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/129|#129 v0.3.4: Restore PDF file search and Files split UI from main bar>
+- **GitHub** 2026-09-16 20:58 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/130|#130 v0.3.4: Fix launcher drag guides to panel edges>
+    - **GitHub** 2026-09-28 10:08 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/130|#130 v0.3.4: Fix launcher drag guides to panel edges>
+- **GitHub** 2026-09-16 20:58 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/131|#131 v0.3.4: Fix clipboard Enter paste on real Mac>
+    - **GitHub** 2026-09-28 10:08 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/131|#131 v0.3.4: Fix clipboard Enter paste on real Mac>
+- **GitHub** 2026-09-16 20:58 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/132|#132 v0.3.4: Extend macOS parity harness for v0.3.4 gates>
+    - **GitHub** 2026-09-28 10:08 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/132|#132 v0.3.4: Extend macOS parity harness for v0.3.4 gates>
+- **GitHub** 2026-09-16 20:59 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/133|#133 fix: v0.3.4 regressions (files, drag, clipboard, parity)> (`bug/GH-129-v034-file-search-mixed-ui` into `develop`)
+    - **GitHub** 2026-09-16 21:24 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/133|#133 fix: v0.3.4 regressions (files, drag, clipboard, parity)>
+- **GitHub** 2026-09-16 21:25 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/134|#134 Release Photon v0.3.4>
+    - **GitHub** 2026-09-16 21:51 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/134|#134 Release Photon v0.3.4>
+- **GitHub** 2026-09-16 21:25 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/135|#135 Release v0.3.4> (`release/GH-134-v034` into `main`)
+    - **GitHub** 2026-09-16 21:34 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/135|#135 Release v0.3.4>
+- **GitHub** 2026-09-16 21:34 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/136|#136 Release v0.3.4> (`release/gh-134-v034` into `main`)
+    - **GitHub** 2026-09-16 21:45 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/136|#136 Release v0.3.4>
+- **GitHub** 2026-09-16 21:40 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/137|#137 fix(files): reset recents when reopening Files mode> (`bug/GH-132-files-recents-reset` into `develop`)
+    - **GitHub** 2026-09-16 21:51 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/137|#137 fix(files): reset recents when reopening Files mode>
+- **GitHub** 2026-09-16 21:46 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/138|#138 chore: back-merge main after v0.3.4> (`chore/gh-134-back-merge-v034` into `develop`)
+    - **GitHub** 2026-09-16 21:51 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/138|#138 chore: back-merge main after v0.3.4>
+- **GitHub** 2026-09-16 21:56 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/139|#139 fix(parity): stabilize Files recents gate> (`bug/GH-132-parity-recents-wait` into `main`)
+    - **GitHub** 2026-09-16 22:05 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/139|#139 fix(parity): stabilize Files recents gate>
+- **GitHub** 2026-09-16 22:05 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/140|#140 chore: back-merge main after v0.3.4 hotfix> (`chore/gh-134-back-merge-v034-hotfix` into `develop`)
+    - **GitHub** 2026-09-16 22:09 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/140|#140 chore: back-merge main after v0.3.4 hotfix>
+- **GitHub** 2026-09-16 22:26 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/141|#141 v0.3.5: Vertical-only panel expansion for Files and clipboard>
+    - **GitHub** 2026-09-16 23:16 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/141|#141 v0.3.5: Vertical-only panel expansion for Files and clipboard>
+- **GitHub** 2026-09-16 22:26 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/142|#142 v0.3.5: Fix real-world file search (ember PDF under Documents)>
+    - **GitHub** 2026-09-16 23:16 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/142|#142 v0.3.5: Fix real-world file search (ember PDF under Documents)>
+- **GitHub** 2026-09-16 22:26 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/143|#143 v0.3.5: Extend macOS parity for Ryan-like Documents path>
+    - **GitHub** 2026-09-16 23:16 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/143|#143 v0.3.5: Extend macOS parity for Ryan-like Documents path>
+- **GitHub** 2026-09-16 22:28 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/144|#144 fix: v0.3.5 vertical expansion and real-world file search> (`feature/GH-141-vertical-panel-expansion-ffbb` into `develop`)
+    - **GitHub** 2026-09-16 23:16 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/144|#144 fix: v0.3.5 vertical expansion and real-world file search>
+- **GitHub** 2026-09-16 23:16 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/145|#145 Release v0.3.5>
+    - **GitHub** 2026-09-28 10:08 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/145|#145 Release v0.3.5>
+- **GitHub** 2026-09-16 23:16 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/146|#146 Release v0.3.5> (`release/GH-145-v0-3-5-ffbb` into `main`)
+    - **GitHub** 2026-09-16 23:27 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/146|#146 Release v0.3.5>
+- **GitHub** 2026-09-16 23:27 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/147|#147 Release v0.3.5> (`release/gh-145-v0-3-5-ffbb` into `main`)
+    - **GitHub** 2026-09-16 23:32 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/147|#147 Release v0.3.5>
+- **GitHub** 2026-09-16 23:38 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/148|#148 chore: back-merge main after v0.3.5> (`chore/back-merge-v0-3-5-ffbb` into `develop`)
+    - **GitHub** 2026-09-16 23:46 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/148|#148 chore: back-merge main after v0.3.5>
+- **GitHub** 2026-09-17 07:20 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/149|#149 fix: Files and clipboard expanded UI should split side-by-side inside the compact launcher width>
+    - **GitHub** 2026-09-17 07:48 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/149|#149 fix: Files and clipboard expanded UI should split side-by-side inside the compact launcher width>
+- **GitHub** 2026-09-17 07:20 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/150|#150 fix: snappy launcher height animation (~120-180ms) for Files and clipboard expand>
+    - **GitHub** 2026-09-17 07:48 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/150|#150 fix: snappy launcher height animation (~120-180ms) for Files and clipboard expand>
+- **GitHub** 2026-09-17 07:20 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/151|#151 fix: clipboard Up/Down must highlight the selected left-list row>
+    - **GitHub** 2026-09-17 07:48 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/151|#151 fix: clipboard Up/Down must highlight the selected left-list row>
+- **GitHub** 2026-09-17 07:20 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/152|#152 fix: CI smoke native-parity SIGTERM after Files recents wait>
+    - **GitHub** 2026-09-17 07:48 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/152|#152 fix: CI smoke native-parity SIGTERM after Files recents wait>
+- **GitHub** 2026-09-17 07:30 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/153|#153 fix: compact side-by-side Files and clipboard split> (`bug/GH-149-compact-horizontal-split` into `develop`)
+    - **GitHub** 2026-09-17 07:48 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/153|#153 fix: compact side-by-side Files and clipboard split>
+- **GitHub** 2026-09-17 07:49 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/154|#154 chore: release Photon v0.3.6>
+    - **GitHub** 2026-09-28 10:08 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/154|#154 chore: release Photon v0.3.6>
+- **GitHub** 2026-09-17 07:50 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/155|#155 chore(release): 0.3.6> (`release/gh-154-v0-3-6` into `main`)
+    - **GitHub** 2026-09-17 11:18 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/155|#155 chore(release): 0.3.6>
+- **GitHub** 2026-09-17 11:21 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/156|#156 chore: back-merge v0.3.6 into develop> (`chore/backmerge-v0-3-6` into `develop`)
+    - **GitHub** 2026-09-17 11:26 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/156|#156 chore: back-merge v0.3.6 into develop>
+- **GitHub** 2026-09-17 11:34 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/157|#157 chore: back-merge v0.3.6 into develop> (`chore/backmerge-v0-3-6` into `develop`)
+    - **GitHub** 2026-09-17 11:34 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/157|#157 chore: back-merge v0.3.6 into develop>
+- **GitHub** 2026-09-17 11:40 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/158|#158 docs(homebrew): use canonical trusted tap> (`docs/homebrew-tap-rename` into `develop`)
+    - **GitHub** 2026-09-17 11:45 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/158|#158 docs(homebrew): use canonical trusted tap>
+- **GitHub** 2026-09-17 11:44 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/159|#159 Unify expanded launcher, Files, and clipboard dimensions>
+    - **GitHub** 2026-09-17 12:03 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/159|#159 Unify expanded launcher, Files, and clipboard dimensions>
+- **GitHub** 2026-09-17 11:44 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/160|#160 Release Photon v0.3.7>
+    - **GitHub** 2026-09-17 12:58 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/160|#160 Release Photon v0.3.7>
+- **GitHub** 2026-09-17 11:48 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/161|#161 fix(layout): unify expanded panel dimensions> (`feature/GH-159-unified-expanded-layout` into `develop`)
+    - **GitHub** 2026-09-17 12:03 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/161|#161 fix(layout): unify expanded panel dimensions>
+- **GitHub** 2026-09-17 12:04 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/162|#162 chore(release): Photon 0.3.7> (`release/0.3.7` into `main`)
+    - **GitHub** 2026-09-17 12:13 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/162|#162 chore(release): Photon 0.3.7>
+- **GitHub** 2026-09-17 12:53 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/163|#163 chore: back-merge v0.3.7 into develop> (`chore/backmerge-v0-3-7` into `develop`)
+    - **GitHub** 2026-09-17 12:58 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/163|#163 chore: back-merge v0.3.7 into develop>
+- **GitHub** 2026-09-17 13:28 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/164|#164 Files metadata overlaps the command footer>
+    - **GitHub** 2026-09-17 16:06 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/164|#164 Files metadata overlaps the command footer>
+- **GitHub** 2026-09-17 13:28 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/165|#165 Folder permission dialogs must keep the Files panel open>
+    - **GitHub** 2026-09-17 16:06 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/165|#165 Folder permission dialogs must keep the Files panel open>
+- **GitHub** 2026-09-17 13:28 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/166|#166 Drag the launcher from the entire panel with click slop>
+    - **GitHub** 2026-09-17 16:06 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/166|#166 Drag the launcher from the entire panel with click slop>
+- **GitHub** 2026-09-17 13:28 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/167|#167 Horizontal center snap when the panel midpoint is between the edge guides>
+    - **GitHub** 2026-09-17 16:06 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/167|#167 Horizontal center snap when the panel midpoint is between the edge guides>
+- **GitHub** 2026-09-17 13:28 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/168|#168 Release Photon v0.3.8>
+    - **GitHub** 2026-09-17 16:41 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/168|#168 Release Photon v0.3.8>
+- **GitHub** 2026-09-17 13:36 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/169|#169 fix(launcher): keep Files footer, grants, drag, and snap usable> (`bug/GH-164-footer-grants-drag-snap` into `develop`)
+    - **GitHub** 2026-09-17 16:06 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/169|#169 fix(launcher): keep Files footer, grants, drag, and snap usable>
+- **GitHub** 2026-09-17 16:08 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/170|#170 chore(release): 0.3.8> (`release/0.3.8` into `main`)
+    - **GitHub** 2026-09-17 16:18 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/170|#170 chore(release): 0.3.8>
+- **GitHub** 2026-09-17 16:21 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/171|#171 chore: back-merge v0.3.8 into develop> (`chore/backmerge-v0-3-8` into `develop`)
+    - **GitHub** 2026-09-17 16:40 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/171|#171 chore: back-merge v0.3.8 into develop>
+- **GitHub** 2026-09-17 18:25 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/172|#172 fix: launcher Down list must scroll the full catalog, not wrap>
+    - **GitHub** 2026-09-17 19:27 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/172|#172 fix: launcher Down list must scroll the full catalog, not wrap>
+- **GitHub** 2026-09-17 18:25 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/173|#173 feat: revamp Notes to match Raycast Notes chrome>
+    - **GitHub** 2026-09-17 19:27 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/173|#173 feat: revamp Notes to match Raycast Notes chrome>
+- **GitHub** 2026-09-17 18:25 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/174|#174 chore: release Photon v0.3.9>
+    - **GitHub** 2026-09-17 19:42 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/174|#174 chore: release Photon v0.3.9>
+- **GitHub** 2026-09-17 18:40 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/175|#175 feat(notes): match Raycast chrome and scroll launcher recs> (`feature/GH-172-recs-scroll-notes` into `develop`)
+    - **GitHub** 2026-09-17 19:27 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/175|#175 feat(notes): match Raycast chrome and scroll launcher recs>
+- **GitHub** 2026-09-17 19:28 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/176|#176 chore(release): 0.3.9> (`release/0.3.9` into `main`)
+    - **GitHub** 2026-09-17 19:34 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/176|#176 chore(release): 0.3.9>
+- **GitHub** 2026-09-17 19:35 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/177|#177 chore: back-merge v0.3.9 into develop> (`chore/backmerge-v0-3-9` into `develop`)
+    - **GitHub** 2026-09-17 19:42 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/177|#177 chore: back-merge v0.3.9 into develop>
+- **GitHub** 2026-09-20 23:17 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/178|#178 fix: launched apps must come to the foreground>
+    - **GitHub** 2026-09-21 00:01 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/178|#178 fix: launched apps must come to the foreground>
+- **GitHub** 2026-09-20 23:17 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/179|#179 feat: make launcher show, search, recs, Files, and clipboard snappy>
+    - **GitHub** 2026-09-21 00:01 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/179|#179 feat: make launcher show, search, recs, Files, and clipboard snappy>
+- **GitHub** 2026-09-20 23:17 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/180|#180 feat: Command-comma opens Settings from Photon and the launcher>
+    - **GitHub** 2026-09-21 00:01 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/180|#180 feat: Command-comma opens Settings from Photon and the launcher>
+- **GitHub** 2026-09-20 23:17 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/181|#181 feat: native macOS 27 Settings and Liquid Glass chrome>
+    - **GitHub** 2026-09-21 00:01 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/181|#181 feat: native macOS 27 Settings and Liquid Glass chrome>
+- **GitHub** 2026-09-20 23:17 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/182|#182 chore: release Photon v0.4.0>
+    - **GitHub** 2026-09-21 01:07 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/182|#182 chore: release Photon v0.4.0>
+- **GitHub** 2026-09-20 23:25 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/183|#183 feat(launcher): foreground launch, snappy panel, native Settings> (`feature/GH-178-launch-settings-perf` into `develop`)
+    - **GitHub** 2026-09-21 00:01 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/183|#183 feat(launcher): foreground launch, snappy panel, native Settings>
+- **GitHub** 2026-09-21 00:02 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/184|#184 chore(release): 0.4.0> (`release/0.4.0` into `main`)
+    - **GitHub** 2026-09-21 00:20 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/184|#184 chore(release): 0.4.0>
+- **GitHub** 2026-09-21 00:45 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/185|#185 fix: keep launcher visible during packaged drag checks> (`bug/GH-182-parity-drag-hide` into `main`)
+    - **GitHub** 2026-09-21 00:55 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/185|#185 fix: keep launcher visible during packaged drag checks>
+- **GitHub** 2026-09-21 01:03 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/186|#186 chore: back-merge v0.4.0 into develop> (`chore/backmerge-v0-4-0` into `develop`)
+    - **GitHub** 2026-09-21 01:07 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/186|#186 chore: back-merge v0.4.0 into develop>
+- **GitHub** 2026-09-21 07:28 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/187|#187 feat: Dock-style running indicator under open app icons>
+    - **GitHub** 2026-09-21 08:16 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/187|#187 feat: Dock-style running indicator under open app icons>
+- **GitHub** 2026-09-21 07:28 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/188|#188 feat: show assigned shortcuts as trailing keybind chips>
+    - **GitHub** 2026-09-21 08:16 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/188|#188 feat: show assigned shortcuts as trailing keybind chips>
+- **GitHub** 2026-09-21 07:28 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/189|#189 chore: release Photon v0.4.1>
+    - **GitHub** 2026-09-21 09:07 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/189|#189 chore: release Photon v0.4.1>
+- **GitHub** 2026-09-21 07:36 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/190|#190 feat(launcher): Dock-style running dots and keybind chips> (`feature/GH-187-running-dots-keybinds` into `develop`)
+    - **GitHub** 2026-09-21 08:16 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/190|#190 feat(launcher): Dock-style running dots and keybind chips>
+- **GitHub** 2026-09-21 08:17 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/191|#191 chore(release): 0.4.1> (`release/0.4.1` into `main`)
+    - **GitHub** 2026-09-21 08:51 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/191|#191 chore(release): 0.4.1>
+- **GitHub** 2026-09-21 09:02 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/192|#192 chore: back-merge v0.4.1 into develop> (`chore/backmerge-v0-4-1` into `develop`)
+    - **GitHub** 2026-09-21 09:07 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/192|#192 chore: back-merge v0.4.1 into develop>
+- **GitHub** 2026-09-21 09:41 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/193|#193 feat: restyle Settings to match the Photon launcher>
+    - **GitHub** 2026-09-21 10:58 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/193|#193 feat: restyle Settings to match the Photon launcher>
+- **GitHub** 2026-09-21 09:41 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/194|#194 fix: Caps Lock Hyper key must not toggle Caps Lock>
+    - **GitHub** 2026-09-21 10:58 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/194|#194 fix: Caps Lock Hyper key must not toggle Caps Lock>
+- **GitHub** 2026-09-21 09:41 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/195|#195 feat: list installed apps then assign app shortcuts>
+    - **GitHub** 2026-09-21 10:58 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/195|#195 feat: list installed apps then assign app shortcuts>
+- **GitHub** 2026-09-21 09:41 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/196|#196 feat: currently open applications at the top of the launcher>
+    - **GitHub** 2026-09-21 10:58 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/196|#196 feat: currently open applications at the top of the launcher>
+- **GitHub** 2026-09-21 09:41 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/197|#197 chore: release Photon v0.4.2>
+    - **GitHub** 2026-09-21 11:12 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/197|#197 chore: release Photon v0.4.2>
+- **GitHub** 2026-09-21 09:57 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/198|#198 feat(settings): Photon chrome, Caps Lock Hyper, app list, running apps first> (`feature/GH-193-settings-hotkeys-running` into `develop`)
+    - **GitHub** 2026-09-21 10:58 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/198|#198 feat(settings): Photon chrome, Caps Lock Hyper, app list, running apps first>
+- **GitHub** 2026-09-21 10:59 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/199|#199 chore(release): 0.4.2> (`release/0.4.2` into `main`)
+    - **GitHub** 2026-09-21 11:05 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/199|#199 chore(release): 0.4.2>
+- **GitHub** 2026-09-21 11:06 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/200|#200 chore: back-merge v0.4.2 into develop> (`chore/backmerge-v0-4-2` into `develop`)
+    - **GitHub** 2026-09-21 11:12 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/200|#200 chore: back-merge v0.4.2 into develop>
+- **GitHub** 2026-09-21 11:33 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/201|#201 feat: Suggestions of most-used apps at the top of the launcher>
+    - **GitHub** 2026-09-21 12:08 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/201|#201 feat: Suggestions of most-used apps at the top of the launcher>
+- **GitHub** 2026-09-21 11:33 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/202|#202 fix: Settings sidebar focus ring stays stuck on one row>
+    - **GitHub** 2026-09-21 12:08 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/202|#202 fix: Settings sidebar focus ring stays stuck on one row>
+- **GitHub** 2026-09-21 11:33 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/203|#203 feat: request Accessibility permissions on first launch>
+    - **GitHub** 2026-09-21 12:08 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/203|#203 feat: request Accessibility permissions on first launch>
+- **GitHub** 2026-09-21 11:33 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/204|#204 feat: first-run walkthrough for how to use Photon>
+    - **GitHub** 2026-09-21 12:08 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/204|#204 feat: first-run walkthrough for how to use Photon>
+- **GitHub** 2026-09-21 11:33 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/205|#205 chore: release Photon v0.4.3>
+    - **GitHub** 2026-09-21 14:18 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/205|#205 chore: release Photon v0.4.3>
+- **GitHub** 2026-09-21 11:42 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/206|#206 feat(launcher): most-used Suggestions, Settings focus, first-run walkthrough> (`feature/GH-201-suggestions-onboarding` into `develop`)
+    - **GitHub** 2026-09-21 12:08 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/206|#206 feat(launcher): most-used Suggestions, Settings focus, first-run walkthrough>
+- **GitHub** 2026-09-21 12:09 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/207|#207 chore(release): 0.4.3> (`release/0.4.3` into `main`)
+    - **GitHub** 2026-09-21 12:39 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/207|#207 chore(release): 0.4.3>
+- **GitHub** 2026-09-21 13:10 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/208|#208 fix(harness): keep the command row visible for the post-drag click> (`chore/hold-command-list` into `main`)
+    - **GitHub** 2026-09-21 13:49 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/208|#208 fix(harness): keep the command row visible for the post-drag click>
+- **GitHub** 2026-09-21 14:06 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/209|#209 chore: back-merge v0.4.3 into develop> (`chore/backmerge-v0-4-3` into `develop`)
+    - **GitHub** 2026-09-21 14:18 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/209|#209 chore: back-merge v0.4.3 into develop>
+- **GitHub** 2026-09-21 17:21 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/210|#210 feat: interactive first-run walkthrough>
+    - **GitHub** 2026-09-21 17:43 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/210|#210 feat: interactive first-run walkthrough>
+- **GitHub** 2026-09-21 17:21 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/211|#211 fix: Photon icon is tiny in the launcher and menus>
+    - **GitHub** 2026-09-21 17:43 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/211|#211 fix: Photon icon is tiny in the launcher and menus>
+- **GitHub** 2026-09-21 17:22 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/212|#212 feat(onboarding): interactive tour and full app icon> (`feature/GH-210-interactive-onboarding` into `develop`)
+    - **GitHub** 2026-09-21 17:43 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/212|#212 feat(onboarding): interactive tour and full app icon>
+- **GitHub** 2026-09-21 17:37 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/213|#213 chore: release Photon v0.4.4>
+    - **GitHub** 2026-09-21 18:27 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/213|#213 chore: release Photon v0.4.4>
+- **GitHub** 2026-09-21 17:44 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/214|#214 chore(release): 0.4.4> (`release/0.4.4` into `main`)
+    - **GitHub** 2026-09-21 18:01 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/214|#214 chore(release): 0.4.4>
+- **GitHub** 2026-09-21 18:02 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/215|#215 chore: back-merge v0.4.4 into develop> (`chore/backmerge-v0-4-4` into `develop`)
+    - **GitHub** 2026-09-21 18:27 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/215|#215 chore: back-merge v0.4.4 into develop>
+- **GitHub** 2026-09-22 07:44 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/216|#216 feat: cinematic full-screen onboarding>
+    - **GitHub** 2026-09-22 08:06 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/216|#216 feat: cinematic full-screen onboarding>
+- **GitHub** 2026-09-22 07:51 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/217|#217 feat(onboarding): full-screen first-run sequence> (`feature/GH-216-cinematic-onboarding` into `develop`)
+    - **GitHub** 2026-09-22 08:06 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/217|#217 feat(onboarding): full-screen first-run sequence>
+- **GitHub** 2026-09-22 08:07 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/218|#218 chore: release Photon v0.4.5>
+    - **GitHub** 2026-09-22 08:28 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/218|#218 chore: release Photon v0.4.5>
+- **GitHub** 2026-09-22 08:07 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/219|#219 chore(release): 0.4.5> (`release/0.4.5` into `main`)
+    - **GitHub** 2026-09-22 08:18 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/219|#219 chore(release): 0.4.5>
+- **GitHub** 2026-09-22 08:19 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/220|#220 chore: back-merge v0.4.5 into develop> (`chore/backmerge-v0-4-5` into `develop`)
+    - **GitHub** 2026-09-22 08:28 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/220|#220 chore: back-merge v0.4.5 into develop>
+- **GitHub** 2026-09-22 08:55 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/221|#221 feat: windowed first-run sequence>
+    - **GitHub** 2026-09-22 09:14 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/221|#221 feat: windowed first-run sequence>
+- **GitHub** 2026-09-22 08:58 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/222|#222 feat(onboarding): play the sequence in a window> (`feature/GH-221-windowed-onboarding` into `develop`)
+    - **GitHub** 2026-09-22 09:14 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/222|#222 feat(onboarding): play the sequence in a window>
+- **GitHub** 2026-09-22 09:14 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/223|#223 chore: release Photon v0.4.6>
+    - **GitHub** 2026-09-22 09:31 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/223|#223 chore: release Photon v0.4.6>
+- **GitHub** 2026-09-22 09:14 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/224|#224 chore(release): 0.4.6> (`release/0.4.6` into `main`)
+    - **GitHub** 2026-09-22 09:21 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/224|#224 chore(release): 0.4.6>
+- **GitHub** 2026-09-22 09:21 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/225|#225 chore: back-merge v0.4.6 into develop> (`chore/backmerge-v0-4-6` into `develop`)
+    - **GitHub** 2026-09-22 09:31 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/225|#225 chore: back-merge v0.4.6 into develop>
+- **GitHub** 2026-09-22 11:25 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/226|#226 Rebuild onboarding (phased)>
+    - **GitHub** 2026-09-28 10:17 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/226|#226 Rebuild onboarding (phased)>
+- **GitHub** 2026-09-22 11:38 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/227|#227 Phase 1 onboarding overlay> (`feature/GH-226-phase1-overlay` into `develop`)
+    - **GitHub** 2026-09-22 11:53 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/227|#227 Phase 1 onboarding overlay>
+- **GitHub** 2026-09-22 12:14 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/228|#228 Add a Photon-Dev app that can run beside the release build>
+    - **GitHub** 2026-09-28 10:04 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/228|#228 Add a Photon-Dev app that can run beside the release build>
+- **GitHub** 2026-09-22 12:25 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/229|#229 Add a Photon-Dev app that can run beside the release build> (`feature/GH-228-photon-dev-app` into `develop`)
+    - **GitHub** 2026-09-28 10:04 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/229|#229 Add a Photon-Dev app that can run beside the release build>
+- **GitHub** 2026-09-22 12:38 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/230|#230 Make the Phase 1 arrival cinematic> (`feature/GH-226-phase1-cinematic` into `develop`)
+    - **GitHub** 2026-09-28 10:04 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/230|#230 Make the Phase 1 arrival cinematic>
+- **GitHub** 2026-09-28 10:08 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/231|#231 Replace the Phase 1 overlay with a short welcome> (`feature/GH-226-minimal-welcome-2b36` into `develop`)
+    - **GitHub** 2026-09-28 10:17 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/231|#231 Replace the Phase 1 overlay with a short welcome>
+- **GitHub** 2026-09-28 10:21 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/232|#232 Rank empty-launcher Suggestions by use count for apps and commands>
+    - **GitHub** 2026-09-28 10:48 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/232|#232 Rank empty-launcher Suggestions by use count for apps and commands>
+- **GitHub** 2026-09-28 10:22 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/233|#233 fix: typing finder hides Finder.app behind file hits>
+    - **GitHub** 2026-09-28 10:36 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/233|#233 fix: typing finder hides Finder.app behind file hits>
+- **GitHub** 2026-09-28 10:22 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/234|#234 feat(launcher): rank Suggestions by use count> (`feature/GH-232-suggestion-frecency` into `develop`)
+    - **GitHub** 2026-09-28 10:48 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/234|#234 feat(launcher): rank Suggestions by use count>
+- **GitHub** 2026-09-28 10:27 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/235|#235 fix(launcher): keep Finder.app above file hits> (`bug/GH-233-finder-app-first` into `develop`)
+    - **GitHub** 2026-09-28 10:36 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/235|#235 fix(launcher): keep Finder.app above file hits>
+- **GitHub** 2026-09-28 19:50 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/236|#236 chore(release): 0.4.7> (`chore/release-0-4-7` into `develop`)
+    - **GitHub** 2026-09-28 19:58 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/236|#236 chore(release): 0.4.7>
+- **GitHub** 2026-09-28 19:59 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/237|#237 chore(release): 0.4.7> (`release/0.4.7` into `main`)
+    - **GitHub** 2026-09-28 20:03 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/237|#237 chore(release): 0.4.7>
+- **GitHub** 2026-09-29 09:49 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/238|#238 fix: Settings sidebar focus ring stays on the previous row after a click>
+    - **GitHub** 2026-09-29 12:39 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/238|#238 fix: Settings sidebar focus ring stays on the previous row after a click>
+- **GitHub** 2026-09-29 09:50 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/239|#239 fix(settings): move the sidebar focus ring on click> (`bug/GH-238-settings-sidebar-click-focus` into `develop`)
+    - **GitHub** 2026-09-29 12:38 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/239|#239 fix(settings): move the sidebar focus ring on click>
+- **GitHub** 2026-09-29 09:51 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/240|#240 fix: launcher footer gap while results load>
+    - **GitHub** 2026-09-29 12:47 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/240|#240 fix: launcher footer gap while results load>
+- **GitHub** 2026-09-29 09:52 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/241|#241 fix(launcher): keep the footer against the result rows> (`cursor/bug-gh-240-footer-height-40c0` into `develop`)
+    - **GitHub** 2026-09-29 12:47 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/241|#241 fix(launcher): keep the footer against the result rows>
+- **GitHub** 2026-09-29 09:52 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/242|#242 feat: windowed welcome with the launcher shortcut>
+    - **GitHub** 2026-09-29 13:02 PT: Issue closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/242|#242 feat: windowed welcome with the launcher shortcut>
+- **GitHub** 2026-09-29 09:52 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/243|#243 feat: outlined Photon mark for the menu bar>
+    - **GitHub** 2026-09-29 09:54 PT: Issue closed as not planned by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/243|#243 feat: outlined Photon mark for the menu bar>
+- **GitHub** 2026-09-29 09:52 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/244|#244 feat(menu-bar): draw an outlined Photon mark> (`feature/GH-243-outlined-menu-bar-icon` into `develop`)
+    - **GitHub** 2026-09-29 09:54 PT: Pull request closed by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/244|#244 feat(menu-bar): draw an outlined Photon mark>
+- **GitHub** 2026-09-29 09:53 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/245|#245 feat(onboarding): show the launcher shortcut in a welcome window> (`cursor/feature-gh-242-welcome-window-345e` into `develop`)
+    - **GitHub** 2026-09-29 13:02 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/245|#245 feat(onboarding): show the launcher shortcut in a welcome window>
+- **GitHub** 2026-09-29 13:09 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/246|#246 chore(release): 0.4.8> (`chore/release-0-4-8` into `develop`)
+    - **GitHub** 2026-09-29 13:15 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/246|#246 chore(release): 0.4.8>
+- **GitHub** 2026-09-29 13:15 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/247|#247 chore(release): 0.4.8> (`release/0.4.8` into `main`)
+    - **GitHub** 2026-09-29 13:30 PT: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/247|#247 chore(release): 0.4.8>
+- **GitHub** 2026-10-03 19:42 PT: Issue opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/issues/248|#248 feat(launcher): Raycast parity pass>
+- **GitHub** 2026-10-03 20:09 PT: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/249|#249 feat(launcher): Raycast parity pass> (`feature/GH-248-raycast-parity` into `develop`)
+
+## #photon-releases
+
+_Published Photon releases._ 31 messages.
+
+- **GitHub** 2026-09-13 21:49 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.1.0|Photon 0.1.0> (pre-release). First public build. Photon is a menu-bar launcher for macOS 14 and later; it has no Dock icon, no account, no cloud sync, and no telemetry.
+- **GitHub** 2026-09-14 06:32 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.1.1|Photon 0.1.1> (pre-release). UI polish release: redesigned launcher, Appearance settings, real app icons, Notes sidebar, and a screenshot harness for visual QA on macOS.
+- **GitHub** 2026-09-14 10:00 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.2.0|Photon 0.2.0> (pre-release). Feature release: inline calculator and unit conversions, launcher drag-and-snap positioning, clipboard and file-search UX aligned with the redesigned launcher, and searchable System Settings pane titles.
+- **GitHub** 2026-09-14 13:12 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.2.1|Photon 0.2.1> (pre-release). Patch release: launcher polish, home-scoped file search, compact clipboard hotkey panel, and drag guide fixes.
+- **GitHub** 2026-09-14 15:08 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.2.2|Photon 0.2.2> (pre-release). Patch release: clipboard arrow navigation, search-field mode pills removed, live launcher drag, and Spotlight `mdfind` file search.
+- **GitHub** 2026-09-14 16:35 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.2.3|Photon 0.2.3> (pre-release). Patch release: clipboard reopen/arrows, live-snap drag, Documents file search, and Down-to-recents.
+- **GitHub** 2026-09-15 01:32 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.0|Photon 0.3.0> (pre-release). Rust + GPUI rewrite. Superseded by v0.3.1 because the shipped app regressed native macOS panel, Dock/menu, appearance, positioning, icon, clipboard, and feature behavior.
+    - **Ryan Stoffel** 2026-09-15 01:40 PT: Shipped the GPUI rewrite. Daniel, give it a full pass before anyone else installs it.
+- **GitHub** 2026-09-15 09:16 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.1|Photon 0.3.1> (pre-release). Emergency rollback release: restore the v0.2.3 Swift/AppKit implementation after the v0.3.0 Rust/GPUI rewrite failed the native macOS parity gate.
+    - **Ryan Stoffel** 2026-09-15 09:20 PT: Rollback to the v0.2.3 Swift tree. See #photon-dev for why.
+    - **Daniel Reyes** 2026-09-15 09:30 PT: Back out of the Dock, no title bar, light and dark both follow the system.
+- **GitHub** 2026-09-15 10:53 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.2|Photon 0.3.2> (pre-release). Runtime reliability release for real-account file search and clipboard keyboard navigation.
+- **GitHub** 2026-09-15 14:16 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.3|Photon 0.3.3> (pre-release). Workflow completion release for clipboard paste-back, guided file access, launcher dragging, and expanded Clipboard and Files detail views.
+- **GitHub** 2026-09-16 22:09 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.4|Photon 0.3.4> (pre-release). Regression fix release for Ryan's v0.3.3 file search, drag guides, main-bar Files layout, and clipboard Enter paste.
+- **GitHub** 2026-09-16 23:37 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.5|Photon 0.3.5> (pre-release). Ryan UX and real-world file search release.
+- **GitHub** 2026-09-17 11:29 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.6|Photon 0.3.6> (pre-release). Ryan layout, animation, clipboard selection, and smoke-harness release.
+- **GitHub** 2026-09-17 12:46 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.7|Photon 0.3.7> (pre-release). Ryan shared-panel sizing and instant expansion release.
+- **GitHub** 2026-09-17 16:33 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.8|Photon 0.3.8> (pre-release). Ryan Files footer, folder grants, panel drag, and center-snap release.
+    - **Daniel Reyes** 2026-09-17 16:42 PT: Verified on 14 and 15.
+- **GitHub** 2026-09-17 19:38 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.3.9|Photon 0.3.9> (pre-release). Ryan Notes chrome and launcher recs-scroll release.
+- **GitHub** 2026-09-21 00:59 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.0|Photon 0.4.0> (pre-release). Ryan foreground launch, snappy launcher, native Settings, and macOS 26/27 chrome release.
+- **GitHub** 2026-09-21 08:56 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.1|Photon 0.4.1> (pre-release). Ryan Dock-style running dots and trailing keybind chips release.
+- **GitHub** 2026-09-21 11:11 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.2|Photon 0.4.2> (pre-release). Ryan Photon-styled Settings, Caps Lock Hyper, app-hotkeys list, and running-apps-first release.
+- **GitHub** 2026-09-21 13:55 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.3|Photon 0.4.3> (pre-release). Ryan most-used Suggestions, Settings keyboard focus, first-launch permissions, and a short walkthrough.
+- **GitHub** 2026-09-21 18:07 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.4|Photon 0.4.4> (pre-release). Ryan interactive first-run tour and full app icon release.
+- **GitHub** 2026-09-22 08:25 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.5|Photon 0.4.5> (pre-release). Ryan cinematic full-screen onboarding.
+- **GitHub** 2026-09-22 09:27 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.6|Photon 0.4.6> (pre-release). Ryan windowed first-run sequence.
+- **GitHub** 2026-09-28 20:11 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.7|Photon 0.4.7> (pre-release). Ryan minimal first-run welcome.
+    - **Ryan Stoffel** 2026-09-28 20:16 PT: First release that is Developer ID signed and notarized.
+- **GitHub** 2026-09-29 13:37 PT: Release published: <https://github.com/ryan-stoffel/photon/releases/tag/v0.4.8|Photon 0.4.8> (pre-release). Ryan welcome window, compact footer, and Settings click focus.
+    - **Daniel Reyes** 2026-09-29 13:50 PT: Welcome window shows the configured shortcut. Verified on 14 and 15.
+
+## #photon-bugs
+
+_Regressions and bug triage._ 54 messages.
+
+- **Jira Cloud** 2026-09-13 21:34 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-20|PHO-20: Launcher panel throws NSInternalInconsistencyException at launch>
+- **Jira Cloud** 2026-09-13 22:34 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-21|PHO-21: Launcher shows a placeholder square instead of app icons>
+- **Jira Cloud** 2026-09-13 23:56 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-25|PHO-25: bug: notes sidebar is not full height and the toolbar title precedes the sidebar controls>
+- **Daniel Reyes** 2026-09-14 14:10 PT: File search returns nothing for me. Typing `ember` should find `Ember_Individual_Pitch.pdf` in Documents and the Files list stays empty.
+    - **Ryan Stoffel** 2026-09-14 14:17 PT: Reproduced. Filed GH-79.
+- **Jira Cloud** 2026-09-14 14:16 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-36|PHO-36: Clipboard history: arrow keys do not cycle items>
+- **Jira Cloud** 2026-09-14 14:16 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-37|PHO-37: Remove Clipboard/Files mode pill from the search field>
+- **Jira Cloud** 2026-09-14 14:16 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-38|PHO-38: Launcher drag jitters and does not follow the pointer>
+- **Jira Cloud** 2026-09-14 14:16 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-39|PHO-39: File search returns nothing; use Spotlight mdfind in home>
+- **Jira Cloud** 2026-09-14 14:48 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-40|PHO-40: Files empty panel stays tall instead of compact>
+- **Jira Cloud** 2026-09-14 16:07 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-41|PHO-41: Clipboard reopen shows clipped overlay; arrows must expand and cycle>
+- **Jira Cloud** 2026-09-14 16:07 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-42|PHO-42: Launcher drag should live-snap X between the edge guides>
+- **Jira Cloud** 2026-09-14 16:07 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-43|PHO-43: Files: ember misses Documents PDFs; Searching sticks; mix into main launcher>
+- **Jira Cloud** 2026-09-14 16:07 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-44|PHO-44: Empty launcher Down should show recents; darken top of search hairline>
+- **Daniel Reyes** 2026-09-15 07:20 PT: 0.3.0 is bad. Photon shows up in the Dock, the launcher has a title bar with traffic lights, appearance is stuck on light, the panel moves when clicked, and app icons do not render. Dock screenshot is going on the issue.
+    - **Ryan Stoffel** 2026-09-15 07:33 PT: Filed as GH-107.
+- **Jira Cloud** 2026-09-15 07:32 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-48|PHO-48: Restore native macOS parity after the v0.3.0 GPUI rewrite>
+- **Daniel Reyes** 2026-09-15 09:45 PT: On 0.3.1, file search still finds nothing on my real account, and Up/Down in clipboard history does nothing on hardware. :white_check_mark:
+    - **Ryan Stoffel** 2026-09-15 09:52 PT: Filing GH-114. The CI harness passed both, so it was testing the wrong thing.
+    - **Ryan Stoffel** 2026-09-15 10:55 PT: 0.3.2 fixes both. The harness now seeds a real Documents PDF and four pasteboard entries and checks the displayed rows through Accessibility.
+    - **Daniel Reyes** 2026-09-15 11:10 PT: Confirmed on 0.3.2.
+- **Jira Cloud** 2026-09-15 09:50 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-49|PHO-49: v0.3.2: fix real file search and clipboard key routing>
+- **Jira Cloud** 2026-09-15 11:33 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-50|PHO-50: Fix trusted clipboard paste and add expanded detail view>
+- **Jira Cloud** 2026-09-16 20:58 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-54|PHO-54: v0.3.4: Restore PDF file search and Files split UI from main bar>
+- **Jira Cloud** 2026-09-16 20:58 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-55|PHO-55: v0.3.4: Fix launcher drag guides to panel edges>
+- **Jira Cloud** 2026-09-16 20:58 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-56|PHO-56: v0.3.4: Fix clipboard Enter paste on real Mac>
+- **Jira Cloud** 2026-09-16 22:27 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-59|PHO-59: v0.3.5: Vertical-only panel expansion for Files and clipboard>
+- **Jira Cloud** 2026-09-16 22:27 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-60|PHO-60: v0.3.5: Fix real-world file search (ember PDF under Documents)>
+- **Jira Cloud** 2026-09-17 07:20 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-63|PHO-63: fix: Files and clipboard expanded UI should split side-by-side inside the compact launcher width>
+- **Jira Cloud** 2026-09-17 07:20 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-64|PHO-64: fix: snappy launcher height animation (~120-180ms) for Files and clipboard expand>
+- **Jira Cloud** 2026-09-17 07:20 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-65|PHO-65: fix: clipboard Up/Down must highlight the selected left-list row>
+- **Jira Cloud** 2026-09-17 07:20 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-66|PHO-66: fix: CI smoke native-parity SIGTERM after Files recents wait>
+- **Daniel Reyes** 2026-09-17 13:20 PT: Three in Files and drag on 0.3.7: metadata paints over the footer buttons, a folder grant dialog closes the panel, and drag only works from the top edge. Screenshot of the footer is on the ticket. :white_check_mark:
+    - **Ryan Stoffel** 2026-09-17 13:30 PT: Filed GH-164 through GH-167. One branch for all of them.
+    - **Ryan Stoffel** 2026-09-17 16:10 PT: Merged in #169. Grants are a sheet on the launcher now, queued one at a time, and they survive relaunch.
+    - **Daniel Reyes** 2026-09-17 16:40 PT: Verified on 0.3.8.
+- **Jira Cloud** 2026-09-17 13:28 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-70|PHO-70: Files metadata overlaps the command footer>
+- **Jira Cloud** 2026-09-17 13:28 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-71|PHO-71: Folder permission dialogs must keep the Files panel open>
+- **Jira Cloud** 2026-09-17 13:28 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-72|PHO-72: Drag the launcher from the entire panel with click slop>
+- **Jira Cloud** 2026-09-17 13:28 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-73|PHO-73: Horizontal center snap when the panel midpoint is between the edge guides>
+- **Jira Cloud** 2026-09-17 18:26 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-75|PHO-75: fix: launcher Down list must scroll the full catalog, not wrap>
+- **Daniel Reyes** 2026-09-20 23:10 PT: Apps launched from Photon open behind whatever window was in front.
+    - **Ryan Stoffel** 2026-09-20 23:17 PT: Filing GH-178.
+- **Jira Cloud** 2026-09-20 23:17 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-78|PHO-78: fix: launched apps must come to the foreground>
+- **Jira Cloud** 2026-09-21 09:41 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-87|PHO-87: fix: Caps Lock Hyper key must not toggle Caps Lock>
+- **Jira Cloud** 2026-09-21 11:33 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-93|PHO-93: fix: Settings sidebar focus ring stays stuck on one row>
+- **Jira Cloud** 2026-09-21 17:21 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-98|PHO-98: fix: Photon icon is tiny in the launcher and menus>
+- **Daniel Reyes** 2026-09-28 10:15 PT: Typing `finder` lists file hits above Finder.app. :white_check_mark:
+    - **Ryan Stoffel** 2026-09-28 10:25 PT: Filed GH-233. An application name match beats file hits now.
+- **Jira Cloud** 2026-09-28 10:22 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-107|PHO-107: fix: typing finder hides Finder.app behind file hits>
+- **Daniel Reyes** 2026-09-29 09:45 PT: The Settings sidebar focus ring is stuck again, this time after a click.
+    - **Ryan Stoffel** 2026-09-29 09:50 PT: Same symptom as GH-202, different trigger. Filing GH-238.
+- **Jira Cloud** 2026-09-29 09:50 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-108|PHO-108: fix: Settings sidebar focus ring stays on the previous row after a click>
+- **Jira Cloud** 2026-09-29 09:52 PT: Daniel Reyes created Bug <https://photon-synthetic.atlassian.net/browse/PHO-109|PHO-109: fix: launcher footer gap while results load>
