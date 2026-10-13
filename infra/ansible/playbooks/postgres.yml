@@ -1,0 +1,115 @@
+---
+# Checks Postgres on the cluster: the CloudNativePG Cluster from k8s/apps/postgres, the migrate Job,
+# and the Service that publishes it on every node's IP. Flux deploys them; this playbook deploys
+# nothing. Run from the controller against the "homelab" kubeconfig context. Use make postgres-health.
+- name: Postgres
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubectl: "kubectl --context {{ cluster_context }}"
+    k8s_dir: "{{ playbook_dir }}/../../k8s"
+    pg_ns: ember
+    # Name and node come from cluster.yaml so there is one place to change them
+    pg_cluster: "{{ lookup('ansible.builtin.file', k8s_dir ~ '/apps/postgres/cluster.yaml') | from_yaml }}"
+    pg_name: "{{ pg_cluster.metadata.name }}"
+    pg_node: "{{ pg_cluster.spec.affinity.nodeSelector['kubernetes.io/hostname'] }}"
+    pg_db: "{{ pg_cluster.spec.bootstrap.initdb.database }}"
+    # The tables EMBER-61 asks for (docs/ingestion/architecture.md, Storage)
+    pg_tables: [cursors, episodes, installations, rate_limits, raw_events, source_records]
+  tasks:
+    - name: Health
+      tags: [health]
+      block:
+        - name: Wait for the Cluster to be ready
+          ansible.builtin.command: "{{ kubectl }} -n {{ pg_ns }} wait cluster/{{ pg_name }} --for=condition=Ready --timeout=5m"
+          changed_when: false
+
+        - name: Read the primary's pod
+          ansible.builtin.command: "{{ kubectl }} -n {{ pg_ns }} get cluster {{ pg_name }} -o jsonpath={.status.currentPrimary}"
+          register: primary
+          changed_when: false
+
+        - name: Read which node the primary runs on
+          ansible.builtin.command: "{{ kubectl }} -n {{ pg_ns }} get pod {{ primary.stdout }} -o jsonpath={.spec.nodeName}"
+          register: primary_node
+          changed_when: false
+
+        - name: Require the primary on the pinned node
+          ansible.builtin.assert:
+            that: primary_node.stdout == pg_node
+            fail_msg: "{{ primary.stdout }} is on {{ primary_node.stdout }}, expected {{ pg_node }}"
+            quiet: true
+
+        # Key names only: the values are the credentials
+        - name: Read the keys of the app Secret
+          ansible.builtin.command: >-
+            {{ kubectl }} -n {{ pg_ns }} get secret {{ pg_name }}-app
+            -o go-template='{{ '{{' }}range $k, $v := .data{{ '}}' }}{{ '{{' }}$k{{ '}}' }} {{ '{{' }}end{{ '}}' }}'
+          register: secret_keys
+          changed_when: false
+
+        - name: Require the uri key services read as DATABASE_URL
+          ansible.builtin.assert:
+            that: "'uri' in secret_keys.stdout.split()"
+            fail_msg: "Secret {{ pg_name }}-app has no uri key: {{ secret_keys.stdout }}"
+            quiet: true
+
+        - name: Wait for the migrate Job to complete
+          ansible.builtin.command: "{{ kubectl }} -n {{ pg_ns }} wait job/postgres-migrate --for=condition=Complete --timeout=5m"
+          changed_when: false
+
+        - name: List the tables and migrations from inside the pod
+          ansible.builtin.command: >-
+            {{ kubectl }} -n {{ pg_ns }} exec {{ primary.stdout }} -c postgres --
+            psql -X -A -t -d {{ pg_db }}
+            -c "select string_agg(tablename, ' ' order by tablename) from pg_tables where schemaname = 'public' and tablename <> 'schema_migrations'"
+            -c "select pg_get_constraintdef(oid) from pg_constraint where conrelid = 'raw_events'::regclass and contype = 'u'"
+            -c "select string_agg(version, ' ' order by version) from schema_migrations"
+          register: in_pod
+          changed_when: false
+
+        - name: Require the ingestion tables and the delivery key
+          ansible.builtin.assert:
+            that:
+              - pg_tables | difference(in_pod.stdout_lines[0].split()) | length == 0
+              - "'UNIQUE (source, delivery_id)' in in_pod.stdout_lines"
+            fail_msg: "Tables: {{ in_pod.stdout_lines[0] }}; raw_events unique keys: {{ in_pod.stdout_lines[1:-1] }}"
+            quiet: true
+
+        # These are the names the team connects with, so check they point at the right node
+        - name: Resolve each node's tailnet name
+          ansible.builtin.command: "getent hosts {{ item }}.{{ tailnet_domain }}"
+          loop: "{{ groups['k3s_cluster'] }}"
+          register: fqdn
+          changed_when: false
+          failed_when: fqdn.rc != 0 or fqdn.stdout.split()[0] != hostvars[item].ts_ip
+
+        # ServiceLB takes a few seconds to start its proxy pods after the Service is created
+        - name: Wait for port 5432 on each node's IP
+          ansible.builtin.wait_for:
+            host: "{{ hostvars[item].ts_ip }}"
+            port: 5432
+            timeout: 60
+          loop: "{{ groups['k3s_cluster'] }}"
+
+        # An SSLRequest needs no client or credentials, and only Postgres answers it with "S"
+        - name: Require Postgres to answer on each node's IP
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_playbook_python }}"
+              - -c
+              - |
+                import socket, sys
+                with socket.create_connection((sys.argv[1], 5432), timeout=10) as s:
+                    s.sendall(bytes([0, 0, 0, 8, 4, 210, 22, 47]))
+                    sys.exit(s.recv(1) != b"S")
+              - "{{ hostvars[item].ts_ip }}"
+          loop: "{{ groups['k3s_cluster'] }}"
+          changed_when: false
+
+        - name: Show the endpoints
+          ansible.builtin.debug:
+            msg:
+              - "Tailnet:    {{ pg_node }}.{{ tailnet_domain }}:5432, database {{ pg_db }} (make postgres-url)"
+              - "In-cluster: {{ pg_name }}-rw.{{ pg_ns }}.svc.cluster.local:5432; DATABASE_URL from Secret {{ pg_name }}-app, key uri"
+              - "Migrations applied: {{ in_pod.stdout_lines[-1] }}"
