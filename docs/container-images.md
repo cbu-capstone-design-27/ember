@@ -45,10 +45,16 @@ The image is published as soon as the PR merges into `develop`, and again when `
 docker pull ghcr.io/cbu-capstone-design-27/ember/<name>:develop-<short sha>
 ```
 
-Each package is linked to this repo through its `org.opencontainers.image.source` label. After a package's **first** publish, check its visibility under the organization's Packages tab:
+Each package is linked to this repo through its `org.opencontainers.image.source` label.
 
-- **Public:** the k3s cluster can pull it as-is.
-- **Private:** a pull needs a token with `read:packages`, and the cluster needs an `imagePullSecret`.
+**The packages are private**, even though this repo is public, and they stay that way on purpose. Any pull needs a token with `read:packages`:
+
+- **Locally:** `gh auth refresh -s read:packages`, then `gh auth token | docker login ghcr.io -u <github user> --password-stdin`.
+- **On the cluster:** an `imagePullSecret` for `ghcr.io` in each namespace that runs these images. Keep the token in Ansible Vault (`infra/ansible/group_vars/all/vault.yml`, alongside the other secrets) and use a token that can only read packages.
+
+A new service's package is private from its first publish, so it needs no extra step. Without credentials, a pull fails with `authentication required`.
+
+Each published tag is a multi-arch index with `linux/amd64` and `linux/arm64` images. The registry also lists two `unknown/unknown` entries: those are build provenance attestations, not images.
 
 ## Removing a service
 
