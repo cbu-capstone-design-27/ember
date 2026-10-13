@@ -1,0 +1,64 @@
+# Applies migrations/ with dbmate (ADR 0005). dbmate records each applied migration in table
+# schema_migrations and runs only the ones not there yet, so running it again is safe.
+# A Job's pod template cannot change, so force lets Flux delete and recreate it when it does: a new
+# migration changes the ConfigMap's hashed name, which changes the template.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-migrate
+  annotations:
+    kustomize.toolkit.fluxcd.io/force: enabled
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: postgres-migrate
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dbmate
+          image: ghcr.io/amacneil/dbmate:2.36.0
+          # --wait: on a first install the Job can start before Postgres accepts connections.
+          # migrate, not up: up would also try to create the database, which the operator owns.
+          args:
+            - --wait
+            - --wait-timeout=5m
+            - --no-dump-schema
+            - --migrations-dir=/migrations
+            - migrate
+          env:
+            # The pod stays in CreateContainerConfigError until the operator has created the Secret
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-app
+                  key: uri
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: postgres-migrations

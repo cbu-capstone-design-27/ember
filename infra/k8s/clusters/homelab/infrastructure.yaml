@@ -1,4 +1,5 @@
-# Cluster-wide pieces from infra/k8s/infrastructure: namespaces, the Tailscale operator.
+# Cluster-wide pieces from infra/k8s/infrastructure: namespaces, the Tailscale and CloudNativePG
+# operators.
 # wait: Ready only once everything it applied is healthy, HelmReleases included, so apps can
 # depend on it.
 apiVersion: kustomize.toolkit.fluxcd.io/v1

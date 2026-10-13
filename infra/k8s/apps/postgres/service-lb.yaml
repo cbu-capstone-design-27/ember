@@ -1,0 +1,21 @@
+# Publishes Postgres on every node's IP via k3s ServiceLB, e.g. hv-worker-2.tail470a31.ts.net:5432.
+# Same selector as the operator's postgres-rw Service, so it follows the primary.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-lb
+spec:
+  type: LoadBalancer
+  # Tailnet only. ServiceLB binds every interface, so without this the LAN could reach it too.
+  loadBalancerSourceRanges:
+    - 100.64.0.0/10
+  # ServiceLB forwards to the ClusterIP, so NodePorts are unused, and source ranges don't apply to
+  # them: they would reopen the port to the LAN on 30000-32767.
+  allocateLoadBalancerNodePorts: false
+  selector:
+    cnpg.io/cluster: postgres
+    cnpg.io/instanceRole: primary
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

@@ -14,10 +14,12 @@ AGE_VERSION := v1.3.2
 # age publishes no checksum file; this is the sha256 of age-$(AGE_VERSION)-linux-amd64.tar.gz
 AGE_SHA256 := cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
 CONTEXT := homelab
+# Where the team reaches Postgres over the tailnet: the node apps/postgres/cluster.yaml pins it to
+POSTGRES_HOST := $(shell sed -n 's|^ *kubernetes.io/hostname: *||p' ../k8s/apps/postgres/cluster.yaml).$(shell sed -n 's/^tailnet_domain: *//p' group_vars/all/main.yml)
 
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
-	ts-operator-health neo4j-health headlamp-token
+	ts-operator-health neo4j-health postgres-health postgres-url headlamp-token
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -134,6 +136,13 @@ ts-operator-health: ## Operator ready and logged in; every Tailscale Ingress has
 
 neo4j-health: ## Neo4j pod ready on its node, answers a query in-pod and on every node's IP
 	ansible-playbook playbooks/neo4j.yml --tags health
+
+postgres-health: ## Postgres ready on its node, migrations applied, answers on every node's IP
+	ansible-playbook playbooks/postgres.yml --tags health
+
+postgres-url: ## Print the connection URL for Postgres over the tailnet. It contains the password
+	@kubectl --context $(CONTEXT) -n ember get secret postgres-app -o jsonpath='{.data.uri}' | base64 -d | \
+	  sed 's|@[^/]*/|@$(POSTGRES_HOST):5432/|'; echo
 
 headlamp-token: ## Print a 24-hour sign-in token for Headlamp (read-only) at https://headlamp.<tailnet>
 	@kubectl --context $(CONTEXT) -n headlamp create token headlamp-viewer --duration 24h

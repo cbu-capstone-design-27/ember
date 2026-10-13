@@ -225,6 +225,8 @@ Each component also connects to Postgres as its own role, limited to the tables 
 
 Postgres runs on the cluster and holds everything stateful. The envelope keeps the EMBER-39 contract (`{"type", "body"}`); routing metadata sits in columns beside it.
 
+The SQL below is the source of truth for the schema. The cluster gets it from the migrations in `infra/k8s/apps/postgres/migrations` (EMBER-61, ADR 0005), and CI fails if those build a different schema from this block. A schema change edits both.
+
 ```sql
 create table raw_events (
   id           bigint generated always as identity primary key,
@@ -415,7 +417,7 @@ Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images 
 | extract | Deployment, 1 replica | `…/ember/pipeline`, `extract` | The LLM URL and token when extract calls it |
 | load | Deployment, 1 replica | `…/ember/pipeline`, `load` | Neo4j password; the LLM URL and token when Graphiti calls it |
 | scheduler:&lt;source&gt; | CronJob per source, on its own schedule | `…/ember/pipeline`, `schedule --source <source>` | Database only |
-| Postgres | HelmRelease on `local-path-retain`, pinned to one worker like Neo4j | Chart image | Its password; a role per component |
+| Postgres | CloudNativePG `Cluster`, one instance on `local-path-retain`, pinned to hv-worker-2; Job `postgres-migrate` applies the schema (ADR 0005) | `ghcr.io/cloudnative-pg/postgresql` | The password the operator generates, in Secret `postgres-app`, whose `uri` services read as `DATABASE_URL`. A role per component is still to come |
 | Neo4j | Existing HelmRelease | Chart image | n/a |
 
 ## From today's services
@@ -436,6 +438,7 @@ Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images 
 |---|---|
 | Which LLM | The tenant supplies a URL and API token. Otherwise our own cloud provider on the enterprise instance |
 | Where Postgres runs | On the cluster |
+| How Postgres is installed | The CloudNativePG operator, one instance; migrations with dbmate (ADR 0005) |
 | Queue code | A library on the same Postgres, not hand-written; Procrastinate proposed |
 | Raw event retention | 30 days after an event is fully processed; until its source is removed if it is not |
 | Accounts with no tenant | Left unmapped for now: stored with `tenant = null`, not processed until mapped |
@@ -444,7 +447,6 @@ Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images 
 ### Still open
 
 - Which stage calls the LLM: load through Graphiti, or extract with the fallback. This follows ADR 0002's spike.
-- Postgres chart: the CloudNativePG operator, or a single-instance chart.
 - The library: confirm Procrastinate can enqueue inside the stage's own transaction, or add the outbox.
 - How long `source_records` and `episodes` are kept. They are what extract and load replays read once raw events are gone.
 - Each source's reconcile schedule, set from its API limits.
