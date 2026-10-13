@@ -39,12 +39,14 @@ infra/k8s/
     infrastructure.yaml       # Flux Kustomization -> infra/k8s/infrastructure
     apps.yaml                 # Flux Kustomization -> infra/k8s/apps, dependsOn infrastructure
   infrastructure/
-    namespaces.yaml           # ember, tailscale, headlamp (prune: disabled)
+    namespaces.yaml           # ember, tailscale, headlamp, cnpg-system (prune: disabled)
     tailscale-operator/       # HelmRepository, HelmRelease, values.yaml, operator-oauth.sops.yaml
+    cnpg/                     # HelmRepository, HelmRelease, values.yaml (CloudNativePG operator)
   apps/
     nginx/                    # reverse proxy behind the public Ingress
     github-webhook/           # placeholder listener (EMBER-56 replaces it)
     neo4j/                    # HelmRepository, HelmRelease, values.yaml, service-lb.yaml
+    postgres/                 # CloudNativePG Cluster, service-lb.yaml, migrate-job.yaml, migrations/
     headlamp/                 # HelmRepository, HelmRelease, values.yaml, ingress.yaml, viewer.yaml
 .sops.yaml                    # (repo root) which files SOPS encrypts, and to which age key
 ```
@@ -53,8 +55,8 @@ infra/k8s/
 flowchart LR
   gh["GitHub: develop<br/>infra/k8s"] -->|every 1m| src["GitRepository<br/>flux-system"]
   src --> fs["Kustomization flux-system<br/>clusters/homelab"]
-  fs -->|creates| infra["Kustomization infrastructure<br/>namespaces, Tailscale operator"]
-  fs -->|creates| apps["Kustomization apps<br/>nginx, github-webhook, Neo4j, Headlamp"]
+  fs -->|creates| infra["Kustomization infrastructure<br/>namespaces, Tailscale operator, CloudNativePG"]
+  fs -->|creates| apps["Kustomization apps<br/>nginx, github-webhook, Neo4j, Postgres, Headlamp"]
   infra -->|healthy first| apps
   key[("Secret sops-age<br/>from Ansible Vault")] -.decrypts.-> infra
   key -.decrypts.-> apps
@@ -64,10 +66,10 @@ flowchart LR
 |---|---|---|
 | GitRepository `flux-system` | `https://github.com/cbu-capstone-design-27/ember`, branch `develop` | Fetches only `infra/k8s` every minute. The repo is public, so no credentials |
 | Kustomization `flux-system` | `infra/k8s/clusters/homelab` | Applies Flux itself and the two Kustomizations below. Flux upgrades itself from `gotk-components.yaml` |
-| Kustomization `infrastructure` | `infra/k8s/infrastructure` | Namespaces and the Tailscale operator. `wait: true`: Ready only when everything it applied is healthy |
-| Kustomization `apps` | `infra/k8s/apps` | Ember workloads. `dependsOn: infrastructure`, so the Tailscale operator exists before any Ingress |
+| Kustomization `infrastructure` | `infra/k8s/infrastructure` | Namespaces, the Tailscale operator and the CloudNativePG operator. `wait: true`: Ready only when everything it applied is healthy |
+| Kustomization `apps` | `infra/k8s/apps` | Ember workloads. `dependsOn: infrastructure`, so the Tailscale operator exists before any Ingress and CloudNativePG before the Postgres Cluster |
 
-Both `infrastructure` and `apps` **prune**: an object removed from Git is deleted from the cluster. That also cleans up the old hash-suffixed ConfigMaps that a config edit leaves behind. Namespaces are the exception. They carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so dropping one from `namespaces.yaml` cannot take Neo4j's data with it.
+Both `infrastructure` and `apps` **prune**: an object removed from Git is deleted from the cluster. That also cleans up the old hash-suffixed ConfigMaps that a config edit leaves behind. Namespaces are the exception. They carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so dropping one from `namespaces.yaml` cannot take Neo4j's or Postgres's data with it.
 
 What runs on the cluster:
 
@@ -77,6 +79,8 @@ What runs on the cluster:
 | `tailscale` | Tailscale operator + one proxy per Tailscale Ingress | HelmRelease, chart 1.102.4 |
 | `ember` | nginx, github-webhook placeholder | Plain manifests |
 | `ember` | Neo4j (pinned to hv-worker-1) | HelmRelease, chart 2026.9.0 |
+| `cnpg-system` | CloudNativePG operator | HelmRelease, chart 0.29.1 |
+| `ember` | Postgres (pinned to hv-worker-2), migrate Job | CloudNativePG `Cluster`, plain manifests |
 | `headlamp` | Headlamp + Flux plugin | HelmRelease, chart 0.45.0 |
 
 Public and tailnet addresses:
@@ -86,6 +90,7 @@ Public and tailnet addresses:
 | `https://ember.tail470a31.ts.net` | Internet (Funnel) | nginx, which routes `/webhook/github` and `/healthz` |
 | `https://headlamp.tail470a31.ts.net` | Tailnet only | Headlamp |
 | `bolt://hv-worker-1.tail470a31.ts.net:7687` | Tailnet only | Neo4j |
+| `hv-worker-2.tail470a31.ts.net:5432` | Tailnet only | Postgres (`make postgres-url`) |
 
 ---
 
@@ -97,7 +102,7 @@ Public and tailnet addresses:
 2. Optional: preview what it would change with `make apps-diff`, which compares your checkout with the cluster.
 3. Optional: try it on the cluster before merging (next section).
 4. Open the PR into `develop` and merge it. Flux applies it within about a minute. `make sync` applies it now.
-5. Check: `make flux-health`, then the health target for what you changed (`apps-health`, `ts-operator-health`, `neo4j-health`).
+5. Check: `make flux-health`, then the health target for what you changed (`apps-health`, `ts-operator-health`, `neo4j-health`, `postgres-health`).
 
 If a change does not show up, `flux get kustomizations` tells you whether Flux has the new commit and whether applying it failed.
 
@@ -217,6 +222,7 @@ Each chart is a Flux HelmRelease with its HelmRepository and its `values.yaml` b
 | Chart | Directory | Chart version | Notes |
 |---|---|---|---|
 | `tailscale/tailscale-operator` | `infrastructure/tailscale-operator/` | 1.102.4 | Installs and upgrades its CRDs (`crds: CreateReplace`). OAuth from `operator-oauth.sops.yaml` |
+| `cnpg/cloudnative-pg` | `infrastructure/cnpg/` | 0.29.1 (operator 1.30.1) | Installs and upgrades its CRDs (`crds: CreateReplace`). Runs the Postgres in `apps/postgres` (`infra/k8s/README.md`, Postgres) |
 | `neo4j/neo4j` | `apps/neo4j/` | 2026.9.0 | Pinned to hv-worker-1 with a 10Gi `local-path-retain` volume; install and upgrade timeout 10m |
 | `headlamp/headlamp` | `apps/headlamp/` | 0.45.0 | See Headlamp above |
 
@@ -248,7 +254,7 @@ Everything on the cluster comes back from Git plus the age key in the vault.
    - creates Secret `flux-system/sops-age` from `vault_sops_age_key` (server-side apply, so no plain copy is left in an annotation),
    - applies `gotk-sync.yaml`,
    - then waits up to 15 minutes for `infrastructure` and `apps` to be Ready.
-5. Run `make apps-health`, `make ts-operator-health` and `make neo4j-health`.
+5. Run `make apps-health`, `make ts-operator-health`, `make neo4j-health` and `make postgres-health`.
 
 ---
 
@@ -267,6 +273,8 @@ Everything on the cluster comes back from Git plus the age key in the vault.
 | `make apps-health` | Public route end to end: Ingress hostname, nginx `/healthz`, a webhook POST from the tailnet and through Funnel, 404 on unknown paths |
 | `make ts-operator-health` | Operator ready and logged in; each Tailscale Ingress has a hostname and answers HTTPS; each Funnel Ingress has public DNS |
 | `make neo4j-health` | Pod ready on hv-worker-1; a query works in the pod and on every node's IP |
+| `make postgres-health` | Postgres ready on hv-worker-2, migrations applied, the ingestion tables present, Postgres answering on every node's IP |
+| `make postgres-url` | Print the tailnet connection URL for Postgres, password included |
 
 Removed with EMBER-57, because Flux does their job: `apps-up`, `apps-down`, `neo4j-prep`, `neo4j-up`, `neo4j-down`, `ts-operator-up`, `ts-operator-down`.
 

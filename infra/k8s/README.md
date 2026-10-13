@@ -165,6 +165,44 @@ Connect with user `neo4j`:
 
 The data volume outlives the release. To wipe it, `flux suspend helmrelease neo4j -n ember`, uninstall with `helm --kube-context homelab -n ember uninstall neo4j`, delete PVC `data-neo4j-0`, its PV and the PV's directory under `/var/lib/rancher/k3s/storage` on hv-worker-1, then `flux resume helmrelease neo4j -n ember` to install it fresh.
 
+### Postgres
+
+The ingestion store (`docs/ingestion/architecture.md`, Storage; ADR 0005). One instance in namespace `ember`, run by the CloudNativePG operator from `apps/postgres/cluster.yaml`: Cluster `postgres`, database `ember` owned by role `ember`, pinned to hv-worker-2 with a 10Gi `local-path-retain` volume. The operator itself is release `cnpg` in namespace `cnpg-system`, from `infrastructure/cnpg/`, so its CRDs exist before `apps/` is applied. `make postgres-health` checks that the instance is ready on hv-worker-2, that the migrations ran and the ingestion tables exist, and that Postgres answers on every node's IP.
+
+The operator generates role `ember`'s password and keeps it in Secret `postgres-app`; it is not in Git. The Secret's `uri` key is the in-cluster connection string, `postgresql://ember:<password>@postgres-rw.ember:5432/ember`, and is how a service gets `DATABASE_URL`:
+
+```yaml
+env:
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: postgres-app
+        key: uri
+```
+
+Service `postgres-rw` always points at the primary. Every component connects as `ember` for now; ADR 0004's role per component comes later.
+
+From the tailnet, `make postgres-url` prints `postgresql://ember:<password>@hv-worker-2.tail470a31.ts.net:5432/ember`. As with Neo4j, `apps/postgres/service-lb.yaml` publishes port 5432 on every node's IP through ServiceLB, tailnet sources only, so the other nodes' names work too. Reading the Secret needs the kubeconfig: Headlamp's viewer cannot see Secrets.
+
+#### Migrations
+
+The schema is SQL files in `apps/postgres/migrations/`, applied by Job `postgres-migrate` with [dbmate](https://github.com/amacneil/dbmate). dbmate records each migration it applies in table `schema_migrations` and only runs ones that are not there, each in its own transaction. To change the schema:
+
+1. Change the SQL in `docs/ingestion/architecture.md` (Storage). It is the source of truth.
+2. Add `migrations/<UTC timestamp>_<what>.sql` with a `-- migrate:up` and a `-- migrate:down` section (`dbmate -d migrations new <what>` from `apps/postgres` writes the skeleton). Never edit a migration that has been merged: the cluster has already applied it and will not run it again.
+3. List the file under `configMapGenerator` in `apps/postgres/kustomization.yaml`.
+4. CI runs `apps/postgres/test_migrations.py`. It applies the migrations, rolls them all back, applies them again, and fails if the result differs from the doc's schema or if a migration is missing from the kustomization.
+
+Once merged, the new file changes the hashed name of the ConfigMap the Job mounts. A Job's pod template cannot be edited, so the Job carries `kustomize.toolkit.fluxcd.io/force: enabled` and Flux deletes and recreates it. The new Job applies what is new. If a migration fails, the Job is marked failed and the `apps` Kustomization goes not Ready. `kubectl --context homelab -n ember logs job/postgres-migrate` shows the error. The failed migration's transaction rolled back and dbmate did not record it, so fixing that file and merging the fix is enough.
+
+To run the test locally you need `psql`, `dbmate`, and a Postgres it may create databases on:
+
+```bash
+docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55432:5432 postgres:18.6
+PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
+  python3 infra/k8s/apps/postgres/test_migrations.py
+```
+
 ### Headlamp
 
 A web UI for the cluster, with the Flux plugin for what Flux has deployed: `https://headlamp.tail470a31.ts.net`, on the tailnet only (its Ingress has no Funnel annotation). Release `headlamp` in namespace `headlamp`, from `apps/headlamp/`.
