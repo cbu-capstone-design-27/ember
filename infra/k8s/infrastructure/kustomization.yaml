@@ -5,3 +5,4 @@ kind: Kustomization
 resources:
   - namespaces.yaml
   - tailscale-operator
+  - cnpg

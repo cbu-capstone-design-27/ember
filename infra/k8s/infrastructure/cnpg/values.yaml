@@ -1,0 +1,9 @@
+# Values for the CloudNativePG operator chart (cnpg/cloudnative-pg). Flux installs it from
+# helmrelease.yaml, which pins the chart version. Everything else is the chart's default: CRDs
+# installed, one operator watching every namespace, no PodMonitor.
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi

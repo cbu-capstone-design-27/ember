@@ -1,0 +1,9 @@
+# Lets kustomize rename the HelmRelease's valuesFrom along with the generated values ConfigMap,
+# whose name carries a hash of values.yaml. An edit to values.yaml then changes the HelmRelease and
+# Flux upgrades the release.
+nameReference:
+  - kind: ConfigMap
+    version: v1
+    fieldSpecs:
+      - path: spec/valuesFrom/name
+        kind: HelmRelease

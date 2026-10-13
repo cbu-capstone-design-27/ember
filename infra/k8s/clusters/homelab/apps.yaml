@@ -1,5 +1,5 @@
-# Ember workloads from infra/k8s/apps. Waits for infrastructure (the namespaces and the Tailscale
-# operator the public Ingress needs).
+# Ember workloads from infra/k8s/apps. Waits for infrastructure (the namespaces, the Tailscale
+# operator the public Ingress needs, and the CloudNativePG operator Postgres needs).
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
