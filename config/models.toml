@@ -19,7 +19,7 @@ query_template = "{query}"
 
 # The models on the DGX Spark (ADR 0005): the chat model (infra/spark/deploy-llm.sh) and the embedding
 # service (ADR 0001, services/embedding). The URLs below are what you see through an SSH tunnel;
-# set LLM_BASE_URL to the Spark's Tailscale address and EMBEDDING_BASE_URL to its public one.
+# set EMBEDDING_BASE_URL to the Spark's public address (the chat model has no public address yet).
 [profiles.local-spark]
 llm_base_url = "http://localhost:8001/v1"
 llm_model = "qwen3-30b-a3b-instruct"

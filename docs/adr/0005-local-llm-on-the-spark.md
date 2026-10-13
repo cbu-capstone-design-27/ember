@@ -38,12 +38,14 @@ models we do not need).
 
 ## Network
 
-- The embedding service stays on the Spark's LAN address that maps to the public IP, as before.
-- The chat model must not be exposed publicly: it binds to the Spark's **Tailscale** address
-  (`LLM_BIND_ADDR`), and only machines on the tailnet (developer laptops and the cluster nodes that run
-  the pipeline) reach it. Both servers require a bearer key (`VLLM_API_KEY`).
-- Until the Spark has a Tailscale address, the chat model binds to loopback and is reached through an SSH
-  tunnel (`ssh -L 8001:127.0.0.1:8001 shared-dev`). Joining the Spark to the tailnet needs root on the host.
+- The Spark cannot join Tailscale. The embedding service is on the Spark's LAN address that maps to the
+  public IP (port 8000), with a bearer key. The cluster nodes that run the pipeline and Neo4j are the
+  ones reached over Tailscale.
+- The chat model binds to loopback (`LLM_BIND_ADDR`) and is reached through an SSH tunnel
+  (`ssh -L 8001:127.0.0.1:8001 shared-dev`). That is enough for development from a laptop. The pipeline
+  running on a cluster node needs a route to it, which means serving it like the embedding service:
+  bind `LLM_BIND_ADDR` to the Spark's LAN address and open the public port (8001). Until that is decided
+  and the port is open, it stays private. Both servers require a bearer key (`VLLM_API_KEY`).
 
 ## Consequences
 

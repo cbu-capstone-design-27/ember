@@ -141,7 +141,7 @@ services:
               capabilities: [gpu]
 
   # EMBER-49. Chat model on the DGX Spark, next to the embedding service. Not in the default `up`.
-  # Bind it to the Spark's Tailscale address, never a LAN or public one (ADR 0005).
+  # Loopback by default; the Spark cannot join Tailscale. See ADR 0005 before binding it wider.
   llm:
     profiles: ["llm"]
     image: "${LLM_IMAGE:-nvcr.io/nvidia/vllm:26.02-py3}"
