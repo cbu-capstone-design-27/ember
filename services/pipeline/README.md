@@ -71,8 +71,8 @@ The Neo4j integration test runs only when `NEO4J_TEST_URI` is set.
 
 The pipeline calls a chat model and an embedding model chosen by a profile in `config/models.toml`.
 The default profile is `local-spark`: Qwen3-30B-A3B for chat and Qwen3-Embedding-0.6B for embeddings, both
-on the DGX Spark (why: `docs/adr/0005-local-llm-on-the-spark.md`). `openai-dev` calls hosted OpenAI models
-(`docs/adr/0004-cloud-llm-and-embedding.md`) and drops in once credits arrive. To switch, set
+on the DGX Spark (why: `docs/adr/0006-local-llm-on-the-spark.md`). `openai-dev` calls hosted OpenAI models
+(`docs/adr/0005-cloud-llm-and-embedding.md`) and drops in once credits arrive. To switch, set
 `MODEL_PROFILE` (or pass `--profile`) or edit that file. No code changes. Empty variables are treated as
 unset, so the blank `LLM_BASE_URL=` / `EMBEDDING_BASE_URL=` lines in `.env` leave the profile's URLs alone.
 
@@ -81,7 +81,7 @@ Keys are read from environment variables, never from the repository. Copy `.env.
 and `EMBEDDING_BASE_URL` (the Spark's public address, port 8000). The chat model is private to the Spark:
 tunnel its port with `ssh -L 8001:127.0.0.1:8001 shared-dev` and the profile's default
 `http://localhost:8001/v1` works. On a cluster node, run the same tunnel under a supervisor (systemd or
-autossh) so it restarts if it drops (ADR 0005). For `openai-dev` set `OPENAI_API_KEY` and a monthly
+autossh) so it restarts if it drops (ADR 0006). For `openai-dev` set `OPENAI_API_KEY` and a monthly
 spending limit on the provider account.
 
 Deploy or refresh the servers on the Spark with `infra/spark/deploy-llm.sh` (chat) and

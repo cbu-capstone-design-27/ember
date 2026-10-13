@@ -4,7 +4,7 @@
 
 default_profile = "local-spark"
 
-# Cheap cloud models for development (ADR 0004). One key serves both.
+# Cheap cloud models for development (ADR 0005). One key serves both.
 [profiles.openai-dev]
 llm_base_url = "https://api.openai.com/v1"
 llm_model = "gpt-5-nano"
@@ -17,7 +17,7 @@ send_dimensions = true
 embedding_revision = "provider-managed"
 query_template = "{query}"
 
-# The models on the DGX Spark (ADR 0005): the chat model (infra/spark/deploy-llm.sh) and the embedding
+# The models on the DGX Spark (ADR 0006): the chat model (infra/spark/deploy-llm.sh) and the embedding
 # service (ADR 0001, services/embedding). The URLs below are what you see through an SSH tunnel;
 # set EMBEDDING_BASE_URL to the Spark's public address (the chat model has no public address yet).
 [profiles.local-spark]

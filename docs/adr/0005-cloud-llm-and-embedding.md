@@ -1,6 +1,6 @@
-# ADR 0004: Cloud LLM and embedding for the development phase
+# ADR 0005: Cloud LLM and embedding for the development phase
 
-- Status: Accepted (the default profile is superseded for now by ADR 0005; the models stay available)
+- Status: Accepted (the default profile is superseded for now by ADR 0006; the models stay available)
 - Date: 2026-10-06
 - Jira: EMBER-49
 

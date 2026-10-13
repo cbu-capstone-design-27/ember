@@ -1,6 +1,6 @@
 # ADR 0001: Embedding model
 
-- Status: Accepted (for the development phase, ADR 0004 selects hosted models; this ADR's rules still apply)
+- Status: Accepted (for the development phase, ADR 0005 selects hosted models; this ADR's rules still apply)
 - Date: 2026-09-29
 - Jira: EMBER-33
 

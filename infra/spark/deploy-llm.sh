@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Deploy or refresh the chat model (vLLM) on the DGX Spark (EMBER-49, ADR 0005).
+# Deploy or refresh the chat model (vLLM) on the DGX Spark (EMBER-49, ADR 0006).
 # Usage, from the Spark or via `ssh shared-dev ember/infra/spark/deploy-llm.sh [git-ref]`:
 #   infra/spark/deploy-llm.sh             # fast-forward the current branch
 #   infra/spark/deploy-llm.sh <branch>    # switch to origin/<branch>
 # Optional env: LLM_BIND_ADDR (written to .env), DEPLOY_SKIP_GIT=1 to deploy the checkout as it is.
 # The API key lives only in .env. The default bind is loopback, which only an SSH tunnel can reach;
-# widening it is a network decision (ADR 0005).
+# widening it is a network decision (ADR 0006).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
