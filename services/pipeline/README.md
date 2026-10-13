@@ -69,15 +69,24 @@ The Neo4j integration test runs only when `NEO4J_TEST_URI` is set.
 
 ## Models (EMBER-49)
 
-The pipeline calls a chat model and an embedding model chosen by a profile in `config/models.toml`
-(why: `docs/adr/0004-cloud-llm-and-embedding.md`). To switch models, set `MODEL_PROFILE` (or pass
-`--profile`) or edit that file. No code changes. Empty variables are treated as unset, so the blank
-`LLM_BASE_URL=` / `EMBEDDING_BASE_URL=` lines in `.env` leave the profile's URLs alone.
+The pipeline calls a chat model and an embedding model chosen by a profile in `config/models.toml`.
+The default profile is `local-spark`: Qwen3-30B-A3B for chat and Qwen3-Embedding-0.6B for embeddings, both
+on the DGX Spark (why: `docs/adr/0005-local-llm-on-the-spark.md`). `openai-dev` calls hosted OpenAI models
+(`docs/adr/0004-cloud-llm-and-embedding.md`) and drops in once credits arrive. To switch, set
+`MODEL_PROFILE` (or pass `--profile`) or edit that file. No code changes. Empty variables are treated as
+unset, so the blank `LLM_BASE_URL=` / `EMBEDDING_BASE_URL=` lines in `.env` leave the profile's URLs alone.
 
-Keys are read from environment variables, never from the repository. Copy `.env.example` to `.env`,
-set `OPENAI_API_KEY`, and set a monthly spending limit on the provider account.
+Keys are read from environment variables, never from the repository. Copy `.env.example` to `.env`. For
+`local-spark` set `LLM_API_KEY` and `EMBEDDING_API_KEY` (generated on the Spark, in its `~/ember/.env`),
+`LLM_BASE_URL` (the Spark's Tailscale address, port 8001) and `EMBEDDING_BASE_URL` (its public address,
+port 8000). Without Tailscale, tunnel the chat port: `ssh -L 8001:127.0.0.1:8001 shared-dev`, and the
+profile's default `http://localhost:8001/v1` works. For `openai-dev` set `OPENAI_API_KEY` and a monthly
+spending limit on the provider account.
 
-Check that the models answer (one chat call and one embedding call, a few cents at most). The first
+Deploy or refresh the servers on the Spark with `infra/spark/deploy-llm.sh` (chat) and
+`infra/spark/deploy.sh` (embeddings).
+
+Check that the models answer (one chat call and one embedding call). The first
 command runs from `services/pipeline`; the docker command runs from the repo root:
 
     cd services/pipeline && python -m models smoke
@@ -88,7 +97,7 @@ Embed during a load:
 
     python -m loader --tenant brandon-dev --input ../../data/raw/brandon-dev --embed
 
-`--dry-run --embed` still calls the paid embedding API (only Neo4j is skipped). `--profile` only matters
+`--dry-run --embed` still calls the embedding API (only Neo4j is skipped). `--profile` only matters
 with `--embed`; without it the loader exits with a usage error.
 
 Under compose the arguments after the service name replace `command:` entirely, so enabling `--embed`
@@ -104,7 +113,7 @@ graph, and a different model is refused afterwards: a graph holds vectors from o
 `(:EmberConfig {key: 'embedding'})` node and each tenant's `embedding` and `embedding_text_hash`
 properties deliberately, then rerun with `--embed`.
 
-Embedding a small input costs a few cents. Set a spending limit on the provider account before the
-first real run.
+With `openai-dev`, embedding a small input costs a few cents; set a spending limit on the provider account
+before the first real run. `local-spark` costs nothing per call.
 
 Tests (no key, no network): `cd services/pipeline && python -m unittest discover -s models -t . -p "test_*.py" -v`.

@@ -25,7 +25,7 @@ chmod 600 .env
 set_env() {
   if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >> .env; fi
 }
-get_env() { grep "^$1=" .env | head -1 | cut -d= -f2-; }
+get_env() { grep "^$1=" .env | head -1 | cut -d= -f2- || true; }
 
 grep -Eq '^LLM_API_KEY=.+' .env || set_env LLM_API_KEY "$(openssl rand -hex 32)"
 [ -z "${LLM_BIND_ADDR:-}" ] || set_env LLM_BIND_ADDR "$LLM_BIND_ADDR"

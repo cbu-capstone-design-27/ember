@@ -297,7 +297,7 @@ services:
       NEO4J_USER: "${PIPELINE_NEO4J_USER:-neo4j}"
       NEO4J_PASSWORD: "${PIPELINE_NEO4J_PASSWORD:-${NEO4J_PASSWORD:-change-me-locally}}"
       # EMBER-49. Empty values are treated as unset by the model config (profile in config/models.toml).
-      MODEL_PROFILE: "${MODEL_PROFILE:-openai-dev}"
+      MODEL_PROFILE: "${MODEL_PROFILE:-local-spark}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       EMBEDDING_API_KEY: "${EMBEDDING_API_KEY:-}"
       LLM_API_KEY: "${LLM_API_KEY:-}"

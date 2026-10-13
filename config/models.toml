@@ -2,7 +2,7 @@
 # API keys are never stored here: *_key_env names the environment variable that holds the key.
 # LLM_BASE_URL and EMBEDDING_BASE_URL in the environment override the base URLs below.
 
-default_profile = "openai-dev"
+default_profile = "local-spark"
 
 # Cheap cloud models for development (ADR 0004). One key serves both.
 [profiles.openai-dev]
@@ -17,12 +17,12 @@ send_dimensions = true
 embedding_revision = "provider-managed"
 query_template = "{query}"
 
-# The self-hosted embedding service on the Spark (ADR 0001, services/embedding).
-# There is no LLM there yet, so the llm_* values are unused with this profile.
-# Set EMBEDDING_BASE_URL to the Spark's http://<host>:8000/v1 address.
+# The models on the DGX Spark (ADR 0005): the chat model (infra/spark/deploy-llm.sh) and the embedding
+# service (ADR 0001, services/embedding). The URLs below are what you see through an SSH tunnel;
+# set LLM_BASE_URL to the Spark's Tailscale address and EMBEDDING_BASE_URL to its public one.
 [profiles.local-spark]
 llm_base_url = "http://localhost:8001/v1"
-llm_model = "none"
+llm_model = "qwen3-30b-a3b-instruct"
 llm_key_env = "LLM_API_KEY"
 embedding_base_url = "http://localhost:8000/v1"
 embedding_model = "qwen3-embedding-0.6b"
