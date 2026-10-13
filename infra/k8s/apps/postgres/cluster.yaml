@@ -1,0 +1,33 @@
+# One Postgres instance, run by the CloudNativePG operator (infrastructure/cnpg, ADR 0005).
+# The operator creates database "ember" owned by role "ember", generates that role's password, and
+# keeps it in Secret postgres-app. Services read the Secret's "uri" key as DATABASE_URL
+# (k8s/README.md, Postgres). In-cluster the primary is Service postgres-rw.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+spec:
+  instances: 1
+  # Pinned so an operator upgrade does not change Postgres under us. This is the operator's default.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
+  bootstrap:
+    initdb:
+      database: ember
+      owner: ember
+  storage:
+    storageClass: local-path-retain
+    size: 10Gi
+  # local-path volumes stay on the node they were created on, so pin this explicitly. Neo4j has
+  # hv-worker-1.
+  affinity:
+    nodeSelector:
+      kubernetes.io/hostname: hv-worker-2
+  # The one instance cannot move off its node, so a PodDisruptionBudget would only make draining
+  # hv-worker-2 hang.
+  enablePDB: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
