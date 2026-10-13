@@ -42,10 +42,15 @@ models we do not need).
   public IP (port 8000), with a bearer key. The cluster nodes that run the pipeline and Neo4j are the
   ones reached over Tailscale.
 - The chat model binds to loopback (`LLM_BIND_ADDR`) and is reached through an SSH tunnel
-  (`ssh -L 8001:127.0.0.1:8001 shared-dev`). That is enough for development from a laptop. The pipeline
-  running on a cluster node needs a route to it, which means serving it like the embedding service:
-  bind `LLM_BIND_ADDR` to the Spark's LAN address and open the public port (8001). Until that is decided
-  and the port is open, it stays private. Both servers require a bearer key (`VLLM_API_KEY`).
+  (`ssh -L 8001:127.0.0.1:8001 shared-dev`). Both servers require a bearer key (`VLLM_API_KEY`).
+- Decided (2026-10-13): the pipeline on a cluster node reaches the chat model through the same kind of
+  SSH tunnel, started on the node and kept running by a supervisor (systemd or autossh), pointing at the
+  Spark's existing SSH port. The node holds an SSH key as a managed secret. The pipeline then uses the
+  profile's default `http://localhost:8001/v1`. Nothing new is exposed and no firewall change is needed.
+- Not chosen: opening public port 8001 with a key (a 30B chat endpoint is a more attractive target than
+  embeddings, and the key would cross the network in plain HTTP), and a reverse proxy on port 8000 (keeps
+  one open port but still publishes the model over plain HTTP). Revisit the proxy if a direct route is
+  needed later.
 
 ## Consequences
 

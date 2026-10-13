@@ -78,9 +78,10 @@ unset, so the blank `LLM_BASE_URL=` / `EMBEDDING_BASE_URL=` lines in `.env` leav
 
 Keys are read from environment variables, never from the repository. Copy `.env.example` to `.env`. For
 `local-spark` set `LLM_API_KEY` and `EMBEDDING_API_KEY` (generated on the Spark, in its `~/ember/.env`),
-and `EMBEDDING_BASE_URL` (the Spark's public address, port 8000). The chat model is private to the Spark
-for now: tunnel its port with `ssh -L 8001:127.0.0.1:8001 shared-dev` and the profile's default
-`http://localhost:8001/v1` works (ADR 0005). For `openai-dev` set `OPENAI_API_KEY` and a monthly
+and `EMBEDDING_BASE_URL` (the Spark's public address, port 8000). The chat model is private to the Spark:
+tunnel its port with `ssh -L 8001:127.0.0.1:8001 shared-dev` and the profile's default
+`http://localhost:8001/v1` works. On a cluster node, run the same tunnel under a supervisor (systemd or
+autossh) so it restarts if it drops (ADR 0005). For `openai-dev` set `OPENAI_API_KEY` and a monthly
 spending limit on the provider account.
 
 Deploy or refresh the servers on the Spark with `infra/spark/deploy-llm.sh` (chat) and
