@@ -36,15 +36,16 @@ What each command does:
   resets or writes anything, and `--input` is optional (it is only required in the other modes).
 - `--spec` and `--questions` point at other expectation or question files. The defaults are
   `benchmarks/data/loading_<tenant>.json` and `benchmarks/data/questions_<tenant>.json`.
-- `--profile` picks the model profile (default: `MODEL_PROFILE`, which is `openai-dev` in
+- `--profile` picks the model profile (default: `MODEL_PROFILE`, which is `local-spark` in
   `.env.example`). `--out` changes where results are saved. `--rejects` changes where rejected
   records are written (default `rejects.jsonl` in the current folder; it is deleted at the start of
   each run).
 
 The retrieval suite makes real embedding calls: it embeds every node of the tenant and then every
-question (a few cents for a few hundred nodes). It needs `OPENAI_API_KEY` for the `openai-dev`
-profile (see `docs/adr/0004-cloud-llm-and-embedding.md`); with a missing key the command stops
-before loading anything. The loading suite makes no model calls.
+question. With the default `local-spark` profile that is free and needs `EMBEDDING_API_KEY` and a route to the
+Spark's embedding service (`docs/adr/0005-local-llm-on-the-spark.md`); with `openai-dev` it costs a few cents for
+a few hundred nodes and needs `OPENAI_API_KEY` (`docs/adr/0004-cloud-llm-and-embedding.md`). With a missing key the
+command stops before loading anything. The loading suite makes no model calls.
 
 Search runs in memory over the nodes' text and the vectors the embed step produced. Neo4j's own
 full-text and vector indexes are not used yet (see Gaps).
@@ -168,11 +169,14 @@ Compare runs only when the data version and models match, or say what changed.
 
 ## Baseline
 
-**Not yet recorded.** No real score exists yet, and none should be invented. Recording one needs
+**Not yet recorded.** No real score exists yet, and none should be invented. (On 2026-10-13 both suites ran clean
+on the bundled sample data with the `local-spark` models. That shows the benchmark works on local models; it is a
+pipeline check on six invented questions, not a baseline.) Recording one needs
 three things that are not in the repository:
 
-1. The real OpenAI key: `OPENAI_API_KEY` set in `.env` (profile `openai-dev`: chat `gpt-5-nano`,
-   embeddings `text-embedding-3-small` at 1024 dimensions), with a spending limit on the account.
+1. Access to the Spark models: `EMBEDDING_API_KEY` and `EMBEDDING_BASE_URL` set in `.env` (profile `local-spark`:
+   embeddings `qwen3-embedding-0.6b` at 1024 dimensions; the chat model `qwen3-30b-a3b-instruct` is not called by
+   the retrieval suite). For `openai-dev` instead, `OPENAI_API_KEY` with a spending limit on the account.
 2. The real brandon-dev raw data under `data/raw/brandon-dev/` (the `data/` folder is not in git).
 3. The two hand-written files for that tenant: `benchmarks/data/loading_brandon-dev.json` and
    `benchmarks/data/questions_brandon-dev.json` (20 to 30 questions, written by a person under the
@@ -199,8 +203,8 @@ Also:
 | --- | --- | --- | --- | --- |
 | Loading correctness (per source, and run-wide separately) | Not yet recorded | | n/a | none |
 | Retrieval: `bm25` | Not yet recorded | | | none |
-| Retrieval: `vector` | Not yet recorded | | | `text-embedding-3-small` |
-| Retrieval: `hybrid` | Not yet recorded | | | `text-embedding-3-small` |
+| Retrieval: `vector` | Not yet recorded | | | `qwen3-embedding-0.6b` (`local-spark`) |
+| Retrieval: `hybrid` | Not yet recorded | | | `qwen3-embedding-0.6b` (`local-spark`) |
 
 Whatever is recorded here comes from development models and carries the note above.
 
@@ -219,7 +223,7 @@ Not measured yet, in rough order of value:
 3. **Extraction quality.** Once the semantic layer exists: precision and recall of extracted
    decisions and cross-source links against a hand-labelled sample.
 4. **Other models.** Rerun the retrieval suite with stronger LLM and embedding profiles (for
-   example `local-spark`). Scores from different models are shown side by side, never merged.
+   example `openai-dev`). Scores from different models are shown side by side, never merged.
    Note that a graph holds vectors from one embedding model only, so a different embedding model
    means re-embedding the tenant.
 5. **Neo4j-native search.** Rerun hybrid retrieval with Neo4j's full-text and vector indexes and
