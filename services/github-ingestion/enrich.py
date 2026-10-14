@@ -41,7 +41,9 @@ from pull_test import (
     exchange_with_retry,
     installation_token,
     parse_next_link,
-    retry_after_seconds,
+    is_rate_limited,
+    rate_limit_wait,
+    throttle_seconds,
     urllib_exchange,
 )
 
@@ -153,10 +155,6 @@ def env_app_jwt() -> str:
         return build_app_jwt(os.environ["GITHUB_APP_ID"], path, now=int(time.time()))
     finally:
         cleanup()
-
-
-def _no_sleep(_seconds: float) -> None:
-    """exchange_with_retry's own sleep. The rate_limits wait before every call replaces it."""
 
 
 class Worker:
@@ -302,7 +300,7 @@ class Worker:
         pages = []
         while url and len(pages) < MAX_PAGES:
             response = await asyncio.to_thread(
-                exchange_with_retry, exchange, "GET", url, _headers(token), None, sleep=_no_sleep
+                exchange_with_retry, exchange, "GET", url, _headers(token), None
             )
             pages.append(_read_json(response, url))
             url = parse_next_link(response.headers.get("Link") or response.headers.get("link"))
@@ -344,14 +342,13 @@ class Worker:
         headers = {key.lower(): value for key, value in response.headers.items()}
         remaining_header = headers.get("x-ratelimit-remaining", "")
         remaining = int(remaining_header) if remaining_header.isdigit() else None
-        reset = headers.get("x-ratelimit-reset", "")
-        wait = retry_after_seconds(response)
-        if wait is not None:
-            next_allowed_at = func.now() + timedelta(seconds=wait)
-        elif remaining == 0 and reset.isdigit():
-            next_allowed_at = func.to_timestamp(int(reset))
+        # pull_test.py decides the wait: a throttle (429, or a 403 that is a rate limit, not a permission
+        # error), else a pause when the remaining quota is at or under its floor. 5xx backoff stays per request.
+        if is_rate_limited(response):
+            wait = rate_limit_wait(response)
         else:
-            next_allowed_at = func.now()
+            wait = throttle_seconds(response) or 0.0
+        next_allowed_at = func.now() + timedelta(seconds=wait)
         statement = insert(RateLimit).values(
             source=SOURCE, tenant=tenant, bucket=bucket, next_allowed_at=next_allowed_at, remaining=remaining
         )
