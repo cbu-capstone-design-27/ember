@@ -15,11 +15,13 @@ AGE_VERSION := v1.3.2
 AGE_SHA256 := cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
 CONTEXT := homelab
 # Where the team reaches Postgres over the tailnet: the node apps/postgres/cluster.yaml pins it to
+# The dbmate the migrate Job runs, so a migration applied here is one the Job later skips
+DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-job.yaml)
 POSTGRES_HOST := $(shell sed -n 's|^ *kubernetes.io/hostname: *||p' ../k8s/apps/postgres/cluster.yaml).$(shell sed -n 's/^tailnet_domain: *//p' group_vars/all/main.yml)
 
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
-	ts-operator-health neo4j-health postgres-health postgres-url headlamp-token
+	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate headlamp-token
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -143,6 +145,12 @@ postgres-health: ## Postgres ready on its node, migrations applied, answers on e
 postgres-url: ## Print the connection URL for Postgres over the tailnet. It contains the password
 	@kubectl --context $(CONTEXT) -n ember get secret postgres-app -o jsonpath='{.data.uri}' | base64 -d | \
 	  sed 's|@[^/]*/|@$(POSTGRES_HOST):5432/|'; echo
+
+# Needs only Docker. The URL goes to the container through the environment, never the command line.
+postgres-migrate: ## Apply k8s/apps/postgres/migrations with the migrate Job's dbmate, to DATABASE_URL or else make postgres-url
+	@DATABASE_URL="$${DATABASE_URL:-$$(make -s postgres-url)}" && export DATABASE_URL && \
+	  docker run --rm -e DATABASE_URL -v "$$(cd ../k8s/apps/postgres/migrations && pwd):/migrations:ro" \
+	    $(DBMATE_IMAGE) --no-dump-schema --migrations-dir=/migrations migrate
 
 headlamp-token: ## Print a 24-hour sign-in token for Headlamp (read-only) at https://headlamp.<tailnet>
 	@kubectl --context $(CONTEXT) -n headlamp create token headlamp-viewer --duration 24h

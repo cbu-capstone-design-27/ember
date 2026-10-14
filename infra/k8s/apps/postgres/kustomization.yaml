@@ -13,4 +13,5 @@ configMapGenerator:
   - name: postgres-migrations
     files:
       - migrations/20261013000000_ingestion_schema.sql
-      - migrations/20261013120000_raw_events_enrich_marker.sql
+      - migrations/20261013120000_raw_events_enriched_at.sql
+      - migrations/20261013120100_raw_events_notify.sql
