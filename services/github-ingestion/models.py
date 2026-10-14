@@ -32,6 +32,8 @@ class RawEvent(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     envelope: Mapped[dict] = mapped_column(JSONB)
     enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # EMBER-63. Not read yet: enrich still computes ordering_value() until intake fills the column
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class SourceRecord(Base):
