@@ -36,5 +36,4 @@ Every intake and stage worker must:
 - **Branches:** `type/EMBER-<n>-<slug>`, from `develop`. Use `feature/EMBER-<n>-<slug>`, or `hotfix/EMBER-<n>-<slug>` from `main`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **Jira key everywhere:** PR titles start with it (`EMBER-<n>: ...`), and it appears in the PR body (the [template](.github/PULL_REQUEST_TEMPLATE.md) requires it) and in commit messages.
 - **PRs target `develop`.** `main` only receives releases and hotfixes.
-- **Never merge without Ryan's approval.**
 - **Meaningful CI only.** Each service's `test_*.py` runs as its own step in the `sanity` job of `ci.yml`. Enroll tests that check real behavior. Do not add placeholder or smoke-only jobs.
