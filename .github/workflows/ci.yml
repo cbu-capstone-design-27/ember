@@ -144,6 +144,16 @@ jobs:
         env:
           JIRA_WEBHOOK_SECRET: ci-local-smoke
         run: python3 services/jira-ingestion/smoke_webhook.py
+      # EMBER-66: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      - name: Jira enrich worker
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/enrich-venv"
+          "$RUNNER_TEMP/enrich-venv/bin/pip" install -q -r services/jira-ingestion/requirements.txt
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/enrich-venv/bin/python3" services/jira-ingestion/test_enrich.py
       - name: Photon synthetic Slack and Jira fixtures
         run: python3 services/pipeline/fixtures/photon/test_fixtures.py
       - name: GitLab ingestion webhook contract
