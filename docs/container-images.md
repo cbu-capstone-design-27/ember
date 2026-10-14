@@ -35,7 +35,7 @@ Today's targets are `gitlab-ingestion`, `intake`, `jira-ingestion`, `slack-inges
    docker build -f services/<name>/Dockerfile -t ember/<name>:dev .
    ```
 
-3. Optional: add a profile to `infra/docker-compose.yml` with `build.context: ..`, the same way `github-ingestion` does.
+3. Optional: add a profile to `infra/docker-compose.yml` with `build.context: ..`, the same way `intake` does.
 4. Open a PR. An `image (<name>)` job shows up next to the others, and it must pass for `ci-ok` to go green. You don't edit the workflow.
 5. Once the PR merges, make the new package public ([Pulling images](#pulling-images)).
 
@@ -51,7 +51,7 @@ Each package is linked to this repo through its `org.opencontainers.image.source
 
 **The packages are public**, like this repo. Anyone can pull them without logging in, and the cluster needs no `imagePullSecret`. They hold nothing the repo doesn't: CI builds them from a clean checkout with no build secrets, and secrets reach a container only through its environment at run time. Keep it that way: never `COPY` a secret or bake one in with `ARG` or `ENV`.
 
-**A new package is private on its first publish.** Make it public once, right after the PR that adds its Dockerfile merges: on the package's page on GitHub, open Package settings, then Change visibility under Danger Zone, and pick Public. GitHub has no API call for this, and it takes admin rights on the package. Until then, a pull fails with `authentication required`.
+**A new package is private on its first publish.** Make it public once, right after the PR that adds its Dockerfile merges: on the package's page on GitHub, open Package settings, then Change visibility under Danger Zone, and pick Public. GitHub has no API call for this, and it takes admin rights on the package. Until then, a pull fails with `authentication required`, and pulling it needs a token with `read:packages`: `gh auth refresh -s read:packages`, then `gh auth token | docker login ghcr.io -u <github user> --password-stdin`.
 
 Each published tag is a multi-arch index with `linux/amd64` and `linux/arm64` images. The registry also lists two `unknown/unknown` entries: those are build provenance attestations, not images.
 

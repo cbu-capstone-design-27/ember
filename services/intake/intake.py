@@ -9,17 +9,19 @@ with `on conflict (source, delivery_id) do nothing` so a re-sent delivery change
 answers 200 once that commits. It never calls a source API. The raw_events trigger (EMBER-75)
 wakes the enrich workers on every insert, so intake sends no NOTIFY of its own.
 
-GET /health checks Postgres and is the readiness probe. GET /metrics counts deliveries by source and
-result. SIGINT or SIGTERM stops accepting connections and lets requests in flight finish, then the
-process exits: 0 after Ctrl+C, and by the re-raised signal after SIGTERM, as uvicorn does.
+GET /health checks Postgres and is the readiness probe. GET /metrics counts every delivery by source
+and result. Logs never carry a payload. SIGINT or SIGTERM stops accepting connections and lets
+requests in flight finish, then the process exits.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import os
 import sys
+import traceback
 from collections.abc import Mapping
 
 import uvicorn
@@ -29,7 +31,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from starlette.applications import Starlette
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
@@ -39,20 +41,46 @@ from models import Installation, RawEvent
 
 LOG = logging.getLogger("intake")
 MAX_BODY_BYTES = 8 * 1024 * 1024  # nginx's client_max_body_size is the same
-DB_TIMEOUT = 5  # seconds per connect or statement, well inside GitHub's 10 s
+BODIES_IN_MEMORY = 8  # deliveries handled at once; the rest wait unread, so bodies stay under 64 MiB
+DB_TIMEOUT = 5  # seconds per connect, pool checkout or statement
+STORE_DEADLINE = 8  # seconds for the whole store, inside GitHub's 10
 GRACEFUL_SHUTDOWN = 20  # seconds for requests in flight after SIGTERM
-# Postgres refused, dropped or timed out: nothing was stored, so the source may retry
-UNAVAILABLE = (OSError, exc.OperationalError, exc.InterfaceError, exc.TimeoutError)
+# SQLSTATE classes meaning Postgres can't take the row now: connection exception, insufficient
+# resources, operator intervention (shutdown, restart, cancel)
+UNAVAILABLE_SQLSTATES = ("08", "53", "57")
+DATA_EXCEPTION = "22"  # jsonb can't hold the payload (\u0000, a lone surrogate): it never will
 
 
-def create_engine(database_url: str) -> AsyncEngine:
+def create_engine(database_url: str, timeout: float = DB_TIMEOUT) -> AsyncEngine:
     url = make_url(database_url).set(drivername="postgresql+asyncpg")
     if "sslmode" in url.query:  # libpq's name; asyncpg takes the same values as `ssl`
         url = url.difference_update_query(["sslmode"]).update_query_dict({"ssl": url.query["sslmode"]})
     return create_async_engine(
-        url, pool_pre_ping=True, pool_timeout=DB_TIMEOUT,
-        connect_args={"timeout": DB_TIMEOUT, "command_timeout": DB_TIMEOUT},
+        url, pool_pre_ping=True, pool_timeout=timeout,
+        hide_parameters=True,  # an error message must not carry the payload into the logs
+        connect_args={"timeout": timeout, "command_timeout": timeout},
     )
+
+
+def sqlstate(error: BaseException) -> str:
+    """Postgres's error code, raised by asyncpg directly (on connect) or wrapped by SQLAlchemy."""
+    if isinstance(error, exc.DBAPIError):
+        error = error.orig
+    return getattr(error, "sqlstate", None) or ""
+
+
+def failure(error: Exception) -> str:
+    """Why a store failed: unavailable (nothing stored; the source may retry), unstorable or error."""
+    if isinstance(error, (OSError, exc.TimeoutError)):  # refused, dropped, timed out (TimeoutError is an OSError)
+        return "unavailable"
+    if isinstance(error, exc.DBAPIError) and error.connection_invalidated:
+        return "unavailable"
+    code = sqlstate(error)
+    if code.startswith(UNAVAILABLE_SQLSTATES):
+        return "unavailable"
+    if code.startswith(DATA_EXCEPTION):
+        return "unstorable"
+    return "error"
 
 
 async def read_body(request: Request) -> bytes | None:
@@ -69,10 +97,13 @@ async def read_body(request: Request) -> bytes | None:
 
 
 class Intake:
-    def __init__(self, engine: AsyncEngine, adapters: Mapping[str, SourceAdapter], registry: CollectorRegistry) -> None:
+    def __init__(self, engine: AsyncEngine, adapters: Mapping[str, SourceAdapter], registry: CollectorRegistry,
+                 deadline: float) -> None:
         self.engine = engine
         self.adapters = dict(adapters)
         self.registry = registry
+        self.deadline = deadline
+        self.in_memory = asyncio.Semaphore(BODIES_IN_MEMORY)
         self.deliveries = Counter(
             "intake_deliveries", "Webhook deliveries by source and result", ("source", "result"), registry=registry)
 
@@ -86,7 +117,19 @@ class Intake:
         if adapter is None:
             # Counted as "unknown": a made-up path must not become a new metric series
             return self.answer("unknown", "unknown_source", 404, error="unknown source")
-        body = await read_body(request)
+        async with self.in_memory:
+            try:
+                return await self.receive(source, adapter, request)
+            except Exception as error:  # a bug: counted, and logged by type and frames, never by message
+                LOG.error("%s delivery failed: %s %s\n%s", source, type(error).__name__, sqlstate(error),
+                          "".join(traceback.format_tb(error.__traceback__)))
+                return self.answer(source, "error", 500, error="internal error")
+
+    async def receive(self, source: str, adapter: SourceAdapter, request: Request) -> Response:
+        try:
+            body = await read_body(request)
+        except ClientDisconnect:
+            return self.answer(source, "disconnected", 400, error="client disconnected")
         if body is None:
             return self.answer(source, "too_large", 413, error="body too large")
 
@@ -114,10 +157,17 @@ class Intake:
             row["occurred_at"] = occurred_at  # left out, the column default makes it received_at
 
         try:
-            stored = await self.store(row)
-        except UNAVAILABLE as error:
-            LOG.warning("%s delivery=%s not stored: %s", source, row["delivery_id"], error)
-            return self.answer(source, "unavailable", 503, error="postgres unavailable")
+            async with asyncio.timeout(self.deadline):
+                stored = await self.store(row)
+        except Exception as error:
+            result = failure(error)
+            if result == "error":
+                raise
+            LOG.warning("%s delivery=%s %s: %s %s", source, row["delivery_id"], result,
+                        type(error).__name__, sqlstate(error))
+            if result == "unstorable":
+                return self.answer(source, result, 400, error="postgres cannot store this payload")
+            return self.answer(source, result, 503, error="postgres unavailable")
         result = "stored" if stored else "duplicate"
         LOG.info("%s %s delivery=%s event=%s account=%s",
                  source, result, row["delivery_id"], row["event_name"], row["account_id"])
@@ -138,9 +188,9 @@ class Intake:
 
     async def health(self, request: Request) -> Response:
         try:
-            async with self.engine.connect() as conn:
+            async with asyncio.timeout(self.deadline), self.engine.connect() as conn:
                 await conn.execute(text("select 1"))
-        except UNAVAILABLE:
+        except Exception:
             return JSONResponse({"status": "postgres unavailable"}, status_code=503)
         return JSONResponse({"status": "ok"})
 
@@ -148,9 +198,9 @@ class Intake:
         return Response(generate_latest(self.registry), headers={"Content-Type": CONTENT_TYPE_LATEST})
 
 
-def create_app(engine: AsyncEngine, adapters: Mapping[str, SourceAdapter],
-               registry: CollectorRegistry | None = None) -> Starlette:
-    intake = Intake(engine, adapters, registry or CollectorRegistry())
+def create_app(engine: AsyncEngine, adapters: Mapping[str, SourceAdapter], registry: CollectorRegistry | None = None,
+               *, deadline: float = STORE_DEADLINE) -> Starlette:
+    intake = Intake(engine, adapters, registry or CollectorRegistry(), deadline)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):

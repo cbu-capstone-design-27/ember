@@ -11,16 +11,19 @@ GitHub is the only adapter so far. Adding a source means adding an adapter under
 | `POST /webhook/{source}`, stored | 200 `{"status":"stored"}` |
 | The same `(source, delivery_id)` again | 200 `{"status":"duplicate"}`, nothing written |
 | Signature check failed | 401 |
-| Body is not a JSON object, or a required header is missing | 400 |
+| Body is not a JSON object, a required header is missing, or Postgres can't store the payload (`\u0000`, a lone surrogate) | 400 |
 | Unknown `{source}` | 404 |
 | Body over 8 MiB, the same cap as nginx's `client_max_body_size` | 413 |
-| Postgres unreachable, nothing stored | 503 |
+| Postgres unreachable, restarting, or too slow to commit within 8 s; nothing stored | 503 |
+| Anything else (a bug) | 500, counted as `error` |
 | `GET /health` | 200 when Postgres answers, else 503. The readiness probe |
 | `GET /metrics` | Prometheus text: `intake_deliveries_total{source,result}` |
 
 Each stored row has `origin = 'webhook'`, the envelope `{"type": "<source>", "body": <payload>}` (EMBER-39), and `tenant` from `installations` for `(source, account_id)`, or null until the account is mapped. Inserts use `on conflict (source, delivery_id) do nothing`. The `raw_events` trigger (EMBER-75) wakes the enrich workers on each insert, so a duplicate wakes no one.
 
-`result` in the metric is `stored`, `duplicate`, `handshake`, `unauthorized`, `bad_request`, `too_large`, `unavailable` or `unknown_source`. An unknown source is counted as `source="unknown"`, so made-up paths can't add series.
+`result` in the metric is `stored`, `duplicate`, `handshake`, `unauthorized`, `bad_request`, `too_large`, `disconnected`, `unstorable`, `unavailable`, `error` or `unknown_source`. An unknown source is counted as `source="unknown"`, so made-up paths can't add series. Logs name the delivery, the result and an error's type, never the payload.
+
+At most 8 deliveries are read and handled at once; the rest wait unread, so bodies in memory stay under 64 MiB.
 
 SIGINT or SIGTERM stops accepting connections and lets requests in flight finish (up to 20 s), then the process exits.
 
@@ -29,7 +32,7 @@ SIGINT or SIGTERM stops accepting connections and lets requests in flight finish
 | Variable | Role |
 | --- | --- |
 | `DATABASE_URL` | Postgres, e.g. `postgresql://ember:...@localhost:5432/ember?sslmode=disable`. On the cluster, Secret `postgres-app`, key `uri` |
-| `GITHUB_WEBHOOK_SECRET` | The GitHub App's webhook secret. Required: intake refuses to start without it, so it never stores an unsigned delivery |
+| `GITHUB_WEBHOOK_SECRET` | The GitHub App's webhook secret. Required: intake refuses to start without it, so it never stores an unsigned delivery. It also refuses one with leading or trailing whitespace, which no signature would match |
 | `LISTEN_PORT` | Defaults to `8080`. Not `INTAKE_PORT`, which Kubernetes sets for a Service called `intake` |
 
 ## GitHub adapter
@@ -37,10 +40,10 @@ SIGINT or SIGTERM stops accepting connections and lets requests in flight finish
 [`docs/ingestion/github-webhooks.md`](../../docs/ingestion/github-webhooks.md) is the spec.
 
 - **Verification:** `X-Hub-Signature-256`, the HMAC-SHA256 of the raw body with the App's webhook secret.
-- **`delivery_id`:** `X-GitHub-Delivery`. A redelivery reuses it.
+- **`delivery_id`:** `X-GitHub-Delivery`, at most 255 characters. A redelivery reuses it.
 - **`account_id`:** `installation.id`.
 - **`event_name`:** `X-GitHub-Event`, plus `:<action>` when there is one, e.g. `pull_request:synchronize`.
-- **`occurred_at`:** the [ordering value](../../docs/ingestion/github-webhooks.md#ordering-value-ember-63): the object's `updated_at`, or `review.submitted_at`, `release.published_at` then `created_at`, or a push's `repository.pushed_at`. Deletes, dismissals and every other event get `received_at`.
+- **`occurred_at`:** the [ordering value](../../docs/ingestion/github-webhooks.md#ordering-value-ember-63): the object's `updated_at`, a submitted review's `submitted_at`, a published release's `published_at` then `created_at`, or a push's `repository.pushed_at`. Deletes, dismissals, review and release edits, and every other event get `received_at`, as does a time that is missing or unreadable.
 
 ### Events
 

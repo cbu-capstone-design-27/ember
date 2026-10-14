@@ -46,20 +46,22 @@ RECOMMENDED_WEBHOOK_EVENTS = (
     "discussion_comment",
 )
 
-# event: (payload key of the object, its time fields, first present wins). github-webhooks.md,
-# "Ordering value". Every other event, and every deleted or dismissed action, falls back to
-# received_at: a deleted object's updated_at is its last edit, not the delete.
+# event: (payload key of the object, its time fields, first present wins, and the actions they
+# date, None for every action). github-webhooks.md, "Ordering value". Everything else falls back to
+# received_at: every deleted or dismissed action, since a deleted object's updated_at is its last
+# edit, not the delete, and edits of reviews and releases, which keep their submit or publish time.
 ORDERING_FIELDS = {
-    "issues": ("issue", ("updated_at",)),
-    "issue_comment": ("comment", ("updated_at",)),
-    "pull_request": ("pull_request", ("updated_at",)),
-    "pull_request_review_comment": ("comment", ("updated_at",)),
-    "commit_comment": ("comment", ("updated_at",)),
-    "milestone": ("milestone", ("updated_at",)),
-    "pull_request_review": ("review", ("submitted_at",)),
-    "release": ("release", ("published_at", "created_at")),
-    "push": ("repository", ("pushed_at",)),  # epoch seconds in push payloads
+    "issues": ("issue", ("updated_at",), None),
+    "issue_comment": ("comment", ("updated_at",), None),
+    "pull_request": ("pull_request", ("updated_at",), None),
+    "pull_request_review_comment": ("comment", ("updated_at",), None),
+    "commit_comment": ("comment", ("updated_at",), None),
+    "milestone": ("milestone", ("updated_at",), None),
+    "pull_request_review": ("review", ("submitted_at",), {"submitted"}),
+    "release": ("release", ("published_at", "created_at"), {"published", "created", "released", "prereleased"}),
+    "push": ("repository", ("pushed_at",), None),  # epoch seconds in push payloads
 }
+MAX_DELIVERY_ID = 255  # GitHub's is a GUID. The header isn't signed, so cap what reaches the unique index
 
 
 def verify_signature(secret: str, body: bytes, signature_header: str) -> bool:
@@ -75,7 +77,7 @@ def _time(value: object) -> datetime:
         parsed = datetime.fromisoformat(value)
         if parsed.tzinfo is None:
             raise ValueError(f"{value!r} has no time zone")
-        return parsed
+        return parsed.astimezone(timezone.utc)  # OverflowError at the edges of the range Postgres can hold
     raise TypeError(f"{value!r} is not a time")
 
 
@@ -83,8 +85,11 @@ class GitHubAdapter:
     name = "github"
 
     def __init__(self, secret: str) -> None:
-        if not secret:
+        if not secret.strip():
             raise ValueError("GITHUB_WEBHOOK_SECRET is required: intake never stores an unsigned GitHub delivery")
+        if secret != secret.strip():
+            # A trailing newline from a YAML block would make every signature fail
+            raise ValueError("GITHUB_WEBHOOK_SECRET has leading or trailing whitespace; check how it was set")
         self._secret = secret
 
     def handshake(self, delivery: Delivery) -> None:
@@ -100,6 +105,8 @@ class GitHubAdapter:
         delivery_id = delivery.headers.get("x-github-delivery")
         if not delivery_id:
             raise BadRequest("missing X-GitHub-Delivery")
+        if len(delivery_id) > MAX_DELIVERY_ID:
+            raise BadRequest("X-GitHub-Delivery is too long")
         return delivery_id
 
     def account_id(self, delivery: Delivery) -> str | None:
@@ -121,16 +128,17 @@ class GitHubAdapter:
         event, _, action = self.event_name(delivery).partition(":")
         if action in ("deleted", "dismissed") or event not in ORDERING_FIELDS:
             return None
-        key, fields = ORDERING_FIELDS[event]
+        key, fields, actions = ORDERING_FIELDS[event]
         obj = delivery.json.get(key)
-        if not isinstance(obj, dict):
+        if not isinstance(obj, dict) or (actions is not None and action not in actions):
             return None
         for field in fields:
-            if obj.get(field) is not None:
+            if obj.get(field):  # missing, null, "" and 0 all mean "not present"
                 try:
                     return _time(obj[field])
                 except (TypeError, ValueError, OverflowError) as exc:
                     # Store the delivery anyway, ordered by arrival, rather than lose it
-                    LOG.warning("unreadable %s.%s on %s: %s", key, field, self.delivery_id(delivery), exc)
+                    LOG.warning("unreadable %s.%s on %s: %s", key, field, self.delivery_id(delivery),
+                                type(exc).__name__)
                     return None
         return None

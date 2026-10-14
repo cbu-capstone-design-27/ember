@@ -93,7 +93,7 @@ Lines with the delivery id `apps-health` are the test deliveries that `make apps
 
 To watch a real delivery arrive, set the GitHub App's webhook URL to `https://ember.tail470a31.ts.net/webhook/github`. GitHub then sends a `ping`, which shows up in those logs. Do this for that one `ping` only. The placeholder answers 200 and there is no secret, so GitHub records every delivery as successful while the placeholder throws it away. Once you have seen the `ping`, clear the webhook URL (or subscribe the App to no events) until the real worker is in.
 
-Service `github-webhook` on port 8080 is the stable name nginx proxies to. EMBER-56 replaces what runs behind it with the real receiver from `services/github-ingestion`, with the webhook secret and the signature check, and does not touch the proxy. Three things to know when doing that:
+Service `github-webhook` on port 8080 is the stable name nginx proxies to. EMBER-62 replaces it with `services/intake`, which has the webhook secret and the signature check. Three things to know when doing that:
 
 - Flux prunes, so taking the placeholder Deployment out of `apps/github-webhook/` deletes it. Keep the pods' label `app: github-webhook` if you replace the Deployment's pod template in place instead (a Deployment's selector cannot be changed), so Service `github-webhook` keeps finding them.
 - The webhook checks in `make apps-health` look for `"listener": "placeholder"` in the response. Update them in `ansible/playbooks/apps.yml` when the real worker goes in.

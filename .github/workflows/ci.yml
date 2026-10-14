@@ -152,9 +152,10 @@ jobs:
           set -euo pipefail
           docker build -f services/intake/Dockerfile -t ember-intake:ci .
           test "$(docker inspect -f '{{.Config.User}}' ember-intake:ci)" = nobody
-          if docker run --rm -e DATABASE_URL=postgresql://x@127.0.0.1/x ember-intake:ci; then
-            echo "::error::intake started without GITHUB_WEBHOOK_SECRET"; exit 1
-          fi
+          # It must exit 2 on its own, not crash or serve; timeout stops a regression that serves forever
+          rc=0; out=$(timeout 30 docker run --rm -e DATABASE_URL=postgresql://x@127.0.0.1/x ember-intake:ci 2>&1) || rc=$?
+          test "$rc" -eq 2 || { echo "::error::expected exit 2 without GITHUB_WEBHOOK_SECRET, got $rc: $out"; exit 1; }
+          grep -F "GITHUB_WEBHOOK_SECRET is required" <<<"$out"
           cid=$(docker run -d --network host -e LISTEN_PORT=18080 -e GITHUB_WEBHOOK_SECRET=ci-local \
             -e DATABASE_URL='postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable' ember-intake:ci)
           trap 'docker logs "$cid"; docker rm -f "$cid" > /dev/null' EXIT

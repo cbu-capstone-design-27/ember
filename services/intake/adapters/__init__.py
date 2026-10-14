@@ -19,6 +19,10 @@ from starlette.responses import Response
 Source = Literal["github", "gitlab", "jira", "slack", "teams"]  # matches envelope v1 "type"
 
 
+def _reject_constant(name: str) -> None:
+    raise ValueError(f"{name} is not JSON")
+
+
 class Unauthorized(Exception):
     """The signature, token or clientState check failed: 401."""
 
@@ -39,8 +43,8 @@ class Delivery:
     def json(self) -> dict:
         """The parsed body. Every source sends a JSON object, and the envelope stores it unchanged."""
         try:
-            payload = json.loads(self.body)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            payload = json.loads(self.body, parse_constant=_reject_constant)
+        except (ValueError, RecursionError) as exc:  # bad UTF-8 or JSON, NaN, a huge integer, deep nesting
             raise BadRequest("invalid json") from exc
         if not isinstance(payload, dict):
             raise BadRequest("body must be a JSON object")

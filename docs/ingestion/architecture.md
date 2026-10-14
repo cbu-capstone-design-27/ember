@@ -98,11 +98,11 @@ GET  /metrics               # Prometheus: intake_deliveries_total{source,result}
 |---|---|---|
 | 200 | Stored and enqueued, or a duplicate of a stored delivery | Done |
 | 200 | Handshake: Slack challenge as JSON, Teams `validationToken` as `text/plain` | Marks the endpoint valid |
-| 400 | Verified, but the body is not a JSON object or a header every delivery carries is missing | Logs a failed delivery |
+| 400 | Verified, but the body is not a JSON object, a header every delivery carries is missing, or Postgres can't store the payload (`\u0000`, a lone surrogate) | Logs a failed delivery |
 | 401 | Signature, token or `clientState` check failed | Logs a failed delivery |
 | 404 | Unknown `{source}` | Logs a failed delivery |
 | 413 | Body over 8 MiB (nginx and intake agree) | Gives up; reconcile picks the object up later |
-| 503 | Postgres unreachable, nothing stored | Slack and Jira retry. GitHub does not, so reconcile covers it |
+| 503 | Postgres unreachable, restarting or too slow to commit within 8 s, nothing stored | Slack and Jira retry. GitHub does not, so reconcile covers it |
 
 ### Source adapters
 
