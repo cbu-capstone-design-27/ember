@@ -223,7 +223,10 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         os.kill(os.getpid(), signal.SIGINT)
         await asyncio.wait_for(task, 10)
 
-        self.assertIsNotNone(await self.scalar("select enriched_at from raw_events where id = :id", id=row))
+        # The fetch ends at least stub.delay after the row was received, and enriched_at can't be earlier
+        received_to_enriched = await self.scalar(
+            "select extract(epoch from enriched_at - received_at) from raw_events where id = :id", id=row)
+        self.assertGreaterEqual(received_to_enriched, stub.delay)
         self.assertEqual(await self.scalar("select count(*) from source_records where raw_event_id = :id", id=row), 1)
 
     async def test_retry_after_sets_next_allowed_at_and_calls_wait_for_it(self):

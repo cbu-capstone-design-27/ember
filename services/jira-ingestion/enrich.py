@@ -270,7 +270,8 @@ class Worker:
                 )
                 .on_conflict_do_nothing(index_elements=["source", "tenant", "object_id", "version"])
             )
-        await session.execute(update(RawEvent).where(RawEvent.id == row.id).values(enriched_at=func.now()))
+        # clock_timestamp(), not now(): now() is when this transaction claimed the row, before any fetch
+        await session.execute(update(RawEvent).where(RawEvent.id == row.id).values(enriched_at=func.clock_timestamp()))
 
     async def _issue_stored(self, session, tenant: str, issue_id: str) -> bool:
         found = await session.scalar(
