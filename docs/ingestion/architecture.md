@@ -188,7 +188,7 @@ async def run_job(job):
 
 ### Interim: claiming without the job queue
 
-Until the [job queue](#job-queue) lands, enrich workers claim `raw_events` rows directly (EMBER-75). A worker `LISTEN`s on channel `raw_events` (`RAW_EVENTS_CHANNEL` overrides it) and ignores the payload. On a notification, once at start to catch up, and on a 30 s poll for missed notifications, it claims rows with `select ... from raw_events where source = :source and enriched_at is null and tenant is not null order by id limit :n for update skip locked`. It writes `source_records` and sets `enriched_at` in the same transaction. The trigger lives in its own migration so EMBER-62 can swap it, and workers depend only on the channel name. The queue replaces this.
+Until the [job queue](#job-queue) lands, enrich workers claim `raw_events` rows directly (EMBER-75). A worker `LISTEN`s on channel `raw_events` (`RAW_EVENTS_CHANNEL` overrides it) and ignores the payload. On a notification, once at start to catch up, and on a 30 s poll for missed notifications, it claims rows with `select ... from raw_events where source = :source and enriched_at is null and tenant is not null order by occurred_at, id limit :n for update skip locked`, oldest by the [source's time](#source-ordering-value-ember-63) first. It writes `source_records` and sets `enriched_at` in the same transaction. The trigger lives in its own migration so EMBER-62 can swap it, and workers depend only on the channel name. The queue replaces this. Workers built before EMBER-63 still claim `order by id` until they move to `occurred_at`.
 
 ### Concurrency
 
@@ -232,7 +232,7 @@ Each component also connects to Postgres as its own role, limited to the tables 
 
 Postgres runs on the cluster and holds everything stateful. The envelope keeps the EMBER-39 contract (`{"type", "body"}`); routing metadata sits in columns beside it.
 
-The SQL below is the source of truth for the schema. The cluster gets it from the migrations in `infra/k8s/apps/postgres/migrations` (EMBER-61, ADR 0005), and CI fails if those build a different schema from this block. A schema change edits both.
+The SQL below is the source of truth for the schema, and for the SQLAlchemy models in intake and every enrich worker, which map these tables and nothing more. The cluster gets it from the migrations in `infra/k8s/apps/postgres/migrations` (EMBER-61, ADR 0005), and CI fails if those build a different schema from this block. A schema or model change starts here: edit this block, add a migration, then change the models.
 
 ```sql
 create table raw_events (
@@ -247,9 +247,11 @@ create table raw_events (
   completed_at timestamptz,                       -- set when everything it produced is loaded
   envelope     jsonb       not null,
   enriched_at  timestamptz,                       -- set by that source's enrich worker in the same transaction as its source_records write
+  occurred_at  timestamptz not null default now(), -- the source's time (EMBER-63), set by whoever writes the row; unset = received_at
   unique (source, delivery_id)
 );
-create index raw_events_unenriched on raw_events (source, id) where enriched_at is null;
+create index raw_events_unenriched on raw_events (source, id) where enriched_at is null;   -- dropped once no worker claims by id
+create index raw_events_unenriched_occurred_at on raw_events (source, occurred_at, id) where enriched_at is null;
 
 -- interim (EMBER-75, own migration): every insert notifies channel raw_events to wake the enrich workers. EMBER-62 may replace it
 create function raw_events_notify() returns trigger language plpgsql as $$
@@ -318,6 +320,25 @@ create table rate_limits (
 ```
 
 Retention for `raw_events` is 30 days after an event is fully processed. One that has not finished processing stays until its source is removed from the tenant. Replaying enrich therefore reaches back 30 days; anything older comes back through reconcile. Retention for `source_records` and `episodes` is still open.
+
+### Source ordering value (EMBER-63)
+
+Arrival order isn't the source's order: deliveries overlap, retries and redeliveries come minutes or days later, and reconcile rows arrive hours later. `raw_events.occurred_at` holds the time the source says the event happened, and workers order and apply changes by it, never by arrival. Ties break on `id`.
+
+- **Type.** `timestamptz`. Every source's time converts to it exactly: GitHub's whole seconds, Jira's milliseconds, Slack's `ts` to the microsecond.
+- **Who sets it.** Whoever writes the row, from the payload it has: intake's adapter for webhooks (EMBER-62), and `Enricher.reconcile` for reconcile and backfill rows, whose REST shapes differ from webhook payloads. Each source's rule, including which events fall back to `received_at`:
+
+  | Source | Rule |
+  |---|---|
+  | GitHub | [`github-webhooks.md`, Ordering value](github-webhooks.md#ordering-value-ember-63) |
+  | GitLab | [`gitlab-webhooks.md`, Ordering value](gitlab-webhooks.md#ordering-value-ember-63) (EMBER-71) |
+  | Jira | [`jira-webhooks.md`, Ordering value](jira-webhooks.md#ordering-value-ember-63). The Jira worker breaks ties on `changelog.id` before `id` |
+  | Slack | [`slack-webhooks.md`, Ordering value](slack-webhooks.md#ordering-value-ember-63) |
+  | Teams | `received_at`. A change notification carries no time of its own; enrich puts the fetched message's `lastModifiedDateTime` in `source_records.occurred_at` |
+
+- **Default.** `now()`, which in one insert is the same as `received_at`, the value every source falls back to. A writer that leaves it out still gets a valid row, ordered by arrival. So a writer's tests assert the value it sets.
+- **How workers use it.** Enrich claims unenriched rows by `(occurred_at, id)` ([Interim: claiming without the job queue](#interim-claiming-without-the-job-queue)) and copies the value to `source_records.occurred_at`. Extract carries it on to `episodes.occurred_at`. A record changes an object only if its value is newer than what's stored for that object, so a late edit can't bring back a delete.
+- **Until intake fills it.** The enrich workers built before EMBER-63 compute the value themselves (`ordering_value()` in each `enrich.py`) and claim by `id`. Until intake (EMBER-62) writes real values, every row holds the `received_at` fallback, so they keep doing that. A follow-up moves them to the column and drops `raw_events_unenriched`.
 
 ### Job queue
 
@@ -461,6 +482,7 @@ Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images 
 | Queue code | A library on the same Postgres, not hand-written; Procrastinate proposed |
 | Raw event retention | 30 days after an event is fully processed; until its source is removed if it is not |
 | Accounts with no tenant | Left unmapped for now: stored with `tenant = null`, not processed until mapped |
+| Source ordering value | `raw_events.occurred_at timestamptz`, set by whoever writes the row, ties broken by `id` (EMBER-63) |
 | Reconcile interval | Set per source, in that source's scheduler CronJob |
 
 ### Still open
