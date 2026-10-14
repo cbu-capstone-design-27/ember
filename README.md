@@ -30,7 +30,7 @@ services/
   pipeline/          Ingestion pipeline and job queue (GitHub, Jira, Slack -> Neo4j)
   github-ingestion/  GitHub App webhook receiver; emits {type, body} (EMBER-35)
   jira-ingestion/    Jira admin webhook receiver; emits {type, body} (EMBER-31)
-  slack-ingestion/   Slack Events API receiver; emits {type, body} (EMBER-36)
+  slack-ingestion/   Slack Events API receiver; emits {type, body} (EMBER-36). Also enrich:slack, raw_events -> source_records (EMBER-67)
   gitlab-ingestion/  GitLab webhook receiver plus backfill/reconciliation; emits {type, body} (EMBER-54)
 packages/            Shared libraries - add one only when there is a second consumer
 infra/               Local infrastructure (docker-compose: Neo4j; optional github-ingestion, jira-ingestion, slack-ingestion, gitlab-ingestion and gitlab-backfill profiles),

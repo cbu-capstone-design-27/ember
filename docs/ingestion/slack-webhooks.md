@@ -2,7 +2,7 @@
 
 - Jira: EMBER-70 (floor), epic EMBER-7 (Slack Ingestion)
 - Status: proposed, for team review. Payload shapes were checked against Slack's reference (docs.slack.dev) on 2026-10-13. Links are in [Sources](#sources).
-- This is the spec for the `enrich:slack` worker (EMBER-67). [`architecture.md`](architecture.md) covers the pipeline as a whole. [`slack.md`](slack.md) covers the Slack connector: auth, scopes, rate limits, and agent removal.
+- This is the spec for the `enrich:slack` worker (EMBER-67), built in `services/slack-ingestion/enrich.py` for message events and the user and channel cache. [`architecture.md`](architecture.md) covers the pipeline as a whole. [`slack.md`](slack.md) covers the Slack connector: auth, scopes, rate limits, and agent removal.
 - Related: EMBER-62 (intake), EMBER-63 (source ordering column), EMBER-36 (Slack connector)
 
 Slack sends the data itself (`architecture.md`, [Webhooks per source](architecture.md#webhooks-per-source-data-or-signal)). Intake stores each delivery in `raw_events` as it arrived. `enrich:slack` adds only what the payload lacks, then writes `source_records`.

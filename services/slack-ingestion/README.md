@@ -8,7 +8,7 @@ Requirements, architecture, and pipeline handoff: [`docs/ingestion/slack.md`](..
 
 ## Status
 
-Stub HTTP receiver for live events, plus a local pull for the channels the bot is in. The receiver checks Slack's request signature, answers the Request URL challenge, wraps the raw body, and writes the envelope to stdout. No queue yet. The receiver holds no Slack token and does not filter on a workspace or channel.
+Stub HTTP receiver for live events, a local pull for the channels the bot is in, and the `enrich:slack` worker that turns stored deliveries into `source_records` ([Enrich worker](#enrich-worker-ember-67)). The receiver checks Slack's request signature, answers the Request URL challenge, wraps the raw body, and writes the envelope to stdout. No queue yet. The receiver holds no Slack token and does not filter on a workspace or channel.
 
 Live events still need a public HTTPS URL. This change does not open a tunnel or set the app's Request URL.
 
@@ -193,11 +193,95 @@ The script starts the receiver, checks the `url_verification` challenge, POSTs s
 
 To receive real events later, point a tunnel at port `8082` and set the app's Request URL to `https://<tunnel-host>/webhook/slack`. Examples: `cloudflared tunnel --url http://127.0.0.1:8082` or `ngrok http 8082`. CI does not start a tunnel.
 
+## Enrich worker (EMBER-67)
+
+`enrich.py` is `enrich:slack` from `docs/ingestion/architecture.md`. It reads Slack rows from Postgres `raw_events` (written by intake, EMBER-62), adds what the Events API payload lacks, and writes `source_records`. What each event becomes, what is fetched, and each record's `object_id`, `version` and `occurred_at` are specified in [`docs/ingestion/slack-webhooks.md`](../../docs/ingestion/slack-webhooks.md) (EMBER-70).
+
+| File | What it is |
+| --- | --- |
+| `enrich.py` | The worker, plus `seed`, which stands in for intake locally |
+| `models.py` | SQLAlchemy models for `raw_events`, `source_records` and `rate_limits`, matching the doc's schema |
+| `pg_gates.py` | Rate-limit gates kept in table `rate_limits`, used by `pull_test.SlackClient` |
+| `requirements.txt` | SQLAlchemy and psycopg 3, for these three files only. The receiver and backfill stay stdlib-only |
+
+### What it does with each row
+
+- **Message events become records.** New messages, replies, thread broadcasts, `message_replied`, edits (`message_changed`, a new version per edit), deletes (`message_deleted`, a tombstone version) and system messages each become one `message` record. Its `record` is the delivery as received (`payload`), the message as of that version (`message`), `deleted`, and the context: `user`, `channel` and `thread_parent`.
+- **Context comes from stored records first.** Users and channels are kept as records of kind `user` and `channel`. `users.info` or `conversations.info` is called only when no record exists yet. A reply's parent comes from `conversations.replies` when it isn't stored, and is stored too. A lookup that finds nothing (`user_not_found`, `thread_not_found`, …) leaves that context empty.
+- **Everything else is skipped.** Reactions, channel and membership events, `user_change` and `app_rate_limited` are marked enriched and logged as skipped.
+- **No duplicates.** Records are inserted with `on conflict (source, tenant, object_id, version) do nothing`, so running a row twice adds nothing.
+
+### How it runs
+
+- **Wake.** Idle, it waits on `LISTEN raw_events`. The database sends `NOTIFY raw_events, 'slack'` on each insert (the trigger EMBER-62 adds). A poll every `ENRICH_POLL_SECONDS` covers anything missed.
+- **Claim.** `ENRICH_CONCURRENCY` asyncio runners each claim one pending row (`enriched_at is null`, `FOR UPDATE SKIP LOCKED`). Each one enriches the row, writes its records and sets `enriched_at` in that row's transaction. A crash releases the row, and it runs again.
+- **Catch up.** At start it claims straight away, so rows inserted while it was stopped are picked up.
+- **Failures.** A failure rolls back the row's records, adds one to `enrich_attempts`, stores `enrich_error`, and backs off. At `ENRICH_MAX_ATTEMPTS` the row is left for a person. `invalid_auth`, `token_revoked` and `missing_scope` jump straight to the maximum.
+- **Rate limits.** Every Slack call goes through `SlackClient`, with the pacing, throttle and backoff above ([Rate limits](#rate-limits-ember-52)). Its gates are kept in `rate_limits`, keyed by workspace tenant and method, so every worker process shares one workspace's quota.
+- **Stopping.** `Ctrl+C` (or `SIGTERM`) stops claiming and lets the jobs in flight finish. A second `Ctrl+C` exits at once, and an unfinished row stays pending.
+- **Tenants.** Rows with `tenant` null (an account not yet mapped) wait.
+
+### Settings
+
+| Variable | Role |
+| --- | --- |
+| `DATABASE_URL` | The ingestion Postgres. `postgres://`, `postgresql://` and `postgresql+<driver>://` all work, and `sslmode` passes through |
+| `SLACK_BOT_TOKEN` | Bot token for the lookups (one workspace for now; per-workspace tokens come with EMBER-12) |
+| `SLACK_RATE_MODE` | `internal` (default) or `non_marketplace`, as for the backfill |
+| `ENRICH_CONCURRENCY` | Rows at once, 1–16. Default `4` |
+| `ENRICH_POLL_SECONDS` | Fallback poll. Default `30` |
+| `ENRICH_MAX_ATTEMPTS` | Tries before a row is left for a person. Default `8` |
+| `ENRICH_CHANNEL` | The `LISTEN` channel. Default `raw_events` |
+
+### Run it locally
+
+Start Docker, then a local Postgres migrated exactly like the cluster's (same version, same migration files):
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres up -d postgres postgres-migrate
+```
+
+Run the worker on the host:
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install -r services/slack-ingestion/requirements.txt
+export DATABASE_URL='postgresql://ember:change-me-locally@127.0.0.1:5432/ember?sslmode=disable'
+export SLACK_BOT_TOKEN='xoxb-...'
+.venv/bin/python services/slack-ingestion/enrich.py
+```
+
+Or run it in compose, where it also waits for the migrations: `docker compose -f infra/docker-compose.yml --env-file .env --profile slack-enrich up --build slack-enrich`.
+
+Until intake exists, store deliveries with `seed`. It inserts `raw_events` rows (`delivery_id` = `event_id`, `event_name` = `type[:subtype]`) and sends the NOTIFY itself:
+
+```sh
+python3 services/slack-ingestion/enrich.py seed packages/ingestion-envelope/fixtures/slack.json --tenant dev
+# live: whatever the receiver gets goes straight in
+python3 services/slack-ingestion/receiver.py | python3 services/slack-ingestion/enrich.py seed - --tenant dev
+```
+
+On Windows, use `python` instead of `python3`; the worker picks the event loop psycopg needs there.
+
 ## Test
 
 ```sh
 python3 services/slack-ingestion/test_webhook.py
 python3 services/slack-ingestion/test_pull.py
+python3 services/slack-ingestion/test_enrich.py       # needs requirements.txt
+PGTEST_URL='postgresql://ember:change-me-locally@127.0.0.1:5432/postgres?sslmode=disable' \
+  python3 services/slack-ingestion/test_enrich_db.py  # needs a Postgres it may create a database on
 ```
 
-`test_pull.py` answers Slack Web API calls from an in-memory fake. CI runs both, plus the smoke. None of them call Slack.
+`test_pull.py` and `test_enrich.py` answer Slack Web API calls from in-memory fakes. None of the tests call Slack.
+
+`test_enrich_db.py` builds database `ember_test_enrich` from `infra/k8s/apps/postgres/migrations`. It adds a test-only stand-in for EMBER-62's NOTIFY trigger, then checks EMBER-67's acceptance criteria against the real worker:
+- records with context
+- no duplicates
+- a wake within 1 s of an insert
+- catch-up after a stop
+- concurrency
+- `rate_limits`
+- Ctrl+C finishing the job in flight
+- retries and permanent errors
+
+CI runs all four, plus the smoke.

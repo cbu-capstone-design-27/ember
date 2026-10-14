@@ -103,6 +103,9 @@ TIER_PER_MINUTE = {
     "conversations.list": 20.0,  # Tier 2
     "conversations.history": 50.0,  # Tier 3
     "conversations.replies": 50.0,  # Tier 3
+    # Lookups the enrich worker makes (EMBER-67, docs/ingestion/slack-webhooks.md)
+    "users.info": 100.0,  # Tier 4
+    "conversations.info": 50.0,  # Tier 3
 }
 # Commercially distributed apps not approved for the Marketplace.
 NON_MARKETPLACE_PER_MINUTE = {"conversations.history": 1.0, "conversations.replies": 1.0}

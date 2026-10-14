@@ -13,6 +13,11 @@
 #   # one-off Slack backfill (exits when done; resumes if re-run; output in volume slack-backfill-data):
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile slack-backfill run --rm --build slack-backfill
+#   # local ingestion Postgres on 127.0.0.1:5432, migrated like the cluster's (EMBER-67):
+#   docker compose -f infra/docker-compose.yml --env-file .env --profile postgres up -d postgres postgres-migrate
+#   # ...plus the Slack enrich worker reading and writing it:
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile slack-enrich up --build slack-enrich
 #   # Ember web app on http://localhost:3000 (SQLite in volume web-data):
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile web up --build web
@@ -92,6 +97,62 @@ services:
       SLACK_RATE_MODE: "${SLACK_RATE_MODE:-}"
     volumes:
       - slack-backfill-data:/data
+
+  # EMBER-67. The ingestion Postgres for local work: the version the cluster runs
+  # (k8s/apps/postgres/cluster.yaml), reachable on 127.0.0.1 only. Not part of the default `up`.
+  postgres:
+    profiles: ["postgres", "slack-enrich"]
+    image: postgres:18.6
+    container_name: ember-postgres
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ember
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-change-me-locally}"
+      POSTGRES_DB: ember
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "ember", "-d", "ember"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # Applies k8s/apps/postgres/migrations with the dbmate the cluster's migrate Job runs, then exits.
+  # Running it again applies only what is new.
+  postgres-migrate:
+    profiles: ["postgres", "slack-enrich"]
+    image: ghcr.io/amacneil/dbmate:2.36.0
+    command: ["--wait", "--wait-timeout=60s", "--no-dump-schema", "--migrations-dir=/migrations", "migrate"]
+    environment:
+      DATABASE_URL: "postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable"
+    volumes:
+      - ./k8s/apps/postgres/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # EMBER-67. The Slack enrich worker (services/slack-ingestion/enrich.py): raw_events -> source_records.
+  # Same image as slack-ingestion. Its database is SLACK_ENRICH_DATABASE_URL, not DATABASE_URL, which
+  # belongs to the web service. Ctrl+C or `stop` lets the jobs in flight finish.
+  slack-enrich:
+    profiles: ["slack-enrich"]
+    build:
+      context: ..
+      dockerfile: services/slack-ingestion/Dockerfile
+    container_name: ember-slack-enrich
+    command: ["python3", "enrich.py"]
+    stop_grace_period: 60s
+    environment:
+      DATABASE_URL: "${SLACK_ENRICH_DATABASE_URL:-postgresql://ember:change-me-locally@postgres:5432/ember?sslmode=disable}"
+      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN:-}"
+      SLACK_RATE_MODE: "${SLACK_RATE_MODE:-}"
+      ENRICH_CONCURRENCY: "${ENRICH_CONCURRENCY:-}"
+      ENRICH_POLL_SECONDS: "${ENRICH_POLL_SECONDS:-}"
+      ENRICH_MAX_ATTEMPTS: "${ENRICH_MAX_ATTEMPTS:-}"
+    depends_on:
+      postgres-migrate:
+        condition: service_completed_successfully
 
   # EMBER-33. Runs on the DGX Spark, not in the default `up`. See
   # services/embedding/README.md.
@@ -204,4 +265,5 @@ volumes:
   neo4j-logs:
   embedding-models:
   slack-backfill-data:
+  postgres-data:
   web-data:
