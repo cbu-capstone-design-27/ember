@@ -13,6 +13,7 @@ from ontology.config import SCHEMA_VERSION, EmbeddingIdentity
 
 from .facts import SCHEMA_PATH, SOURCE_BACKED, GraphFacts, parse_schema_statements
 from .records import EdgeRec, NodeRec
+from .snapshot import Snapshot, make_ref
 
 CHUNK = 500
 
@@ -161,3 +162,28 @@ class Neo4jWriter:
             if rows and rows[0]["c"]:
                 facts.missing_required[label] = rows[0]["c"]
         return facts
+
+    def snapshot(self, group_ids: list[str]) -> Snapshot:
+        snap = Snapshot()
+        for row in self._run("MATCH (n) WHERE n.group_id IN $gids "
+                             "AND n.external_id IS NOT NULL AND n.external_id <> '' "
+                             "AND n.source IS NOT NULL AND n.source <> '' "
+                             "RETURN labels(n)[0] AS label, n {.*, embedding: null, embedding_text_hash: null} AS props",
+                             gids=group_ids):
+            props = {k: v for k, v in row["props"].items() if v is not None}
+            snap.nodes.append({"label": row["label"], "ref": make_ref(props["source"], props["external_id"]),
+                               "source": props["source"], "props": props})
+        for row in self._run("MATCH (a)-[r]->(b) WHERE a.group_id IN $gids AND b.group_id IN $gids "
+                             "AND r.group_id IN $gids "
+                             "AND a.external_id IS NOT NULL AND a.external_id <> '' "
+                             "AND a.source IS NOT NULL AND a.source <> '' "
+                             "AND b.external_id IS NOT NULL AND b.external_id <> '' "
+                             "AND b.source IS NOT NULL AND b.source <> '' "
+                             "RETURN type(r) AS type, labels(a)[0] AS src_label, a.source AS src_source, "
+                             "a.external_id AS src_id, labels(b)[0] AS dst_label, b.source AS dst_source, "
+                             "b.external_id AS dst_id", gids=group_ids):
+            snap.edges.append({"type": row["type"], "src_label": row["src_label"],
+                               "src": make_ref(row["src_source"], row["src_id"]),
+                               "dst_label": row["dst_label"],
+                               "dst": make_ref(row["dst_source"], row["dst_id"])})
+        return snap

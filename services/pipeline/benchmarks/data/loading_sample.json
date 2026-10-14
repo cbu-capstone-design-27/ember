@@ -1,0 +1,24 @@
+{
+  "max_reject_rate": 0.0,
+  "nodes": {
+    "github": {"WorkItem": 1, "Change": 2, "Container": 1},
+    "jira": {"WorkItem": 1, "Message": 1, "Container": 1},
+    "slack": {"Container": 1, "Conversation": 1, "Message": 2}
+  },
+  "fields": [
+    {"ref": "github:acme/widget#42", "label": "WorkItem", "props": {"status": "open", "item_type": "issue"}},
+    {"ref": "github:acme/widget#43", "label": "Change",
+     "props": {"state": "merged", "source_branch": "fix-redirect", "target_branch": "main"}},
+    {"ref": "github:acme/widget@abc1234def", "label": "Change", "props": {"state": "committed", "name": "Fix redirect"}},
+    {"ref": "jira:EMBER-39", "label": "WorkItem", "props": {"status": "In Progress", "item_type": "Story"}},
+    {"ref": "slack:C012AB3CD", "label": "Container", "props": {"name": "dev"}}
+  ],
+  "edges": [
+    {"type": "RESOLVES", "src_label": "Change", "src": "github:acme/widget#43", "dst_label": "WorkItem", "dst": "github:acme/widget#42"},
+    {"type": "CONTAINS", "src_label": "Container", "src": "github:acme/widget", "dst_label": "WorkItem", "dst": "github:acme/widget#42"},
+    {"type": "CONTAINS", "src_label": "Container", "src": "jira:EMBER", "dst_label": "WorkItem", "dst": "jira:EMBER-39"},
+    {"type": "REFERENCES", "src_label": "Message", "src": "jira:20001", "dst_label": "WorkItem", "dst": "jira:EMBER-39"},
+    {"type": "REPLIES_TO", "src_label": "Message", "src": "slack:C012AB3CD:1717000002.000300", "dst_label": "Message", "dst": "slack:C012AB3CD:1717000001.000200"},
+    {"type": "PART_OF", "src_label": "Message", "src": "slack:C012AB3CD:1717000002.000300", "dst_label": "Conversation", "dst": "slack:C012AB3CD:1717000001.000200"}
+  ]
+}

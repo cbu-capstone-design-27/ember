@@ -1,0 +1,9 @@
+{
+  "dataset": "loader sample data",
+  "author": "test fixture",
+  "questions": [
+    {"id": "s1", "question": "why does the login redirect drop the query string", "answers": ["github:acme/widget#42"]},
+    {"id": "s2", "question": "define the shared payload schema", "answers": ["jira:EMBER-39"]},
+    {"id": "s3", "question": "shared intake is type plus body", "answers": ["slack:C012AB3CD:1717000001.000200"]}
+  ]
+}
