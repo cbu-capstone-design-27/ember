@@ -46,7 +46,7 @@ GitHub sends no timestamp header. The only times are inside the payload ([Orderi
 
 ## Event types: payload and what enrich fetches
 
-The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/github-ingestion/receiver.py` (24 names, also in the service README). The receiver doesn't filter on it. **With the App's current permissions (Metadata, Contents, Issues, Pull requests) GitHub only delivers 13 of them**, plus the two installation events every App gets. The rest need permissions the App doesn't have. See [open questions](#open-questions).
+The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/intake/adapters/github.py` (24 names, also in intake's README). Intake doesn't filter on it. **With the App's current permissions (Metadata, Contents, Issues, Pull requests) GitHub only delivers 13 of them**, plus the two installation events every App gets. The rest need permissions the App doesn't have. See [open questions](#open-questions).
 
 | Event | Permission GitHub requires | Delivered today |
 |---|---|---|

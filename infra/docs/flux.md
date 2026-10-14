@@ -44,7 +44,7 @@ infra/k8s/
     cnpg/                     # HelmRepository, HelmRelease, values.yaml (CloudNativePG operator)
   apps/
     nginx/                    # reverse proxy behind the public Ingress
-    github-webhook/           # placeholder listener (EMBER-56 replaces it)
+    github-webhook/           # placeholder listener (EMBER-62 replaces it with intake)
     neo4j/                    # HelmRepository, HelmRelease, values.yaml, service-lb.yaml
     postgres/                 # CloudNativePG Cluster, service-lb.yaml, migrate-job.yaml, migrations/
     headlamp/                 # HelmRepository, HelmRelease, values.yaml, ingress.yaml, viewer.yaml
@@ -323,7 +323,7 @@ How it was verified, on a cluster reset to bare k3s:
 
 ### Open follow-ups
 
-- [ ] EMBER-56: GHCR `imagePullSecret` (a `*.sops.yaml` Secret; the packages are private) and replacing the placeholder `github-webhook` with the real `github-ingestion` image
+- [ ] EMBER-62: replace the placeholder `github-webhook` with `intake`. No pull secret is needed: the GHCR packages are public (`docs/container-images.md`)
 - [ ] Flux image automation: ImageRepository and ImagePolicy on the `<branch>-<run>-<sha>` tags. Decide whether it pushes to `develop` (needs a branch-protection bypass) or opens PRs from its own branch
 - [ ] Move Neo4j's password from `apps/neo4j/values.yaml` into a SOPS Secret (`passwordFromSecret`), and update `neo4j-health`, which reads the password from `values.yaml`
 - [ ] Remove the now-duplicate `vault_ts_oauth_client_id` and `vault_ts_oauth_client_secret` from the vault

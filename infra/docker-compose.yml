@@ -4,10 +4,11 @@
 #   cp .env.example .env          # first time only; fill in values
 #   docker compose -f infra/docker-compose.yml --env-file .env up -d
 #
-# Neo4j starts by default. github-ingestion, jira-ingestion, slack-ingestion and
+# Neo4j starts by default. intake, jira-ingestion, slack-ingestion and
 # gitlab-ingestion are optional profiles so a plain `up` stays Neo4j-only:
+#   # webhook listener on localhost:8080; needs the postgres profile below running
 #   docker compose -f infra/docker-compose.yml --env-file .env \
-#     --profile github-ingestion up --build github-ingestion
+#     --profile intake up --build intake
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile slack-ingestion up --build slack-ingestion
 #   # one-off Slack backfill (exits when done; resumes if re-run; output in volume slack-backfill-data):
@@ -51,22 +52,19 @@ services:
       timeout: 5s
       retries: 10
 
-  # EMBER-35. Not part of the default `up` (see profiles).
-  github-ingestion:
-    profiles: ["github-ingestion"]
+  # EMBER-62. Every source's webhooks into the postgres profile's raw_events. Not part of the
+  # default `up` (see profiles). Refuses to start until GITHUB_WEBHOOK_SECRET is set in .env.
+  intake:
+    profiles: ["intake"]
     build:
       context: ..
-      dockerfile: services/github-ingestion/Dockerfile
-    container_name: ember-github-ingestion
+      dockerfile: services/intake/Dockerfile
+    container_name: ember-intake
     ports:
-      - "${GITHUB_INGESTION_PORT:-8080}:${GITHUB_INGESTION_PORT:-8080}"
+      - "${INTAKE_HOST_PORT:-8080}:8080"
     environment:
+      DATABASE_URL: "postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable"
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
-      GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
-      GITHUB_APP_PRIVATE_KEY: "${GITHUB_APP_PRIVATE_KEY:-}"
-      GITHUB_APP_PRIVATE_KEY_PATH: "${GITHUB_APP_PRIVATE_KEY_PATH:-}"
-      GITHUB_TEST_REPO: "${GITHUB_TEST_REPO:-}"
-      GITHUB_INGESTION_PORT: "${GITHUB_INGESTION_PORT:-8080}"
 
   # EMBER-36. Not part of the default `up` (see profiles).
   slack-ingestion:

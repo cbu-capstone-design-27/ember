@@ -24,7 +24,7 @@ Embeddings stay out (EMBER-3). This object has no embedding field.
 
 One sample each, under `packages/ingestion-envelope/fixtures/`:
 
-- `github.json` — GitHub `issues` `opened` webhook. `services/github-ingestion` emits this shape from `POST /webhook/github` and, on the local pull, once per REST object (EMBER-35). `body` stays the raw webhook or API object.
+- `github.json` — GitHub `issues` `opened` webhook. `services/intake` stores this shape in `raw_events.envelope` for each `POST /webhook/github` (EMBER-62), and `services/github-ingestion`'s local pull emits it once per REST object (EMBER-35). `body` stays the raw webhook or API object.
 - `jira.json` — Jira `jira:issue_updated` webhook
 - `slack.json` — Slack `event_callback` message. `services/slack-ingestion` emits this shape from `POST /webhook/slack` (EMBER-36). Requirements and architecture: `docs/ingestion/slack.md`.
 - `teams.json` — Microsoft Graph change notification

@@ -69,7 +69,7 @@ The config is `apps/nginx/default.conf.template`. Kustomize ships it as a Config
 
 To add a route, copy the `location = /webhook/github` block and change the path and the Service it proxies to. Keep the Service's address in a variable, as that block does (`set $github_webhook github-webhook.ember.svc.cluster.local:8080;` then `proxy_pass http://$github_webhook;`). With a variable, nginx looks the Service up when a request arrives instead of when it starts, so nginx starts and stays up even when that Service is absent. With the name written straight into `proxy_pass`, nginx would refuse to start until the Service exists.
 
-The webhook route accepts request bodies up to 8 MiB (`client_max_body_size 8m`). That matches the real receiver's limit (`MAX_BODY_BYTES` in `services/github-ingestion/envelope.py`), so nginx and the receiver agree on which deliveries are too large. A route that does not set its own cap gets nginx's default of 1 MiB. nginx passes the body and GitHub's headers (`X-GitHub-*`, `X-Hub-Signature-256`) through unchanged, so a signature check behind it sees exactly what GitHub sent.
+The webhook route accepts request bodies up to 8 MiB (`client_max_body_size 8m`). That matches intake's limit (`MAX_BODY_BYTES` in `services/intake/intake.py`), so nginx and intake agree on which deliveries are too large. A route that does not set its own cap gets nginx's default of 1 MiB. nginx passes the body and GitHub's headers (`X-GitHub-*`, `X-Hub-Signature-256`) through unchanged, so a signature check behind it sees exactly what GitHub sent.
 
 `apps/nginx/ingress.yaml` publishes nginx on the public internet through the Tailscale operator and Funnel (below). The hostname comes from `tls.hosts: [ember]` and is what the GitHub App registers as its callback and webhook URL, so it must not change. Add new backends as routes in nginx and leave the Ingress pointing at nginx. Nothing handles the App's callback URL yet, so that path returns 404 like any other; when something does, it is one more `location`.
 
@@ -97,7 +97,7 @@ Service `github-webhook` on port 8080 is the stable name nginx proxies to. EMBER
 
 - Flux prunes, so taking the placeholder Deployment out of `apps/github-webhook/` deletes it. Keep the pods' label `app: github-webhook` if you replace the Deployment's pod template in place instead (a Deployment's selector cannot be changed), so Service `github-webhook` keeps finding them.
 - The webhook checks in `make apps-health` look for `"listener": "placeholder"` in the response. Update them in `ansible/playbooks/apps.yml` when the real worker goes in.
-- The real worker runs the `github-ingestion` image from GHCR, which needs an `imagePullSecret` (a `*.sops.yaml` Secret, see Secrets above) because the packages are private.
+- Intake (EMBER-62) replaces it, from the public `intake` image on GHCR, so no `imagePullSecret` is needed.
 
 ### Restarts
 

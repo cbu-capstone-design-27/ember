@@ -136,14 +136,32 @@ jobs:
           grep -F 'location = /webhook/github' <<<"$out"
       - name: Ingestion envelope contract
         run: python3 packages/ingestion-envelope/test_contract.py
-      - name: GitHub ingestion webhook contract
-        run: python3 services/github-ingestion/test_webhook.py
+      # EMBER-62: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      - name: Intake against Postgres
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/intake-venv"
+          "$RUNNER_TEMP/intake-venv/bin/pip" install -q -r services/intake/requirements.txt
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/intake-venv/bin/python3" services/intake/test_intake.py
+      # The image the cluster runs: as nobody, refusing to start without its secret, healthy against the pg container
+      - name: Intake container
+        run: |
+          set -euo pipefail
+          docker build -f services/intake/Dockerfile -t ember-intake:ci .
+          test "$(docker inspect -f '{{.Config.User}}' ember-intake:ci)" = nobody
+          if docker run --rm -e DATABASE_URL=postgresql://x@127.0.0.1/x ember-intake:ci; then
+            echo "::error::intake started without GITHUB_WEBHOOK_SECRET"; exit 1
+          fi
+          cid=$(docker run -d --network host -e LISTEN_PORT=18080 -e GITHUB_WEBHOOK_SECRET=ci-local \
+            -e DATABASE_URL='postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable' ember-intake:ci)
+          trap 'docker logs "$cid"; docker rm -f "$cid" > /dev/null' EXIT
+          curl -fsS --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:18080/health
+          echo
       - name: GitHub ingestion local pull contract
         run: python3 services/github-ingestion/test_pull.py
-      - name: GitHub ingestion webhook smoke
-        env:
-          GITHUB_WEBHOOK_SECRET: ci-local-smoke
-        run: python3 services/github-ingestion/smoke_webhook.py
       # EMBER-65: uses the pg container and dbmate the migrations step started and downloaded
       - name: GitHub enrich worker against Postgres
         env:
