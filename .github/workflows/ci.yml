@@ -5,10 +5,10 @@
 #     upstream jobs are skipped) and fails only if a job it depends on failed
 #     or was cancelled. Mark `ci-ok` as required in branch protection; never
 #     mark the individual jobs.
-#   - `changes` is a stub for per-area path filtering. Today it reports every
-#     area as changed. When real build/test jobs land, replace the stub with a
-#     path filter and gate each job on the matching output so unrelated areas
-#     are skipped (skipped jobs still let `ci-ok` pass).
+#   - `changes` reports which areas a run touches. Only `web` has a real path
+#     filter so far; the other areas still report changed every time. Gate a
+#     job on its area's output so unrelated changes skip it (skipped jobs
+#     still let `ci-ok` pass).
 
 name: ci
 
@@ -29,28 +29,44 @@ jobs:
   changes:
     name: detect changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read        # checkout, which the filter needs on push
+      pull-requests: read   # on a PR, the filter lists its files through the API
     outputs:
-      web: ${{ steps.filter.outputs.web }}
+      web: ${{ steps.paths.outputs.web }}
       cli: ${{ steps.filter.outputs.cli }}
       mcp: ${{ steps.filter.outputs.mcp }}
       pipeline: ${{ steps.filter.outputs.pipeline }}
       packages: ${{ steps.filter.outputs.packages }}
       infra: ${{ steps.filter.outputs.infra }}
     steps:
-      # TODO(EMBER-28 follow-up): replace with a real path filter, e.g.
-      #   uses: dorny/paths-filter@<pinned-sha>
-      #   with:
-      #     filters: |
-      #       web:      ['apps/web/**', 'packages/**']
-      #       cli:      ['apps/cli/**', 'packages/**']
-      #       mcp:      ['apps/mcp/**', 'packages/**']
-      #       pipeline: ['services/pipeline/**', 'packages/**']
-      #       packages: ['packages/**']
-      #       infra:    ['infra/**', '.github/**']
-      - name: Stub path filter (everything marked changed)
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push'
+      # EMBER-42: the web job and the web image run only when web changed. A PR is
+      # compared with its base branch, a push to main or develop with that branch's
+      # previous commit (`base` is ignored on PRs). This file counts as a web change,
+      # so editing the web job or the image build still runs them. apps/web uses
+      # nothing from packages/, so packages/ doesn't count.
+      - name: Path filter
+        id: paths
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          base: ${{ github.ref_name }}
+          filters: |
+            web:
+              - 'apps/web/**'
+              - '.github/workflows/ci.yml'
+      # TODO(EMBER-28 follow-up): move each area into the path filter above as its
+      # jobs land, e.g.
+      #   cli:      ['apps/cli/**', 'packages/**']
+      #   mcp:      ['apps/mcp/**', 'packages/**']
+      #   pipeline: ['services/pipeline/**', 'packages/**']
+      #   packages: ['packages/**']
+      #   infra:    ['infra/**', '.github/**']
+      - name: Stub path filter for the other areas (marked changed)
         id: filter
         run: |
-          for area in web cli mcp pipeline packages infra; do
+          for area in cli mcp pipeline packages infra; do
             echo "$area=true" >> "$GITHUB_OUTPUT"
           done
 
@@ -254,16 +270,20 @@ jobs:
 
   # EMBER-42. Every services/<name>/Dockerfile and apps/<name>/Dockerfile is an
   # image target named <name>. Adding a Dockerfile is all it takes to enroll a
-  # service; see docs/container-images.md.
+  # service; see docs/container-images.md. The web image is left out when
+  # `changes` says web didn't change.
   image-targets:
     name: image targets
     runs-on: ubuntu-latest
+    needs: changes
     outputs:
       matrix: ${{ steps.find.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       - name: Find Dockerfiles
         id: find
+        env:
+          WEB_CHANGED: ${{ needs.changes.outputs.web }}
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
           import glob, json, os
@@ -272,7 +292,9 @@ jobs:
           dupes = sorted({n for n in names if names.count(n) > 1})
           if dupes:
               raise SystemExit(f"image name collision between services/ and apps/: {dupes}")
-          print("matrix=" + json.dumps([{"name": n, "dir": d} for n, d in zip(names, dirs)]))
+          targets = [{"name": n, "dir": d} for n, d in zip(names, dirs)
+                     if d != "apps/web" or os.environ["WEB_CHANGED"] == "true"]
+          print("matrix=" + json.dumps(targets))
           EOF
           cat "$GITHUB_OUTPUT"
 
