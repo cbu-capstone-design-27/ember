@@ -107,7 +107,7 @@ Intake's key is `unique (source, delivery_id)` (`architecture.md`, [Storage](arc
 
 ## Ordering value (EMBER-63)
 
-GitLab's arrival order isn't its own order. Sidekiq sends deliveries in parallel with no documented order, a resend can come days later, and reconcile rows arrive hours later. Workers need the time GitLab says the thing happened. EMBER-63 adds a column for it. Its name and type are EMBER-63's call. **For GitLab, the value is the first of these that applies:**
+GitLab's arrival order isn't its own order. Sidekiq sends deliveries in parallel with no documented order, a resend can come days later, and reconcile rows arrive hours later. Workers need the time GitLab says the thing happened. EMBER-63 stores it in `raw_events.occurred_at` ([`architecture.md`](architecture.md#source-ordering-value-ember-63)), set by whoever writes the row. **For GitLab, the value is the first of these that applies:**
 
 1. `raw_events.received_at` for a branch delete, a push, and the four approval actions. A deleted branch has no time of its own. A push carries no push time, only commit times, which the author controls. GitLab doesn't say approvals bump `updated_at`.
 2. Otherwise `object_attributes.updated_at` (`merge_request`, `issue`, `work_item`, `note`).
@@ -120,7 +120,7 @@ GitLab's arrival order isn't its own order. Sidekiq sends deliveries in parallel
 | `push`, including a branch delete | `received_at` | Microseconds, but it's our clock |
 | Reconcile | The object's `updated_at`; a commit's `committed_date`; the project's `last_activity_at` | Milliseconds |
 
-- **Type.** `timestamptz` is the suggestion for EMBER-63, as for GitHub and Slack. Both of GitLab's time formats convert exactly. The same value fills `source_records.occurred_at`.
+- **Type.** `timestamptz` (EMBER-63), as for every source. Both of GitLab's time formats convert exactly. The same value fills `source_records.occurred_at`.
 - **Scope.** `updated_at` is per object, so it orders versions of one merge request, issue or note well. Across objects it is only approximate. Ties break on `raw_events.id`.
 - **Pushes.** A ref's own history gives the true order: a push whose `before` isn't the stored ref's `after` arrived out of order or followed a missed push.
 - **How workers use it.** A record changes an object only if its ordering value is newer than what's stored for that object. A late `update` can't undo a newer `close`, and a late `reopen` can't undo a newer `merge`.
@@ -151,13 +151,12 @@ Catch-up has two steps, both run by `scheduler:gitlab` and done by `enrich:gitla
 
 ## Open questions
 
-1. **EMBER-63 (Jacob):** the column's name and type. This doc suggests `timestamptz`, filled as described in [Ordering value](#ordering-value-ember-63).
-2. **Push events:** add `Push events` to `RECOMMENDED_WEBHOOK_TRIGGERS` for EMBER-68, as proposed? Tag push stays off.
-3. **Resending needs more than `read_api`.** Listing and resending webhook events needs the Maintainer or Owner role, and the resend is a write. Give `scheduler:gitlab` a second, stronger token, or rely on reconcile alone and accept losing the snapshots?
-4. **Merge request diffs:** keep the `diff` text, or only paths and flags? It is the only per-event call. `too_large` already bounds it.
-5. **413 and auto-disable (EMBER-62):** GitLab counts a 413 as a failure, and 4 in a row disable the webhook. Should intake answer GitLab's oversized bodies with a 200 and log them for reconcile instead?
-6. **Deletes:** accept losing them, as `architecture.md` does, or have reconcile occasionally list every `iid` and tombstone the missing ones?
-7. **Live webhook test:** the EMBER-47 test project (`gitlab-org/ruby/gems/gitlab-dangerfiles`, PR #29) isn't team-maintained, so it can't take a webhook. EMBER-68's live check needs a project the team maintains.
+1. **Push events:** add `Push events` to `RECOMMENDED_WEBHOOK_TRIGGERS` for EMBER-68, as proposed? Tag push stays off.
+2. **Resending needs more than `read_api`.** Listing and resending webhook events needs the Maintainer or Owner role, and the resend is a write. Give `scheduler:gitlab` a second, stronger token, or rely on reconcile alone and accept losing the snapshots?
+3. **Merge request diffs:** keep the `diff` text, or only paths and flags? It is the only per-event call. `too_large` already bounds it.
+4. **413 and auto-disable (EMBER-62):** GitLab counts a 413 as a failure, and 4 in a row disable the webhook. Should intake answer GitLab's oversized bodies with a 200 and log them for reconcile instead?
+5. **Deletes:** accept losing them, as `architecture.md` does, or have reconcile occasionally list every `iid` and tombstone the missing ones?
+6. **Live webhook test:** the EMBER-47 test project (`gitlab-org/ruby/gems/gitlab-dangerfiles`, PR #29) isn't team-maintained, so it can't take a webhook. EMBER-68's live check needs a project the team maintains.
 
 ## Sources
 

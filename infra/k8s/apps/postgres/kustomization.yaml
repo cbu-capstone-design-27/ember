@@ -15,3 +15,4 @@ configMapGenerator:
       - migrations/20261013000000_ingestion_schema.sql
       - migrations/20261013120000_raw_events_enriched_at.sql
       - migrations/20261013120100_raw_events_notify.sql
+      - migrations/20261014202756_raw_events_occurred_at.sql

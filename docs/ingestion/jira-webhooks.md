@@ -109,7 +109,7 @@ Jira's arrival order isn't its own order:
 - Secondary-flow deliveries can take up to 15 minutes.
 - Reconcile rows arrive hours later.
 
-Workers need the time Jira says the thing happened. EMBER-63 adds a column for it. Its name and type are EMBER-63's call. **For Jira, the value is the first of these that is present:**
+Workers need the time Jira says the thing happened. EMBER-63 stores it in `raw_events.occurred_at` ([`architecture.md`](architecture.md#source-ordering-value-ember-63)), set by whoever writes the row. **For Jira, the value is the first of these that is present:**
 
 1. The entity's own `updated`: `issue.fields.updated`, `comment.updated`, `worklog.updated`
 2. `attachment.created`
@@ -123,7 +123,7 @@ Workers need the time Jira says the thing happened. EMBER-63 adds a column for i
 | Reconcile | The entity's `updated` | Milliseconds |
 
 - **Why `updated` before `timestamp`.** Reconcile has only `updated`. Using the same field on both paths means the webhook copy and the reconcile copy of one edit get the same value.
-- **Type.** `timestamptz` is the suggestion for EMBER-63. Jira's ISO strings with an offset and epoch milliseconds both convert exactly. The same value fills `source_records.occurred_at`.
+- **Type.** `timestamptz` (EMBER-63). Jira's ISO strings with an offset and epoch milliseconds both convert exactly. The same value fills `source_records.occurred_at`.
 - **Scope.** `updated` is per entity, so it orders versions of one issue or comment well. Across entities it is approximate. Ties break on `changelog.id` when both rows have one (it increases per site), then on `raw_events.id`.
 - **How workers use it.** A record changes an object only if its ordering value is newer than what's stored for that object. A late `jira:issue_updated` can't undo a newer one, and a late `comment_updated` can't bring back a deleted comment.
 
@@ -150,12 +150,11 @@ Jira's "Get failed webhooks" (`GET /rest/api/3/webhook/failed`) would list deliv
 
 ## Open questions
 
-1. **EMBER-63 (Jacob):** the column's name and type. This doc suggests `timestamptz`, filled as described in [Ordering value](#ordering-value-ember-63).
-2. **Payload shapes Atlassian doesn't document:** `worklog`, `attachment`, `issueLink`, `property`, and the reduced `issue` on comment events. Capture one real delivery of each (the smoke script's bodies are hand-written) and fix this doc before EMBER-66 relies on them. In particular, does `attachment_created` name its issue?
-3. **Status code:** today's receiver answers 202, and Atlassian counts anything but 200 as unsuccessful. Intake answers 200. Should the stub receiver change now, before a real webhook is registered?
-4. **Site for `delivery_id` and `account_id`:** read from the `self` URL as proposed, or give each site its own path (`/webhook/jira/<site>`)? The second changes `architecture.md`'s HTTP contract.
-5. **Version events:** subscribe to `jira:version_*`? The backfill already stores versions, and the README mentions them as optional.
-6. **Deleted projects and issues:** worth a periodic check that compares stored issue ids with a search, to tombstone what disappeared without a webhook?
+1. **Payload shapes Atlassian doesn't document:** `worklog`, `attachment`, `issueLink`, `property`, and the reduced `issue` on comment events. Capture one real delivery of each (the smoke script's bodies are hand-written) and fix this doc before EMBER-66 relies on them. In particular, does `attachment_created` name its issue?
+2. **Status code:** today's receiver answers 202, and Atlassian counts anything but 200 as unsuccessful. Intake answers 200. Should the stub receiver change now, before a real webhook is registered?
+3. **Site for `delivery_id` and `account_id`:** read from the `self` URL as proposed, or give each site its own path (`/webhook/jira/<site>`)? The second changes `architecture.md`'s HTTP contract.
+4. **Version events:** subscribe to `jira:version_*`? The backfill already stores versions, and the README mentions them as optional.
+5. **Deleted projects and issues:** worth a periodic check that compares stored issue ids with a search, to tombstone what disappeared without a webhook?
 
 ## Sources
 
