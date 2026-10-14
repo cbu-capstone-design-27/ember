@@ -1,6 +1,6 @@
 # apps/web
 
-The Ember web app: sign-up and onboarding, the dashboard, the knowledge graph explorer, and settings. Jira: EMBER-51 (scaffold), epic EMBER-13 (dashboard and onboarding). Stack decision: [ADR 0005](../../docs/adr/0005-web-app-stack.md).
+The Ember web app: sign-up and onboarding, the dashboard, the knowledge graph explorer, and settings. Jira: EMBER-51 (scaffold), epic EMBER-13 (dashboard and onboarding). Stack decision: [ADR 0006](../../docs/adr/0006-web-app-stack.md).
 
 Next.js (App Router, TypeScript) serves the pages and the auth API from one Node server. Auth is [Better Auth](https://www.better-auth.com/) with email and password. GitHub OAuth (EMBER-12) and organizations/tenants are later additions. The Electron desktop app (EMBER-17) will wrap this same app; it doesn't get a second UI.
 

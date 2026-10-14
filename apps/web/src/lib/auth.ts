@@ -1,4 +1,4 @@
-// Server-side auth (EMBER-51, ADR 0005): email + password today.
+// Server-side auth (EMBER-51, ADR 0006): email + password today.
 // GitHub OAuth (EMBER-12) is added later as a socialProviders entry, and
 // organizations (tenants) through Better Auth's organization plugin, without
 // changing how sign-in works.
