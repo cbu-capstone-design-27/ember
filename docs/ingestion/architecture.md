@@ -73,6 +73,8 @@ Four of the five sources send the data itself. Teams only signals that something
 
 The payload is the record of what happened at that moment, which the temporal graph needs (ADR 0002). Fetching the current state alone would lose intermediate edits and deletes. So payloads are kept, and fetching only adds what they lack.
 
+Per-source detail (event types, what enrich fetches, `delivery_id`, ordering, gaps): [Slack](slack-webhooks.md) (EMBER-70).
+
 ## The parent listener (intake)
 
 One Deployment (2 replicas) serves every source at `https://ember.tail470a31.ts.net/webhook/{source}`. nginx routes `/webhook/` to Service `intake`. For each delivery intake:
