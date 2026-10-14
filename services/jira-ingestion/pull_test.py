@@ -10,8 +10,9 @@ Stdout is that JSONL. --output FILE writes the same JSONL and, by default,
 a glance summary at FILE.readable.md (issue key, summary, and a short
 description; comment author and a short body). The JSONL line stays the
 full raw object. Search pages stay serial. Detail GETs run DEFAULT_CONCURRENCY at
-a time (--concurrency or JIRA_PULL_CONCURRENCY). A Retry-After header is
-waited out. A 429/502/503 without one backs off 1s, 2s, 4s, ...
+a time (--concurrency or JIRA_PULL_CONCURRENCY). One shared gate pauses
+when the remaining quota is low, waits out Retry-After or a rate-limit
+reset, and retries 5xx and network errors with jittered backoff.
 --readable PATH chooses the summary file. --no-readable skips it.
 --readable - prints the summary on stdout and requires --output so the
 JSONL stays a file. Progress goes to stderr.
@@ -24,15 +25,19 @@ from __future__ import annotations
 
 import argparse
 import base64
+import http.client
 import json
 import os
+import random
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
@@ -43,7 +48,21 @@ MAX_PAGES = 50
 PAGE_SIZE = 100
 DEFAULT_CONCURRENCY = 32
 MAX_CONCURRENCY = 64
-MAX_RETRY_WAIT = 120.0
+# Delays this connector invents (5xx, network, a 429 with no server wait).
+MAX_BACKOFF_WAIT = 120.0
+# Retry-After and reset timestamps. A Jira quota 429 can name a wait of
+# most of an hour, and the docs say not to call again before that.
+MAX_SERVER_WAIT = 3600.0
+# Total rate-limit sleep one call may accumulate before it fails.
+THROTTLE_BUDGET = 3600.0
+TRANSIENT_ATTEMPTS = 5
+TRANSIENT_STATUSES = {500, 502, 503, 504}
+# Pause every worker at or below this many remaining requests. Default
+# concurrency (32) is under it, so requests already in flight can finish.
+# The floor shrinks for small limits (a per-second burst bucket) so a
+# 100-request window does not pause on every response.
+RATE_LIMIT_FLOOR = 50
+_POLICY_RE = re.compile(r'"([^"]*)"([^,]*)')
 DEFAULT_PROJECT = "EMBER"
 PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 ISSUE_KEY = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
@@ -104,23 +123,272 @@ class Response:
         return json.loads(self.body.decode("utf-8"))
 
 
-def retry_after_seconds(response: Response, attempt: int = 0) -> float | None:
-    """Seconds to wait on a Jira throttle, or None when the response is final.
+Jitter = Callable[[], float]
 
-    Retry-After wins. A 429/502/503 without that header waits 2**attempt
-    seconds (1, 2, 4, ...) so a burst does not retry in lockstep.
-    """
-    if response.status < 400:
+
+def _default_jitter() -> float:
+    return random.uniform(0.5, 1.0)
+
+
+def _wait_text(seconds: float) -> str:
+    return f"{seconds:.1f}s" if seconds < 10 else f"{seconds:.0f}s"
+
+
+class RateLimitGate:
+    """Holds every worker until a shared throttle window has passed."""
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._clock = clock
+        self._sleep = sleep
+        self._lock = threading.Lock()
+        self._until = 0.0
+
+    def wait(self) -> None:
+        while True:
+            with self._lock:
+                delay = self._until - self._clock()
+            if delay <= 0:
+                return
+            self._sleep(delay)
+
+    def extend(self, seconds: float) -> None:
+        if seconds <= 0:
+            return
+        with self._lock:
+            target = self._clock() + seconds
+            if target > self._until:
+                self._until = target
+
+
+def _lower_headers(response: Response) -> dict[str, str]:
+    return {key.lower(): value for key, value in response.headers.items()}
+
+
+def _as_float(raw: str | None) -> float | None:
+    if raw is None:
         return None
-    headers = {key.lower(): value for key, value in response.headers.items()}
-    raw = headers.get("retry-after")
-    if raw:
+    try:
+        return float(raw.strip())
+    except ValueError:
+        return None
+
+
+def _header_float(headers: dict[str, str], *names: str) -> float | None:
+    for name in names:
+        value = _as_float(headers.get(name))
+        if value is not None:
+            return value
+    return None
+
+
+def seconds_until_absolute(raw: str | None, now: float) -> float | None:
+    """Seconds until an epoch or ISO-8601 timestamp. Negative when it has passed."""
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    if "T" in text:
         try:
-            return max(0.0, float(raw))
+            moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
         except ValueError:
             return None
-    if response.status in (429, 502, 503):
-        return float(2 ** max(0, attempt))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment.timestamp() - now
+    value = _as_float(text)
+    if value is None:
+        return None
+    return value - now
+
+
+def _policies(header: str) -> list[tuple[str, dict[str, str]]]:
+    """Parse a RateLimit / RateLimit-Policy header into (name, attributes)."""
+    found: list[tuple[str, dict[str, str]]] = []
+    for match in _POLICY_RE.finditer(header):
+        attrs: dict[str, str] = {}
+        for part in match.group(2).split(";"):
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            attrs[key.strip().lower()] = value.strip().strip('"')
+        found.append((match.group(1), attrs))
+    return found
+
+
+def quota_floor(limit: float | None) -> float:
+    """Remaining count at or below which every worker pauses."""
+    if limit is None:
+        return float(RATE_LIMIT_FLOOR)
+    return float(min(RATE_LIMIT_FLOOR, max(1, int(limit) // 10)))
+
+
+def _quota_windows(response: Response, now: float) -> list[tuple[float, float | None, float]]:
+    """(remaining, limit, seconds-until-reset) from classic and structured headers."""
+    headers = _lower_headers(response)
+    windows: list[tuple[float, float | None, float]] = []
+    remaining = _header_float(headers, "x-ratelimit-remaining", "ratelimit-remaining")
+    limit = _header_float(headers, "x-ratelimit-limit", "ratelimit-limit")
+    reset_raw = headers.get("x-ratelimit-reset") or headers.get("ratelimit-reset")
+    reset_wait = seconds_until_absolute(reset_raw, now)
+    if remaining is not None and reset_wait is not None:
+        windows.append((remaining, limit, reset_wait))
+
+    policy_limits: dict[str, float] = {}
+    for name in ("ratelimit-policy", "beta-ratelimit-policy"):
+        raw = headers.get(name)
+        if not raw or '"' not in raw:
+            continue
+        for policy, attrs in _policies(raw):
+            quota = _as_float(attrs.get("q"))
+            if quota is not None:
+                policy_limits[policy] = quota
+    for name in ("ratelimit", "beta-ratelimit"):
+        raw = headers.get(name)
+        if not raw or '"' not in raw:
+            continue
+        for policy, attrs in _policies(raw):
+            left = _as_float(attrs.get("r"))
+            delta = _as_float(attrs.get("t"))
+            if left is None or delta is None:
+                continue
+            windows.append((left, policy_limits.get(policy), delta))
+    return windows
+
+
+def throttle_seconds(response: Response, *, now: float | None = None) -> float | None:
+    """Seconds to pause because the remaining quota is at or under the floor.
+
+    Needs both a remaining count and a reset. A healthy remaining count, or a
+    remaining count with no reset, does not pause. ``X-RateLimit-NearLimit``
+    is not a trigger: on an hourly quota it means 20% remains, which would
+    stall a backfill that is still inside its budget.
+    """
+    clock = time.time() if now is None else now
+    wait: float | None = None
+    for remaining, limit, reset_wait in _quota_windows(response, clock):
+        if remaining > quota_floor(limit) or reset_wait <= 0:
+            continue
+        capped = min(reset_wait, MAX_SERVER_WAIT)
+        if wait is None or capped > wait:
+            wait = capped
+    return wait
+
+
+def _retry_after_header(headers: dict[str, str], *, allow_beta: bool) -> float | None:
+    raw = headers.get("retry-after")
+    if raw is None and allow_beta:
+        raw = headers.get("beta-retry-after")
+    value = _as_float(raw)
+    if value is None:
+        return None
+    return max(0.0, value)
+
+
+def _policy_wait(headers: dict[str, str]) -> float | None:
+    """Longest structured ``t`` (seconds until reset) for an exhausted policy."""
+    wait: float | None = None
+    for name in ("ratelimit", "beta-ratelimit"):
+        raw = headers.get(name)
+        if not raw or '"' not in raw:
+            continue
+        for _policy, attrs in _policies(raw):
+            delta = _as_float(attrs.get("t"))
+            left = _as_float(attrs.get("r"))
+            if delta is None or delta <= 0 or left != 0:
+                continue
+            wait = delta if wait is None else max(wait, delta)
+    return wait
+
+
+def is_rate_limited(response: Response) -> bool:
+    """Jira signals a limit with 429. A 403 is permission, not a throttle."""
+    return response.status == 429
+
+
+def _server_wait(response: Response, now: float) -> float | None:
+    """Seconds the response itself asked us to wait, or None if it didn't.
+
+    When remaining is 0, the later of Retry-After and the reset wins, so the
+    connector does not call again while that window is still closed.
+    """
+    headers = _lower_headers(response)
+    retry_after = _retry_after_header(headers, allow_beta=response.status == 429)
+    remaining = _header_float(headers, "x-ratelimit-remaining", "ratelimit-remaining")
+    reset_raw = headers.get("x-ratelimit-reset") or headers.get("ratelimit-reset")
+    reset_wait = seconds_until_absolute(reset_raw, now)
+    policy_wait = _policy_wait(headers)
+    # A reset timestamp is on successful responses too. Use it as a retry
+    # delay only when the quota is exhausted, or when no remaining count
+    # was sent with it.
+    reset_applies = reset_wait is not None and reset_wait > 0 and (remaining is None or remaining == 0)
+    exhausted = remaining == 0 or policy_wait is not None
+
+    candidates: list[float] = []
+    if retry_after is not None:
+        candidates.append(retry_after)
+    if reset_applies:
+        candidates.append(reset_wait)
+    if policy_wait is not None:
+        candidates.append(policy_wait)
+    if not candidates:
+        return None
+    if exhausted:
+        return max(candidates)
+    return candidates[0]
+
+
+def rate_limit_wait(
+    response: Response,
+    attempt: int = 0,
+    *,
+    now: float | None = None,
+    jitter: Jitter | None = None,
+) -> float:
+    """Seconds to wait before retrying a 429. A server-supplied delay is not
+    jittered. A 429 with no delay backs off 1, 2, 4, ... times jitter."""
+    clock = time.time() if now is None else now
+    server = _server_wait(response, clock)
+    if server is not None and server > 0:
+        return min(server, MAX_SERVER_WAIT)
+    scale = jitter or _default_jitter
+    base = min(float(2 ** max(0, attempt)), MAX_BACKOFF_WAIT)
+    return min(base * scale(), MAX_BACKOFF_WAIT)
+
+
+def transient_wait(response: Response, attempt: int = 0, *, jitter: Jitter | None = None) -> float:
+    """Seconds to wait on a 5xx or network error. Retry-After wins; otherwise
+    1, 2, 4, ... seconds times jitter in [0.5, 1], capped at MAX_BACKOFF_WAIT."""
+    headers = _lower_headers(response)
+    server = _retry_after_header(headers, allow_beta=False)
+    if server is not None and server > 0:
+        return min(server, MAX_SERVER_WAIT)
+    scale = jitter or _default_jitter
+    base = min(float(2 ** max(0, attempt)), MAX_BACKOFF_WAIT)
+    return min(base * scale(), MAX_BACKOFF_WAIT)
+
+
+def retry_after_seconds(
+    response: Response,
+    attempt: int = 0,
+    *,
+    now: float | None = None,
+    jitter: Jitter | None = None,
+) -> float | None:
+    """Seconds to wait before retrying, or None when the response is final.
+
+    Retry-After and a reset timestamp win, without jitter. A 429 or 5xx
+    without either backs off. Pass ``jitter`` (for example ``lambda: 1``)
+    to make that backoff deterministic.
+    """
+    if is_rate_limited(response):
+        return rate_limit_wait(response, attempt, now=now, jitter=jitter)
+    if response.status in TRANSIENT_STATUSES:
+        return transient_wait(response, attempt, jitter=jitter)
     return None
 
 
@@ -131,20 +399,61 @@ def exchange_with_retry(
     headers: dict[str, str],
     body: bytes | None,
     *,
-    attempts: int = 5,
+    attempts: int = TRANSIENT_ATTEMPTS,
+    throttle_budget: float = THROTTLE_BUDGET,
     sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    jitter: Jitter | None = None,
+    gate: RateLimitGate | None = None,
 ) -> Response:
-    """Repeat when Jira sends Retry-After or a 429/502/503."""
-    response = exchange(method, url, headers, body)
-    for attempt in range(attempts - 1):
-        wait = retry_after_seconds(response, attempt)
-        if wait is None:
-            return response
-        wait = min(wait, MAX_RETRY_WAIT)
-        print(f"Jira asked to wait {wait:.0f}s ({response.status}) {url}", file=sys.stderr)
-        sleep(wait)
+    """Send one request. Low quota pauses every worker. A 429 retries until
+    ``throttle_budget`` seconds have been waited. 5xx and network errors
+    retry ``attempts`` times with jittered backoff.
+
+    ``gate`` is shared by every worker in one pull. A throttle extends it so
+    the next request from any worker waits out the same window.
+    """
+    scale = jitter or _default_jitter
+    throttled = 0.0
+    failures = 0
+    rate_attempt = 0
+    response: Response | None = None
+    while True:
+        if gate is not None:
+            gate.wait()
         response = exchange(method, url, headers, body)
-    return response
+        now = clock()
+        pause = throttle_seconds(response, now=now)
+        if pause is not None and gate is not None:
+            gate.extend(pause)
+            print(f"Jira quota low; pausing {_wait_text(pause)}", file=sys.stderr)
+        if is_rate_limited(response):
+            wait = rate_limit_wait(response, rate_attempt, now=now, jitter=scale)
+            if wait <= 0:
+                wait = 1.0
+            if throttled + wait > throttle_budget:
+                return response
+            throttled += wait
+            rate_attempt += 1
+            if gate is not None:
+                gate.extend(wait)
+            print(f"Jira asked to wait {_wait_text(wait)} ({response.status}) {url}", file=sys.stderr)
+            sleep(wait)
+            continue
+        if response.status in TRANSIENT_STATUSES:
+            failures += 1
+            if failures >= attempts:
+                return response
+            wait = transient_wait(response, failures - 1, jitter=scale)
+            if gate is not None:
+                gate.extend(wait)
+            print(
+                f"Jira HTTP {response.status}, retry {failures}/{attempts - 1} in {wait:.1f}s {url}",
+                file=sys.stderr,
+            )
+            sleep(wait)
+            continue
+        return response
 
 
 def map_ordered(fn, items: list, workers: int) -> list:
@@ -157,12 +466,17 @@ def map_ordered(fn, items: list, workers: int) -> list:
 
 
 def urllib_exchange(method: str, url: str, headers: dict[str, str], body: bytes | None) -> Response:
+    """One HTTP exchange. A network failure comes back as 503 so the same
+    backoff retries it instead of ending a long backfill."""
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return Response(response.status, dict(response.headers), response.read())
     except urllib.error.HTTPError as exc:
         return Response(exc.code, dict(exc.headers), exc.read())
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        return Response(503, {}, f"network error: {reason}".encode("utf-8", "replace"))
 
 
 def _headers(email: str, api_token: str, *, json_body: bool = False) -> dict[str, str]:
@@ -205,8 +519,7 @@ def iter_issue_keys(origin: str, project: str, email: str, api_token: str, excha
         if next_token:
             payload["nextPageToken"] = next_token
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        response = exchange_with_retry(
-            exchange,
+        response = exchange(
             "POST",
             url,
             _headers(email, api_token, json_body=True),
@@ -245,7 +558,7 @@ def _reject_binary(url: str) -> None:
 def fetch_json(url: str, email: str, api_token: str, exchange, *, optional: bool = False):
     """GET JSON. optional 403/404 returns None. The body is not rewritten."""
     _reject_binary(url)
-    response = exchange_with_retry(exchange, "GET", url, _headers(email, api_token), None)
+    response = exchange("GET", url, _headers(email, api_token), None)
     if optional and response.status in (403, 404):
         print(f"skipped optional {response.status} {url}", file=sys.stderr)
         return None
@@ -983,6 +1296,32 @@ def render_summary(project: str, envelopes: list[dict]) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
+def bind_exchange(
+    exchange,
+    gate: RateLimitGate,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    jitter: Jitter | None = None,
+):
+    """Wrap a raw exchange so every pull request shares one rate-limit gate."""
+
+    def bound(method: str, url: str, headers: dict[str, str], body: bytes | None) -> Response:
+        return exchange_with_retry(
+            exchange,
+            method,
+            url,
+            headers,
+            body,
+            sleep=sleep,
+            clock=clock,
+            jitter=jitter,
+            gate=gate,
+        )
+
+    return bound
+
+
 def pull(
     base_url: str,
     email: str,
@@ -991,6 +1330,10 @@ def pull(
     exchange,
     *,
     workers: int = DEFAULT_CONCURRENCY,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    jitter: Jitter | None = None,
+    gate: RateLimitGate | None = None,
 ) -> Iterator[dict]:
     if not email or not api_token:
         raise PullError("Set JIRA_EMAIL and JIRA_API_TOKEN.")
@@ -1000,7 +1343,9 @@ def pull(
             "project must be a Jira project key such as EMBER "
             "(uppercase letters and digits, 2-10 characters)."
         )
-    return iter_envelopes(origin, project, email, api_token, exchange, workers=workers)
+    gate = gate or RateLimitGate()
+    bound = bind_exchange(exchange, gate, sleep=sleep, clock=clock, jitter=jitter)
+    return iter_envelopes(origin, project, email, api_token, bound, workers=workers)
 
 
 def main(argv: list[str] | None = None) -> int:
