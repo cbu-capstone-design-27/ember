@@ -4,8 +4,8 @@
         python3 enrich.py
 
 It claims rows as docs/ingestion/architecture.md, "Interim: claiming without the job queue",
-describes: LISTEN on channel raw_events, and claim once at start, on each `github` notification
-and on a 30 s poll. Each row is claimed, enriched and marked (`enriched_at`) in its own
+describes: LISTEN on RAW_EVENTS_CHANNEL (default raw_events), and claim once at start, on any
+notification on it (the payload is ignored) and on a 30 s poll. Each row is claimed, enriched and marked (`enriched_at`) in its own
 transaction, at most CONCURRENCY (default 4) at once. What each event becomes and what it fetches
 is docs/ingestion/github-webhooks.md. API calls reuse pull_test.py's helpers and wait on the
 shared `rate_limits` row for the installation. SIGINT or SIGTERM stops claiming, lets in-flight
@@ -46,7 +46,7 @@ from pull_test import (
 )
 
 SOURCE = "github"
-CHANNEL = "raw_events"
+CHANNEL = os.environ.get("RAW_EVENTS_CHANNEL", "raw_events")
 POLL_SECONDS = 30.0
 FULL_PUSH = 2048  # GitHub's cap on a push payload's commits array
 PR_FILE_ACTIONS = ("opened", "reopened", "synchronize")
@@ -192,9 +192,9 @@ class Worker:
         self.stopping.set()
         self.wake.set()
 
-    def _notified(self, _conn, _pid, _channel, payload: str) -> None:
-        if payload == SOURCE:
-            self.wake.set()
+    def _notified(self, _conn, _pid, _channel, _payload: str) -> None:
+        # Any notification wakes the worker. The claim filters by source, so the payload is never read.
+        self.wake.set()
 
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
