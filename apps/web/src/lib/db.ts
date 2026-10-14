@@ -1,4 +1,4 @@
-// Picks the database from DATABASE_URL (EMBER-51, ADR 0005).
+// Picks the database from DATABASE_URL (EMBER-51, ADR 0006).
 //   file:./data/ember.db         -> SQLite (Node's built-in node:sqlite, no native module)
 //   postgres://user:pass@host/db -> Postgres (pg Pool)
 // Swapping SQLite for Postgres is a change to DATABASE_URL only.

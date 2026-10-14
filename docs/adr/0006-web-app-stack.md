@@ -1,4 +1,4 @@
-# ADR 0005: Web app stack
+# ADR 0006: Web app stack
 
 - Status: Proposed
 - Date: 2026-10-06
