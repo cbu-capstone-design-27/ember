@@ -20,6 +20,7 @@ import os
 import re
 import signal
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlsplit
@@ -31,12 +32,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 
 from models import RateLimit, RawEvent, SourceRecord
 from pull_test import (
-    MAX_RETRY_WAIT,
     PullError,
     Response,
+    exchange_with_retry,
     fetch_json,
+    is_rate_limited,
     issue_url,
-    retry_after_seconds,
+    rate_limit_wait,
+    throttle_seconds,
     site_origin,
     urllib_exchange,
 )
@@ -283,8 +286,8 @@ class Worker:
         return found is not None
 
     async def _fetch(self, row: RawEvent, url: str) -> Optional[dict]:
-        """GET through pull_test's fetch_json (basic auth, Retry-After) and the rate_limits row for this site.
-        A 403 or 404 returns None."""
+        """GET through pull_test's fetch_json (basic auth) and exchange_with_retry (429, 5xx), with every
+        attempt waiting on and updating the rate_limits row for this site. A 403 or 404 returns None."""
         # ponytail: one site's credentials from the environment. Per-site credentials come with EMBER-12.
         if row.account_id and row.account_id != urlsplit(self.origin).hostname:
             raise PullError(f"no credentials for site {row.account_id}")
@@ -296,7 +299,10 @@ class Worker:
             asyncio.run_coroutine_threadsafe(self._record_limit(row.tenant, response), loop).result()
             return response
 
-        return await asyncio.to_thread(fetch_json, url, self.email, self.api_token, limited, optional=True)
+        def retrying(method: str, url: str, headers: dict[str, str], body: Optional[bytes]) -> Response:
+            return exchange_with_retry(limited, method, url, headers, body)
+
+        return await asyncio.to_thread(fetch_json, url, self.email, self.api_token, retrying, optional=True)
 
     def _limit_key(self, tenant: str):
         return (RateLimit.source == SOURCE, RateLimit.tenant == tenant, RateLimit.bucket == self.origin)
@@ -312,8 +318,10 @@ class Worker:
             await asyncio.sleep(float(delay))
 
     async def _record_limit(self, tenant: str, response: Response) -> None:
-        """Push next_allowed_at out by the response's Retry-After, and keep X-RateLimit-Remaining."""
-        wait = min(retry_after_seconds(response) or 0.0, MAX_RETRY_WAIT)
+        """Push next_allowed_at out by pull_test's wait for a 429 or a low quota, and keep X-RateLimit-Remaining."""
+        now = time.time()
+        wait = max(rate_limit_wait(response, now=now) if is_rate_limited(response) else 0.0,
+                   throttle_seconds(response, now=now) or 0.0)
         headers = {key.lower(): value for key, value in response.headers.items()}
         remaining = headers.get("x-ratelimit-remaining")
         stmt = insert(RateLimit).values(
