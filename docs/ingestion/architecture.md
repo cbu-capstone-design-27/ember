@@ -73,7 +73,7 @@ Four of the five sources send the data itself. Teams only signals that something
 
 The payload is the record of what happened at that moment, which the temporal graph needs (ADR 0002). Fetching the current state alone would lose intermediate edits and deletes. So payloads are kept, and fetching only adds what they lack.
 
-Per-source detail (event types, what enrich fetches, `delivery_id`, ordering, gaps): [Slack](slack-webhooks.md) (EMBER-70), [GitHub](github-webhooks.md) and [Jira](jira-webhooks.md) (EMBER-69).
+Per-source detail (event types, what enrich fetches, `delivery_id`, ordering, gaps): [Slack](slack-webhooks.md) (EMBER-70), [GitHub](github-webhooks.md) and [Jira](jira-webhooks.md) (EMBER-69), [GitLab](gitlab-webhooks.md) (EMBER-71).
 
 ## The parent listener (intake)
 
@@ -121,7 +121,7 @@ class SourceAdapter(Protocol):
 | Adapter | `delivery_id` | `account_id` | Handshake |
 |---|---|---|---|
 | `github` | `X-GitHub-Delivery` | `installation.id` | none |
-| `gitlab` | `X-Gitlab-Event-UUID` | `X-Gitlab-Instance` + group | none |
+| `gitlab` | `webhook-id`, else `Idempotency-Key` (same value) | `X-Gitlab-Instance` + top-level group | none |
 | `jira` | `X-Atlassian-Webhook-Identifier` | Jira site | none |
 | `slack` | `event_id` | `team_id` | `url_verification` |
 | `teams` | SHA-256 of body | `tenantId` | `validationToken` echo |

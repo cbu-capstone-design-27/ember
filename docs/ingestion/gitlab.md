@@ -5,6 +5,7 @@
 - GitLab facts were checked against docs.gitlab.com on 2026-09-23; webhook signing and rate limits re-checked on 2026-10-01 (see [Sources](#sources)).
 - Related: EMBER-39 intake contract, EMBER-34 graph schema, EMBER-12 auth and multi-tenancy, EMBER-35 GitHub (closest sibling)
 - Diagram source for Excalidraw or any Mermaid renderer: [`gitlab/architecture.mmd`](gitlab/architecture.mmd). Word copies: [`gitlab/`](gitlab/).
+- Webhook event types, what `enrich:gitlab` fetches, `delivery_id` and ordering: [`gitlab-webhooks.md`](gitlab-webhooks.md) (EMBER-71).
 
 ## Requirements and architecture
 
