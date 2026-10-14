@@ -42,12 +42,14 @@ LOG = logging.getLogger("gitlab-ingestion")
 WEBHOOK_PATH = "/webhook/gitlab"
 RECENT_DELIVERY_IDS = 10_000
 
-# Webhook triggers for the first cut (docs/ingestion/gitlab.md). Confidential
-# issues and confidential comments are separate triggers and stay off.
+# Webhook triggers (docs/ingestion/gitlab-webhooks.md). Push events joined for
+# enrich:gitlab (EMBER-68). Confidential issues and confidential comments are
+# separate triggers and stay off.
 RECOMMENDED_WEBHOOK_TRIGGERS = (
     "Merge request events",
     "Issues events",
     "Comments",
+    "Push events",
 )
 
 
