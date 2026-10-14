@@ -244,6 +244,29 @@ Five more stdout lines follow, one per remaining event, each the posted JSON wra
 
 On the cluster, the App's public URL is `https://ember.tail470a31.ts.net` (Tailscale Funnel), and nginx routes `https://ember.tail470a31.ts.net/webhook/github` to Service `github-webhook`. That route currently ends at a placeholder listener that returns 200 and stores nothing (see `infra/k8s/README.md`). This receiver replaces the placeholder behind Service `github-webhook` in EMBER-56; until then, do not leave the App's webhook URL pointing at it, because GitHub would record deliveries as successful while they are thrown away. For a receiver on your own machine, point a tunnel at `GITHUB_INGESTION_PORT` (default `8080`) and set the App webhook URL to `https://<tunnel-host>/webhook/github` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8080` or `ngrok http 8080`. The tunnel is not part of this smoke and CI does not start one.
 
+## Enrich worker
+
+`enrich.py` is `enrich:github` (EMBER-65). It turns GitHub rows in `raw_events` into `source_records`, fetching only what the payload lacks (`docs/ingestion/github-webhooks.md`), and sets `enriched_at` in the same transaction. It wakes on `LISTEN raw_events`, catches up at start, and polls every 30 s. `CONCURRENCY` (default 4) bounds rows in flight. Ctrl+C or SIGTERM finishes the rows in flight, then exits.
+
+Against the local Postgres, from the repo root:
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres up -d postgres
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres run --rm postgres-migrate
+pip install -r services/github-ingestion/requirements.txt
+DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable' \
+  python3 services/github-ingestion/enrich.py
+```
+
+Only `pull_request` `opened`/`reopened`/`synchronize` and pushes with a full `commits` array call GitHub. Those need `GITHUB_APP_ID` and the App key from [Credentials](#credentials). Rows with `tenant` null wait until the installation is mapped.
+
+`test_enrich.py` runs the worker against a real Postgres with GitHub stubbed. It needs psql and dbmate, like `infra/k8s/apps/postgres/test_migrations.py`:
+
+```sh
+PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
+  python3 services/github-ingestion/test_enrich.py
+```
+
 ## Test
 
 ```sh

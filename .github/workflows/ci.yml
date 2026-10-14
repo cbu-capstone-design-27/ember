@@ -128,6 +128,16 @@ jobs:
         env:
           GITHUB_WEBHOOK_SECRET: ci-local-smoke
         run: python3 services/github-ingestion/smoke_webhook.py
+      # EMBER-65: uses the pg container and dbmate the migrations step started and downloaded
+      - name: GitHub enrich worker against Postgres
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # The runner's system Python refuses pip install (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/github-enrich-venv"
+          "$RUNNER_TEMP/github-enrich-venv/bin/pip" install -q -r services/github-ingestion/requirements.txt
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/github-enrich-venv/bin/python3" services/github-ingestion/test_enrich.py
       - name: Slack ingestion webhook contract
         run: python3 services/slack-ingestion/test_webhook.py
       - name: Slack ingestion local pull contract
