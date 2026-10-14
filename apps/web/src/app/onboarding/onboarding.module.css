@@ -1,0 +1,68 @@
+.page {
+  min-height: 100vh;
+  background:
+    radial-gradient(60% 40% at 50% -10%, var(--accent-soft), transparent 70%),
+    var(--bg);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 1.1rem 1.5rem;
+}
+
+.brand {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.main {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 4rem;
+}
+
+.intro {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 44rem;
+  margin-bottom: 1.75rem;
+}
+
+.intro h1 {
+  font-size: 1.85rem;
+}
+
+.intro p {
+  color: var(--text-2);
+  font-size: 0.95rem;
+}
+
+.intro .note {
+  font-size: 0.85rem;
+  color: var(--text-3);
+}
+
+@media (max-width: 600px) {
+  .header {
+    padding: 0.9rem 1rem;
+  }
+
+  .main {
+    padding: 1rem 1rem 3rem;
+  }
+
+  .intro h1 {
+    font-size: 1.45rem;
+  }
+}
