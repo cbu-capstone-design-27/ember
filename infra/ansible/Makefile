@@ -15,9 +15,9 @@ AGE_VERSION := v1.3.2
 AGE_SHA256 := cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
 CONTEXT := homelab
 # Where the team reaches Postgres over the tailnet: the node apps/postgres/cluster.yaml pins it to
+POSTGRES_HOST := $(shell sed -n 's|^ *kubernetes.io/hostname: *||p' ../k8s/apps/postgres/cluster.yaml).$(shell sed -n 's/^tailnet_domain: *//p' group_vars/all/main.yml)
 # The dbmate the migrate Job runs, so a migration applied here is one the Job later skips
 DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-job.yaml)
-POSTGRES_HOST := $(shell sed -n 's|^ *kubernetes.io/hostname: *||p' ../k8s/apps/postgres/cluster.yaml).$(shell sed -n 's/^tailnet_domain: *//p' group_vars/all/main.yml)
 
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
