@@ -1,0 +1,34 @@
+# Which models the pipeline calls. Select a profile with MODEL_PROFILE or --profile.
+# API keys are never stored here: *_key_env names the environment variable that holds the key.
+# LLM_BASE_URL and EMBEDDING_BASE_URL in the environment override the base URLs below.
+
+default_profile = "local-spark"
+
+# Cheap cloud models for development (ADR 0007). One key serves both.
+[profiles.openai-dev]
+llm_base_url = "https://api.openai.com/v1"
+llm_model = "gpt-5-nano"
+llm_key_env = "OPENAI_API_KEY"
+embedding_base_url = "https://api.openai.com/v1"
+embedding_model = "text-embedding-3-small"
+embedding_dimensions = 1024
+embedding_key_env = "OPENAI_API_KEY"
+send_dimensions = true
+embedding_revision = "provider-managed"
+query_template = "{query}"
+
+# The models on the DGX Spark (ADR 0008): the chat model (infra/spark/deploy-llm.sh) and the embedding
+# service (ADR 0001, services/embedding). The URLs below are what you see through an SSH tunnel;
+# set EMBEDDING_BASE_URL to the Spark's public address (the chat model has no public address yet).
+[profiles.local-spark]
+llm_base_url = "http://localhost:8001/v1"
+llm_model = "qwen3-30b-a3b-instruct"
+llm_key_env = "LLM_API_KEY"
+embedding_base_url = "http://localhost:8000/v1"
+embedding_model = "qwen3-embedding-0.6b"
+identity_model = "Qwen/Qwen3-Embedding-0.6B"
+embedding_dimensions = 1024
+embedding_key_env = "EMBEDDING_API_KEY"
+send_dimensions = false
+embedding_revision = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
+query_template = "Instruct: {task}\nQuery: {query}"

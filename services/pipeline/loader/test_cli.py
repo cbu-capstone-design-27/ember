@@ -8,6 +8,7 @@ from unittest import mock
 
 from loader.__main__ import main
 from loader.testdata import write_sample
+from models.client import ModelError
 
 
 def run_cli(*args):
@@ -37,8 +38,62 @@ class CliTests(unittest.TestCase):
     def test_missing_password_is_a_clear_error(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(SystemExit) as raised:
-                run_cli("--tenant", "brandon-dev", "--input", tmp)
+                run_cli("--tenant", "brandon-dev", "--input", tmp, "--no-dotenv")
         self.assertIn("NEO4J_PASSWORD", str(raised.exception))
+
+    def test_embed_without_a_key_stops_before_loading(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {}, clear=True):
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            with self.assertRaises(SystemExit) as raised:
+                run_cli("--tenant", "brandon-dev", "--input", str(Path(tmp) / "raw"), "--dry-run",
+                        "--embed", "--profile", "openai-dev", "--no-dotenv",
+                        "--rejects", str(Path(tmp) / "r.jsonl"))
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["raw"])  # nothing loaded or written
+        self.assertIn("OPENAI_API_KEY", str(raised.exception))
+
+    def test_embed_key_error_fires_before_the_neo4j_writer_is_built(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {}, clear=True),                 mock.patch("loader.__main__._neo4j_writer", side_effect=AssertionError("Neo4j was touched")):
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            with self.assertRaises(SystemExit) as raised:
+                run_cli("--tenant", "brandon-dev", "--input", str(Path(tmp) / "raw"),
+                        "--embed", "--profile", "openai-dev", "--no-dotenv")
+        self.assertIn("OPENAI_API_KEY", str(raised.exception))
+
+    def test_embed_flag_embeds_in_a_dry_run(self):
+        env = {"OPENAI_API_KEY": "sk-test-not-real"}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch("loader.__main__.Client") as client_cls:
+            client_cls.return_value.embed.side_effect = lambda texts, **kw: [[0.0, 1.0] for _ in texts]
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            code, text = run_cli("--tenant", "brandon-dev", "--input", str(Path(tmp) / "raw"),
+                                 "--rejects", str(Path(tmp) / "r.jsonl"), "--dry-run",
+                                 "--embed", "--profile", "openai-dev", "--no-dotenv")
+        self.assertEqual(code, 0, text)
+        self.assertIn("embedded:       7", text)
+        self.assertNotIn("sk-test-not-real", text)
+
+    def test_profile_without_embed_is_a_parser_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as raised:
+                run_cli("--tenant", "brandon-dev", "--input", tmp, "--dry-run", "--profile", "openai-dev")
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--profile only applies with --embed", err.getvalue())
+
+    def test_a_model_error_while_embedding_exits_one_with_a_stderr_line(self):
+        env = {"OPENAI_API_KEY": "sk-test-not-real"}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env, clear=True),                 mock.patch("loader.__main__.Client") as client_cls:
+            client_cls.return_value.embed.side_effect = ModelError("/embeddings returned HTTP 400: too long")
+            write_sample(Path(tmp) / "raw", include_bad=False)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code, text = run_cli("--tenant", "brandon-dev", "--input", str(Path(tmp) / "raw"),
+                                     "--rejects", str(Path(tmp) / "r.jsonl"), "--dry-run",
+                                     "--embed", "--profile", "openai-dev", "--no-dotenv")
+        self.assertEqual(code, 1)
+        self.assertIn("nodes written:", text)  # the normal report is still printed
+        self.assertEqual(err.getvalue().strip(), "error: embedding step failed: /embeddings returned HTTP 400: too long")
+        self.assertNotIn("sk-test-not-real", text + err.getvalue())
 
     def test_bad_tenant_is_a_clear_error(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -66,3 +66,55 @@ code is 1 if anything was rejected or the schema check found a mismatch, so a cl
 
 Tests: `cd services/pipeline && python -m unittest discover -s loader -t . -p "test_*.py" -v`.
 The Neo4j integration test runs only when `NEO4J_TEST_URI` is set.
+
+## Models (EMBER-49)
+
+The pipeline calls a chat model and an embedding model chosen by a profile in `config/models.toml`.
+The default profile is `local-spark`: Qwen3-30B-A3B for chat and Qwen3-Embedding-0.6B for embeddings, both
+on the DGX Spark (why: `docs/adr/0008-local-llm-on-the-spark.md`). `openai-dev` calls hosted OpenAI models
+(`docs/adr/0007-cloud-llm-and-embedding.md`) and drops in once credits arrive. To switch, set
+`MODEL_PROFILE` (or pass `--profile`) or edit that file. No code changes. Empty variables are treated as
+unset, so the blank `LLM_BASE_URL=` / `EMBEDDING_BASE_URL=` lines in `.env` leave the profile's URLs alone.
+
+Keys are read from environment variables, never from the repository. Copy `.env.example` to `.env`. For
+`local-spark` set `LLM_API_KEY` and `EMBEDDING_API_KEY` (generated on the Spark, in its `~/ember/.env`),
+and `EMBEDDING_BASE_URL` (the Spark's public address, port 8000). The chat model is private to the Spark:
+tunnel its port with `ssh -L 8001:127.0.0.1:8001 shared-dev` and the profile's default
+`http://localhost:8001/v1` works. On a cluster node, run the same tunnel under a supervisor (systemd or
+autossh) so it restarts if it drops (ADR 0008). For `openai-dev` set `OPENAI_API_KEY` and a monthly
+spending limit on the provider account.
+
+Deploy or refresh the servers on the Spark with `infra/spark/deploy-llm.sh` (chat) and
+`infra/spark/deploy.sh` (embeddings).
+
+Check that the models answer (one chat call and one embedding call). The first
+command runs from `services/pipeline`; the docker command runs from the repo root:
+
+    cd services/pipeline && python -m models smoke
+    docker compose -f infra/docker-compose.yml --env-file .env --profile pipeline run --rm \
+      --entrypoint python pipeline -m models smoke
+
+Embed during a load:
+
+    python -m loader --tenant brandon-dev --input ../../data/raw/brandon-dev --embed
+
+`--dry-run --embed` still calls the embedding API (only Neo4j is skipped). `--profile` only matters
+with `--embed`; without it the loader exits with a usage error.
+
+Under compose the arguments after the service name replace `command:` entirely, so enabling `--embed`
+means giving the full list:
+
+    docker compose -f infra/docker-compose.yml --env-file .env --profile pipeline run --rm pipeline \
+      --tenant <tenant> --input /data/raw/<tenant> --rejects /data/out/rejects.jsonl --embed
+
+Each node's `embed_text` is embedded unprefixed, the vector is stored on the node, and the model is
+recorded once in the `EmberConfig` node. The first `--embed` run records the embedding model in the
+graph, and a different model is refused afterwards: a graph holds vectors from one model only
+(ADR 0001), so switching means re-embedding everything. Delete the
+`(:EmberConfig {key: 'embedding'})` node and each tenant's `embedding` and `embedding_text_hash`
+properties deliberately, then rerun with `--embed`.
+
+With `openai-dev`, embedding a small input costs a few cents; set a spending limit on the provider account
+before the first real run. `local-spark` costs nothing per call.
+
+Tests (no key, no network): `cd services/pipeline && python -m unittest discover -s models -t . -p "test_*.py" -v`.

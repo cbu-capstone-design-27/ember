@@ -4,9 +4,12 @@ before being placed in a query."""
 
 from __future__ import annotations
 
+import logging
+from dataclasses import asdict
 from itertools import groupby
 
 from ontology import EDGE_TYPES, ENTITY_TYPES
+from ontology.config import SCHEMA_VERSION, EmbeddingIdentity
 
 from .facts import SCHEMA_PATH, SOURCE_BACKED, GraphFacts, parse_schema_statements
 from .records import EdgeRec, NodeRec
@@ -67,6 +70,8 @@ class Neo4jWriter:
         if driver is None:
             from neo4j import GraphDatabase  # imported here so unit tests need no driver
 
+            # A first run asks for properties that do not exist yet; that is expected, not a problem.
+            logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
             driver = GraphDatabase.driver(uri, auth=(user, password))
         self._driver = driver
         self._database = database
@@ -107,6 +112,36 @@ class Neo4jWriter:
                 result = self._run(edge_query(rel, src, dst), rows=chunk)
                 written += result[0]["n"] if result else 0
         return written
+
+    def read_embedding_identity(self):
+        rows = self._run("MATCH (c:EmberConfig {key: 'embedding'}) RETURN c.model AS model, "
+                         "c.revision AS revision, c.dimension AS dimension, c.query_template AS query_template")
+        return EmbeddingIdentity(**rows[0]) if rows else None
+
+    def write_embedding_identity(self, identity) -> None:
+        self._run("MERGE (c:EmberConfig {key: 'embedding'}) ON CREATE SET c.model = $model, "
+                  "c.revision = $revision, c.dimension = $dimension, c.query_template = $query_template, "
+                  "c.schema_version = $schema_version", schema_version=SCHEMA_VERSION, **asdict(identity))
+
+    def embed_candidates(self, group_ids: list[str]) -> list[dict]:
+        found: list[dict] = []
+        for label in sorted(SOURCE_BACKED):
+            rows = self._run(
+                f"MATCH (n:{_label(label)}) WHERE n.group_id IN $gids AND n.embed_text IS NOT NULL "
+                "AND trim(n.embed_text) <> '' "
+                "RETURN n.uuid AS uuid, n.group_id AS group_id, n.external_id AS key, "
+                "n.embed_text AS text, n.embedding_text_hash AS hash, n.embedding AS vector",
+                gids=group_ids)
+            found += [{"label": label, **row} for row in rows]
+        return found
+
+    def write_embeddings(self, rows: list[dict]) -> None:
+        for label, group in groupby(sorted(rows, key=lambda r: r["label"]), key=lambda r: r["label"]):
+            payload = [{"group_id": r["group_id"], "uuid": r["uuid"], "vector": r["vector"], "hash": r["hash"]}
+                       for r in group]
+            for chunk in _chunks(payload, 100):
+                self._run(f"UNWIND $rows AS row MATCH (n:{_label(label)} {{group_id: row.group_id, uuid: row.uuid}}) "
+                          "SET n.embedding = row.vector, n.embedding_text_hash = row.hash", rows=chunk)
 
     def read_facts(self, group_ids: list[str]) -> GraphFacts:
         facts = GraphFacts()

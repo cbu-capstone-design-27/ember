@@ -114,7 +114,7 @@ Node and edge validity comes from the engine: each fact has `valid_at`, `invalid
 
 ## Embeddings and config
 
-The engine embeds entity names and fact text. The model and its settings are fixed by [ADR 0001](adr/0001-embedding-model.md). One `(:EmberConfig {key: 'embedding'})` node records the model id, revision, dimension, query template and schema version. `ontology/config.py` checks it at startup and raises on mismatch; the fix for a mismatch is a full rebuild, not editing the node.
+The engine embeds entity names and fact text. The model and its settings are fixed by [ADR 0001](adr/0001-embedding-model.md). One `(:EmberConfig {key: 'embedding'})` node records the model id, revision, dimension, query template and schema version. The identity comes from the active model profile (`models.identity.identity_for`), not from a fixed constant. The loader's `--embed` step records it once, on the first successful embed, and `ontology/config.py` refuses any different identity afterwards; the fix for a mismatch is a full rebuild, not editing the node. `ontology.config.EXPECTED` (Qwen3-Embedding-0.6B) is only the identity of the `local-spark` profile. `EmberConfig` is per database, so on a shared database the first tenant to embed fixes the model for all tenants.
 
 ## Extending
 
@@ -130,7 +130,7 @@ Once the cluster Neo4j is reachable:
 
 1. Let the engine create its indexes (`build_indices_and_constraints()`).
 2. Apply `services/pipeline/ontology/schema.cypher`: uniqueness on `(group_id, source, external_id)` per source-backed type, and on `EmberConfig.key`. Neo4j Community supports uniqueness constraints but not existence or node-key constraints, so "required" attributes are enforced in code by the pydantic models. Apply these only after the ADR 0002 spike confirms custom attributes are stored as node properties. Checked on Neo4j 2026.09.0 Community, the cluster's version: 7 constraints are created, a re-run is a no-op, a duplicate `(group_id, source, external_id)` is rejected, and the same id in another subgraph is allowed.
-3. Write the `EmberConfig` node from `ontology.config.EXPECTED`.
+3. The `EmberConfig` node is written by the loader's first successful `--embed` run, from the active profile's identity (`models.identity.identity_for`); nothing writes it by hand.
 4. Start ingesting.
 
 Vector indexes are not created; similarity is an exact scan at launch scale. Add one when scale requires it, sized from the recorded dimension.

@@ -5,6 +5,7 @@ WORKDIR /opt/ember
 COPY services/pipeline/requirements.txt services/pipeline/requirements.txt
 RUN pip install --no-cache-dir -r services/pipeline/requirements.txt
 COPY packages/ingestion-envelope packages/ingestion-envelope
+COPY config config
 COPY services/pipeline services/pipeline
 
 WORKDIR /opt/ember/services/pipeline
