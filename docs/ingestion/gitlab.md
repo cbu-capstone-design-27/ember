@@ -1,7 +1,7 @@
 # GitLab ingestion: requirements and architecture
 
 - Jira: EMBER-38 (drop-first), epic EMBER-20 (GitLab Ingestion)
-- Status: built in [`services/gitlab-ingestion`](../../services/gitlab-ingestion/README.md) (EMBER-54, rate limits EMBER-55). Not yet run against a live GitLab project.
+- Status: built in [`services/gitlab-ingestion`](../../services/gitlab-ingestion/README.md) (EMBER-54, rate limits EMBER-55). Backfill and reconciliation run against a live GitLab.com project (EMBER-47, see [Test project](#test-project)). Live webhooks not yet tested.
 - GitLab facts were checked against docs.gitlab.com on 2026-09-23; webhook signing and rate limits re-checked on 2026-10-01 (see [Sources](#sources)).
 - Related: EMBER-39 intake contract, EMBER-34 graph schema, EMBER-12 auth and multi-tenancy, EMBER-35 GitHub (closest sibling)
 - Diagram source for Excalidraw or any Mermaid renderer: [`gitlab/architecture.mmd`](gitlab/architecture.mmd). Word copies: [`gitlab/`](gitlab/).
@@ -29,7 +29,7 @@ One `{"type":"gitlab","body":<raw GitLab JSON>}` line per object. Stdout today, 
 
 1. **API credential:** a GitLab access token with the `read_api` scope, used only by the backfill.
    - Prefer a **Group Access Token** over a Personal Access Token. It belongs to the group, not a person, so it survives someone leaving.
-   - Project Access Tokens need Premium or Ultimate on GitLab.com, so the group token is the safer default across tiers.
+   - On GitLab.com, Group and Project Access Tokens both need Premium or Ultimate. On the Free tier, use a Personal Access Token.
    - Sent as `PRIVATE-TOKEN: <token>` or `Authorization: Bearer <token>`.
 2. **Webhook verification:** set on the webhook itself and checked by the receiver on every delivery.
    - **Signing token (recommended):** HMAC-SHA256, sent in the `webhook-id`, `webhook-timestamp` and `webhook-signature` (`v1,<base64>`) headers.
@@ -134,11 +134,29 @@ GitLab webhooks carry the full object, not just a change signal, so the receiver
 | Handoff point | Intake provides | Pipeline is responsible for |
 | --- | --- | --- |
 | Where data is handed over | One `{type:"gitlab", body}` JSON line per object. Stdout today, the router's queue (EMBER-2) later. | Routing `type: "gitlab"` to the GitLab source pipeline |
-| Identifying each object | Webhooks: `object_kind` (`merge_request`, `issue`, `work_item`, `note`). Backfill: raw REST objects, which **have no `object_kind`**. | Classifying both. `services/pipeline/ontology/sources.py` `_gitlab` keys on `object_kind` only, so it misses REST objects and `work_item`. Follow-up for Brandon (EMBER-34). |
+| Identifying each object | Webhooks: `object_kind` (`merge_request`, `issue`, `work_item`, `note`). Backfill: raw REST objects, which **have no `object_kind`**. | Classifying both. `services/pipeline/ontology/sources.py` `_gitlab` reads `object_kind` on webhooks (`work_item` counts as an issue) and classifies REST objects by the fields only that type has (`noteable_type`, `source_branch`, `issue_type`, `path_with_namespace`). |
 | Duplicates | The same MR or comment can arrive from a webhook, a retry and a reconciliation run | Idempotent upsert on the stable IDs in [Data shapes](#data-shapes) |
 | Edits and reversals | Every update re-sent in full, with `changes` on MR updates | Superseding, not overwriting, a reversed decision |
 | People | `user` / `author` with `username`. Email may be `[REDACTED]`. | Resolving people by `username` first (the key in `docs/graph-schema.md`), email second |
 | Noise | Nothing filtered at intake | Filtering and decision detection |
+
+## Test project
+
+EMBER-47. The connector is tested against [`gitlab-org/ruby/gems/gitlab-dangerfiles`](https://gitlab.com/gitlab-org/ruby/gems/gitlab-dangerfiles) (project id `19861191`), a public, MIT-licensed GitLab.com project.
+
+- Picked for real review discussion (mostly about code-review conventions), current activity, and a size that backfills in under a minute.
+- GitLab.com needs a token to read notes, even on a public project. The project, merge request and issue lists work without one. Any account's token with `read_api` can read it.
+- The team doesn't maintain it, so it can't take a webhook. Live webhook tests need a project the team maintains.
+- `stoffel-dev-group/photon` was dropped: its GitLab copy has the repository but no merge requests or issues, so a backfill only returns the project.
+
+Results on 2026-10-08:
+
+| Run | Envelopes | Breakdown |
+| --- | --- | --- |
+| Full backfill | 7,287 in 42 s | 1 project, 330 MRs, 6,119 MR notes, 99 issues, 738 issue notes |
+| `--lookback-hours 168` | 101 | 1 project, 5 MRs, 71 MR notes, 3 issues, 21 issue notes |
+
+Every envelope passed the `packages/ingestion-envelope` schema, and `_gitlab` classified every one to the right kind.
 
 ## Sources
 
@@ -155,3 +173,7 @@ Checked on 2026-10-01:
 - [GitLab.com settings](https://docs.gitlab.com/user/gitlab_com/): webhook timeout, payload size and rate limits
 - [GitLab.com rate limits](https://docs.gitlab.com/user/gitlab_com/rate_limits/): authenticated and unauthenticated API limits, proposed per-plan limits
 - [User and IP rate limits](https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/): `RateLimit-*` and `Retry-After` response headers
+
+Checked on 2026-10-08:
+
+- [Group access tokens](https://docs.gitlab.com/user/group/settings/group_access_tokens/) and [project access tokens](https://docs.gitlab.com/user/project/settings/project_access_tokens/): Premium or Ultimate on GitLab.com

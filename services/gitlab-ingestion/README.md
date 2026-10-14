@@ -61,7 +61,7 @@ Confidential issues events and confidential comments are separate triggers and s
 | Variable | Role |
 | --- | --- |
 | `GITLAB_BASE_URL` | Instance URL, without `/api/v4`. Default `https://gitlab.com`. Must be https, except for a local instance on `localhost`. |
-| `GITLAB_API_TOKEN` | Access token with the `read_api` scope. Prefer a group access token: it belongs to the group, not a person. Sent as `PRIVATE-TOKEN`. Never commit it. |
+| `GITLAB_API_TOKEN` | Access token with the `read_api` scope. Prefer a group access token: it belongs to the group, not a person. On GitLab.com those need Premium or Ultimate, so on Free use a personal access token. Sent as `PRIVATE-TOKEN`. Never commit it. |
 | `GITLAB_PROJECT` | Project to pull: numeric id or full path (`group/project`). `--project` overrides it. |
 | `GITLAB_PULL_CONCURRENCY` | Parallel note fetches. Default 8, maximum 32. `--concurrency` overrides it. |
 
