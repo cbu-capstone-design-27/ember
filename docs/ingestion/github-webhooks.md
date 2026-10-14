@@ -46,7 +46,7 @@ GitHub sends no timestamp header. The only times are inside the payload ([Orderi
 
 ## Event types: payload and what enrich fetches
 
-The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/github-ingestion/receiver.py` (24 names, also in the service README). The receiver doesn't filter on it. **With the App's current permissions (Metadata, Contents, Issues, Pull requests) GitHub only delivers 13 of them**, plus the two installation events every App gets. The rest need permissions the App doesn't have. See [open questions](#open-questions).
+The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/intake/adapters/github.py` (24 names, also in intake's README). Intake doesn't filter on it. **With the App's current permissions (Metadata, Contents, Issues, Pull requests) GitHub only delivers 13 of them**, plus the two installation events every App gets. The rest need permissions the App doesn't have. See [open questions](#open-questions).
 
 | Event | Permission GitHub requires | Delivered today |
 |---|---|---|
@@ -127,10 +127,11 @@ GitHub's arrival order isn't its own order. GitHub doesn't document any delivery
 | Body | Gives | Precision |
 |---|---|---|
 | `issues`, `issue_comment`, `pull_request`, `pull_request_review_comment`, `commit_comment`, `milestone` | `updated_at` | Whole seconds |
-| `pull_request_review` | `review.submitted_at` | Whole seconds |
-| `release` (`published`, `created`) | `published_at` or `created_at` | Whole seconds |
+| `pull_request_review` (`submitted`) | `review.submitted_at` | Whole seconds |
+| `release` (`published`, `created`, `released`, `prereleased`) | `published_at` or `created_at` | Whole seconds |
 | `push` | `repository.pushed_at`. In push payloads GitHub sends it as epoch seconds, not an ISO string. Confirm on a real delivery | Whole seconds |
 | Every `deleted` action, `dismissed`, `label`, `repository`, `create`, `delete`, `installation*` | `received_at`. A deleted object's `updated_at` is its last edit, not the delete, so it would sort the tombstone before that edit | Microseconds, but it's our clock |
+| Every other `pull_request_review` and `release` action, e.g. `edited` | `received_at`. These objects have no `updated_at`, and an edit keeps the original submit or publish time, so it would tie with the event it changed | Microseconds, but it's our clock |
 | Reconcile | The object's `updated_at`; a commit's `committer.date` | Whole seconds |
 
 - **Type.** `timestamptz` (EMBER-63). GitHub's ISO-8601 UTC strings and epoch seconds both convert exactly. The same value fills `source_records.occurred_at`.

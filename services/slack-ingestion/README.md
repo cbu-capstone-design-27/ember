@@ -65,7 +65,7 @@ Edits arrive as `message` with `subtype: message_changed` (new text in `event.me
 | Variable | Role |
 | --- | --- |
 | `SLACK_SIGNING_SECRET` | Request signing key for the receiver. Empty skips verification. Not used by `pull_test.py`. |
-| `SLACK_INGESTION_PORT` | Receiver port. Default `8082`, beside `github-ingestion` on `8080`. |
+| `SLACK_INGESTION_PORT` | Receiver port. Default `8082`, beside `intake` on `8080`. |
 | `SLACK_BOT_TOKEN` | Bot User OAuth Token (`xoxb-…`, or `xoxe.xoxb-…` with token rotation on) for `pull_test.py` only. User (`xoxp-`) and app-level (`xapp-`) tokens are refused. The receiver does not read it. Never commit it. |
 | `SLACK_TEST_CHANNEL` | One channel id (`C…`/`G…`) for `pull_test.py` only. Empty reads every channel the bot is in. Not a filter on the webhook path. |
 | `SLACK_PULL_CONCURRENCY` | Channels read in parallel by `pull_test.py`. Default `4`. Range 1–16. |

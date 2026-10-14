@@ -1,6 +1,6 @@
 # services/github-ingestion
 
-GitHub App webhook connector. Each delivery is emitted as EMBER-39 intake: `{"type":"github","body":<raw JSON object>}`.
+GitHub App connector: the local REST backfill (`pull_test.py`) and `enrich:github` (`enrich.py`). Both work in EMBER-39 envelopes, `{"type":"github","body":<raw JSON object>}`. Live webhooks are received and stored by [`services/intake`](../intake/README.md) (EMBER-62).
 
 Jira: EMBER-35. Floor scaffold. The worker is repo- and account-agnostic. It does not clean or sort the payload. Embeddings stay out (EMBER-3). No live tunnel and no App registration in this change.
 
@@ -10,44 +10,21 @@ Installing the App on an account or org defaults to all repositories. Choosing w
 
 ## Status
 
-HTTP receiver for live deliveries, plus a local full REST backfill for one test repository. The receiver checks an optional HMAC, wraps the raw body, and writes one envelope per delivery to stdout. It does not filter on event name or repository. No queue yet. The receiver does not call the GitHub API.
-
-`pull_test.py` is the backfill. It is a follow-on to the slim issues / pull requests / default-branch commits cut: one envelope per discrete REST object, not a second copy of the same pull request.
-
-Live App webhooks still need a public URL that reaches this receiver. The cluster's webhook URL ends at a placeholder for now (see the end of "Local webhook smoke"). This change does not open a tunnel or register a webhook. Subscribe the events below on the App when you want those deliveries.
-
-## Contract
-
-`POST /webhook/github` with a JSON object body.
-
-When `GITHUB_WEBHOOK_SECRET` is set, the receiver requires `X-Hub-Signature-256` (`sha256=` plus the hex HMAC-SHA256 of the raw body). When the secret is unset, verification is skipped and a warning is logged so a local stub can run.
-
-The logged line is exactly:
-
-```json
-{"type":"github","body":{}}
-```
-
-`body` is the parsed webhook JSON, unchanged. Schema: `packages/ingestion-envelope`.
-
-When the payload includes them, the process log also records `installation.id` and `repository.full_name` for later routing. Missing fields are logged as empty. The receiver never filters on a configured repository.
-
-`GET /health` returns `{"status":"ok"}`.
+`pull_test.py` is a local full REST backfill for one test repository. It is a follow-on to the slim issues / pull requests / default-branch commits cut: one envelope per discrete REST object, not a second copy of the same pull request. `enrich.py` turns GitHub rows in `raw_events` into `source_records` ([Enrich worker](#enrich-worker)).
 
 ## GitHub App
 
-This is a GitHub App webhook endpoint, not a classic OAuth app and not a single-repo webhook. `ember-ingest` is an example App. The worker does not hard-code its slug, id, or install target.
+This is a GitHub App, not a classic OAuth app and not a single-repo webhook. `ember-ingest` is an example App. The worker does not hard-code its slug, id, or install target.
 
-Permissions below are what `pull_test.py` needs on the installation. Event subscriptions are for live webhooks; the receiver does not filter on them, and this PR does not register them. The list lives in `RECOMMENDED_WEBHOOK_EVENTS` in `receiver.py`.
+Permissions below are what `pull_test.py` needs on the installation. Event subscriptions are for live webhooks, which intake receives. The list is in [`services/intake`'s README](../intake/README.md#events).
 
 ### Credentials
 
 | Variable | Role |
 | --- | --- |
-| `GITHUB_APP_ID` | App id. Example: `5075660` (`ember-ingest`). Not a secret. The webhook receiver does not read it. `pull_test.py` does. |
+| `GITHUB_APP_ID` | App id. Example: `5075660` (`ember-ingest`). Not a secret. `pull_test.py` and `enrich.py` read it. |
 | `GITHUB_APP_PRIVATE_KEY_PATH` | Path to the App `.pem`. Preferred. Never commit the file. |
 | `GITHUB_APP_PRIVATE_KEY` | PEM contents, including the BEGIN/END lines. Used by `pull_test.py` only when the path is empty. |
-| `GITHUB_WEBHOOK_SECRET` | Used by the webhook receiver for HMAC. Empty skips verification. Not used by `pull_test.py`. |
 | `GITHUB_TEST_REPO` | `owner/name` for `pull_test.py` only. Example test target: `ryan-stoffel/photon`. Not a filter on the webhook path. |
 
 ### Permissions (read)
@@ -63,32 +40,7 @@ No organization permissions in this scaffold.
 
 ### Events
 
-Subscribe to these on the App. Each delivery is still one raw envelope, whatever the event name is.
-
-- `installation`
-- `installation_repositories`
-- `repository`
-- `push`
-- `create`
-- `delete`
-- `issues`
-- `issue_comment`
-- `pull_request`
-- `pull_request_review`
-- `pull_request_review_comment`
-- `commit_comment`
-- `release`
-- `milestone`
-- `label`
-- `status`
-- `check_run`
-- `check_suite`
-- `workflow_run`
-- `workflow_job`
-- `deployment`
-- `deployment_status`
-- `discussion`
-- `discussion_comment`
+Subscribe the App to the events in [`services/intake`'s README](../intake/README.md#events). For each one, this is what the REST backfill stores instead:
 
 | Live event | What the REST backfill stores for the same idea |
 | --- | --- |
@@ -108,23 +60,6 @@ Subscribe to these on the App. Each delivery is still one raw envelope, whatever
 | `workflow_run`, `workflow_job` | Not in the REST backfill (Actions permission) |
 | `deployment`, `deployment_status` | Not in the REST backfill (Deployments permission) |
 
-The receiver accepts any JSON object. It does not filter on event name.
-
-## Run
-
-```sh
-python3 services/github-ingestion/receiver.py
-```
-
-`GITHUB_INGESTION_PORT` defaults to `8080`.
-
-Own container, optional compose profile. A plain `up` still starts only Neo4j:
-
-```sh
-docker compose -f infra/docker-compose.yml --env-file .env \
-  --profile github-ingestion up --build github-ingestion
-```
-
 ## Local test pull
 
 Example App already created (not hard-coded in the worker):
@@ -135,7 +70,7 @@ Example App already created (not hard-coded in the worker):
 - Org: `cbu-capstone-design-27`
 - Installed on the current test target: `ryan-stoffel/photon`
 
-The private key and webhook secret stay on your machine.
+The private key stays on your machine.
 
 After checkout:
 
@@ -144,7 +79,6 @@ git fetch && git checkout feature/EMBER-35-github-full-backfill
 
 export GITHUB_APP_ID=5075660
 export GITHUB_APP_PRIVATE_KEY_PATH="/absolute/path/to/ember-ingest.private-key.pem"
-export GITHUB_WEBHOOK_SECRET="your-webhook-secret"
 export GITHUB_TEST_REPO=ryan-stoffel/photon
 
 python3 services/github-ingestion/pull_test.py
@@ -222,32 +156,6 @@ These are intentional. The pull stays on Metadata, Contents, Issues, and Pull re
 - Traffic, hooks, teams, and org membership.
 - Any repository other than `GITHUB_TEST_REPO`. This command does not replay webhooks.
 
-## Local webhook smoke
-
-This checks signed deliveries against the receiver on your machine. It does not call GitHub and it does not need a public URL. `pull_test.py` is a separate backfill.
-
-```sh
-git fetch && git checkout feature/EMBER-35-github-full-backfill
-
-export GITHUB_WEBHOOK_SECRET="throwaway-local-secret"
-
-scripts/smoke_webhook.sh
-```
-
-Any throwaway string is fine. The script starts the receiver and POSTs `issues`, `pull_request`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `release`, and `create`, each with `X-Hub-Signature-256`. It expects HTTP 202 and one stdout line per delivery. The first two lines are:
-
-```json
-{"type":"github","body":{"action":"opened","issue":{"number":12,"title":"Login redirect drops the query string","state":"open","body":"Repro: sign in with ?next=/settings and land on /."},"repository":{"full_name":"acme/widget"},"installation":{"id":1}}}
-```
-
-```json
-{"type":"github","body":{"action":"opened","pull_request":{"number":3,"title":"Add parser","state":"open","body":"What this changes."},"repository":{"full_name":"acme/widget"},"installation":{"id":1}}}
-```
-
-Five more stdout lines follow, one per remaining event, each the posted JSON wrapped unchanged. Success ends with `smoke ok: 7 envelopes` on stderr.
-
-On the cluster, the App's public URL is `https://ember.tail470a31.ts.net` (Tailscale Funnel), and nginx routes `https://ember.tail470a31.ts.net/webhook/github` to Service `github-webhook`. That route currently ends at a placeholder listener that returns 200 and stores nothing (see `infra/k8s/README.md`). This receiver replaces the placeholder behind Service `github-webhook` in EMBER-56; until then, do not leave the App's webhook URL pointing at it, because GitHub would record deliveries as successful while they are thrown away. For a receiver on your own machine, point a tunnel at `GITHUB_INGESTION_PORT` (default `8080`) and set the App webhook URL to `https://<tunnel-host>/webhook/github` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8080` or `ngrok http 8080`. The tunnel is not part of this smoke and CI does not start one.
-
 ## Enrich worker
 
 `enrich.py` is `enrich:github` (EMBER-65). It turns GitHub rows in `raw_events` into `source_records`, fetching only what the payload lacks (`docs/ingestion/github-webhooks.md`), and sets `enriched_at` in the same transaction. It wakes on any notification on `RAW_EVENTS_CHANNEL` (default `raw_events`) and ignores the payload, catches up at start, and polls every 30 s. `CONCURRENCY` (default 4) bounds rows in flight. Ctrl+C or SIGTERM finishes the rows in flight, then exits.
@@ -274,9 +182,7 @@ PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
 ## Test
 
 ```sh
-python3 services/github-ingestion/test_webhook.py
 python3 services/github-ingestion/test_pull.py
-GITHUB_WEBHOOK_SECRET=ci-local-smoke python3 services/github-ingestion/smoke_webhook.py
 ```
 
-`test_pull.py` mocks HTTP. CI runs all three. None of them call GitHub.
+`test_pull.py` mocks HTTP and never calls GitHub. CI runs it and `test_enrich.py`. Intake's webhook tests are in [`services/intake`](../intake/README.md#test).

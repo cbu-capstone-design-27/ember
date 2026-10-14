@@ -91,31 +91,41 @@ It never calls a source API and holds only webhook secrets.
 ```
 POST /webhook/{source}      # source ∈ github | gitlab | jira | slack | teams
 GET  /health                # process up; Postgres reachable
+GET  /metrics               # Prometheus: intake_deliveries_total{source,result}
 ```
 
 | Status | When | What the source does |
 |---|---|---|
 | 200 | Stored and enqueued, or a duplicate of a stored delivery | Done |
 | 200 | Handshake: Slack challenge as JSON, Teams `validationToken` as `text/plain` | Marks the endpoint valid |
+| 400 | Verified, but the body is not a JSON object, a header every delivery carries is missing, or Postgres can't store the payload (`\u0000`, a lone surrogate) | Logs a failed delivery |
 | 401 | Signature, token or `clientState` check failed | Logs a failed delivery |
 | 404 | Unknown `{source}` | Logs a failed delivery |
 | 413 | Body over 8 MiB (nginx and intake agree) | Gives up; reconcile picks the object up later |
-| 503 | Postgres unreachable, nothing stored | Slack and Jira retry. GitHub does not, so reconcile covers it |
+| 503 | Postgres unreachable, restarting or too slow to commit within 8 s, nothing stored | Slack and Jira retry. GitHub does not, so reconcile covers it |
 
 ### Source adapters
 
-Everything source-specific about receiving is one adapter per source. Body limits, storage, enqueueing, health and metrics are written once around it. Today's `services/*-ingestion/receiver.py` and `envelope.py` become these adapters.
+Everything source-specific about receiving is one adapter per source. Body limits, storage, enqueueing, health and metrics are written once around it. Today's `services/*-ingestion/receiver.py` and `envelope.py` become these adapters. GitHub's is `services/intake/adapters/github.py` (EMBER-62).
 
 ```python
 Source = Literal["github", "gitlab", "jira", "slack", "teams"]   # matches envelope v1 "type"
 
+@dataclass(frozen=True)
+class Delivery:                     # one request as it arrived, read once by intake
+    headers: Mapping[str, str]
+    query: Mapping[str, str]        # Teams' validationToken
+    body: bytes                     # what signatures are computed over
+    json: dict                      # the parsed body; raises BadRequest unless it is a JSON object
+
 class SourceAdapter(Protocol):
     name: Source
-    def handshake(self, req: Request) -> Response | None: ...   # Slack, Teams; None for a normal delivery
-    def verify(self, req: Request) -> None: ...                 # raises Unauthorized
-    def delivery_id(self, req: Request) -> str: ...             # stable across the source's retries
-    def account_id(self, req: Request) -> str | None: ...       # mapped to a tenant via installations
-    def event_name(self, req: Request) -> str: ...
+    def handshake(self, d: Delivery) -> Response | None: ...      # Slack, Teams; None for a normal delivery
+    def verify(self, d: Delivery) -> None: ...                    # raises Unauthorized
+    def delivery_id(self, d: Delivery) -> str: ...                # stable across the source's retries
+    def account_id(self, d: Delivery) -> str | None: ...          # mapped to a tenant via installations
+    def event_name(self, d: Delivery) -> str: ...
+    def occurred_at(self, d: Delivery) -> datetime | None: ...    # the source ordering value; None = received_at
 ```
 
 | Adapter | `delivery_id` | `account_id` | Handshake |
@@ -188,7 +198,7 @@ async def run_job(job):
 
 ### Interim: claiming without the job queue
 
-Until the [job queue](#job-queue) lands, enrich workers claim `raw_events` rows directly (EMBER-75). A worker `LISTEN`s on channel `raw_events` (`RAW_EVENTS_CHANNEL` overrides it) and ignores the payload. On a notification, once at start to catch up, and on a 30 s poll for missed notifications, it claims rows with `select ... from raw_events where source = :source and enriched_at is null and tenant is not null order by occurred_at, id limit :n for update skip locked`, oldest by the [source's time](#source-ordering-value-ember-63) first. It writes `source_records` and sets `enriched_at` in the same transaction. The trigger lives in its own migration so EMBER-62 can swap it, and workers depend only on the channel name. The queue replaces this. Workers built before EMBER-63 still claim `order by id` until they move to `occurred_at`.
+Until the [job queue](#job-queue) lands, enrich workers claim `raw_events` rows directly (EMBER-75). A worker `LISTEN`s on channel `raw_events` (`RAW_EVENTS_CHANNEL` overrides it) and ignores the payload. On a notification, once at start to catch up, and on a 30 s poll for missed notifications, it claims rows with `select ... from raw_events where source = :source and enriched_at is null and tenant is not null order by occurred_at, id limit :n for update skip locked`, oldest by the [source's time](#source-ordering-value-ember-63) first. It writes `source_records` and sets `enriched_at` in the same transaction. Intake (EMBER-62) keeps the trigger and sends no `NOTIFY` of its own, so a duplicate delivery, which inserts nothing, wakes no one. Workers depend only on the channel name. The queue replaces this. Workers built before EMBER-63 still claim `order by id` until they move to `occurred_at`.
 
 ### Concurrency
 
@@ -253,7 +263,7 @@ create table raw_events (
 create index raw_events_unenriched on raw_events (source, id) where enriched_at is null;   -- dropped once no worker claims by id
 create index raw_events_unenriched_occurred_at on raw_events (source, occurred_at, id) where enriched_at is null;
 
--- interim (EMBER-75, own migration): every insert notifies channel raw_events to wake the enrich workers. EMBER-62 may replace it
+-- interim (EMBER-75, own migration): every insert notifies channel raw_events to wake the enrich workers. Intake (EMBER-62) keeps it
 create function raw_events_notify() returns trigger language plpgsql as $$
 begin
   perform pg_notify('raw_events', new.source);
@@ -338,7 +348,7 @@ Arrival order isn't the source's order: deliveries overlap, retries and redelive
 
 - **Default.** `now()`, which in one insert is the same as `received_at`, the value every source falls back to. A writer that leaves it out still gets a valid row, ordered by arrival. So a writer's tests assert the value it sets.
 - **How workers use it.** Enrich claims unenriched rows by `(occurred_at, id)` ([Interim: claiming without the job queue](#interim-claiming-without-the-job-queue)) and copies the value to `source_records.occurred_at`. Extract carries it on to `episodes.occurred_at`. A record changes an object only if its value is newer than what's stored for that object, so a late edit can't bring back a delete.
-- **Until intake fills it.** The enrich workers built before EMBER-63 compute the value themselves (`ordering_value()` in each `enrich.py`) and claim by `id`. Until intake (EMBER-62) writes real values, every row holds the `received_at` fallback, so they keep doing that. A follow-up moves them to the column and drops `raw_events_unenriched`.
+- **Until the workers read it.** The enrich workers built before EMBER-63 compute the value themselves (`ordering_value()` in each `enrich.py`) and claim by `id`. Intake (EMBER-62) writes real values for webhooks; reconcile rows hold the `received_at` fallback until each `Enricher.reconcile` sets them. EMBER-76 moves the workers to the column and drops `raw_events_unenriched`.
 
 ### Job queue
 
@@ -448,7 +458,7 @@ ember-admin map     --source github --account 12345 --tenant acme
 
 ## Deployment
 
-Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images come from GHCR, pulled with the EMBER-56 pull secret.
+Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images come from GHCR. The packages are public, so the cluster pulls them without a secret (`docs/container-images.md`).
 
 | Component | Kubernetes object | Image | Secrets it holds |
 |---|---|---|---|
@@ -470,7 +480,7 @@ Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images 
 | Slack's in-process `RecentEvents` de-duplication | `unique (source, delivery_id)` |
 | Per-process rate limiting in the backfills | Shared `rate_limits` |
 | Placeholder `github-webhook` behind nginx | Service `intake`, one nginx location for every source |
-| `packages/ingestion-envelope` | Unchanged contract; gains the shared verify helpers |
+| `packages/ingestion-envelope` | Unchanged contract. Verification lives in intake's adapters, the only code that verifies a delivery |
 
 ## Decisions
 
