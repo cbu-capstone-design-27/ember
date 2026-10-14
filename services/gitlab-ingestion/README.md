@@ -8,7 +8,8 @@ Jira: EMBER-54 (connector) and EMBER-55 (rate limits), epic EMBER-20. Design: [`
 
 - `receiver.py` takes live webhook deliveries. It checks the configured webhook secrets, wraps the raw body, and writes one envelope per delivery to stdout. It does not filter on event, project, or group, holds no API token, and never calls GitLab. GitLab webhooks carry the full object, so nothing needs fetching on the live path.
 - `pull.py` is the backfill and reconciliation. It reads one project through REST API v4 and writes one envelope per REST object.
-- Both run from one Docker image, configured only through environment variables.
+- `enrich.py` is `enrich:gitlab` (EMBER-68). It turns GitLab rows in Postgres `raw_events` into `source_records`. See [Enrich worker](#enrich-worker).
+- The receiver and `pull.py` run from one Docker image, configured only through environment variables.
 - No queue yet. Live webhooks still need a public URL (EMBER-40). This change does not open a tunnel or register a webhook.
 
 ## Webhook
@@ -51,8 +52,9 @@ Enable these on the project or group webhook. Each delivery is still one raw env
 | Merge request events | `Merge Request Hook` | Merge requests |
 | Issues events | `Issue Hook`, `Work Item Hook` | Issues |
 | Comments | `Note Hook` | Merge request and issue notes |
+| Push events | `Push Hook` | None yet. Reconcile doesn't list commits or branches |
 
-Confidential issues events and confidential comments are separate triggers and stay off for the first cut. Push, tag, pipeline, job, wiki, release and milestone triggers are deferred.
+Confidential issues events and confidential comments are separate triggers and stay off for the first cut. Tag, pipeline, job, wiki, release and milestone triggers are deferred.
 
 ## Backfill and reconciliation
 
@@ -150,6 +152,36 @@ scripts/smoke_gitlab_webhook.sh
 
 The script starts the receiver and POSTs signed Merge Request, Issue, Note and Work Item hooks, one retried duplicate, and one forged delivery. It expects `200` for each hook, `duplicate` for the retry, `401` for the forgery, and one stdout line per distinct hook. Success ends with `smoke ok: 4 envelopes` on stderr.
 
+## Enrich worker
+
+`enrich.py` is `enrich:gitlab` (EMBER-68). It turns GitLab rows in `raw_events` into `source_records`, fetching only what the payload lacks (`docs/ingestion/gitlab-webhooks.md`), and sets `enriched_at` in the same transaction. It wakes on any notification on `RAW_EVENTS_CHANNEL` (default `raw_events`) and ignores the payload, catches up at start, and polls every 30 s. `CONCURRENCY` (default 4) bounds rows in flight. Ctrl+C or SIGTERM finishes the rows in flight, then exits.
+
+Against the local Postgres, from the repo root:
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres up -d postgres
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres run --rm postgres-migrate
+pip install -r services/gitlab-ingestion/requirements.txt
+DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable' \
+  python3 services/gitlab-ingestion/enrich.py
+```
+
+| Webhook | Becomes | Calls GitLab |
+| --- | --- | --- |
+| Merge request | `merge_request`, `<project id>!<iid>` | The diffs, on `open`, `reopen` and an `update` that adds commits (`oldrev`) |
+| Issue or work item | `issue`, `<project id>#<iid>` | No |
+| Comment | `note`, `<project id>/note/<id>` | No |
+| Push | One `commit` per SHA and one `ref` | The compare API, when `total_commits_count` is over the 20 commits sent |
+
+Approvals version on arrival, a deleted branch writes a `ref` tombstone, and confidential issues, internal notes and triggers that stay off make no record. REST objects from the backfill (`origin` `backfill` or `reconcile`) map to the same rows and call nothing. Calls need `GITLAB_API_TOKEN` (`read_api`) and go only to `GITLAB_BASE_URL`. They wait on the shared `rate_limits` row for the row's `account_id`, using `pull.py`'s `RateLimit-*` and `Retry-After` handling. Rows with `tenant` null wait until the account is mapped.
+
+`test_enrich.py` runs the worker against a real Postgres with GitLab stubbed. It needs psql and dbmate, like `infra/k8s/apps/postgres/test_migrations.py`:
+
+```sh
+PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
+  python3 services/gitlab-ingestion/test_enrich.py
+```
+
 ## Test
 
 ```sh
@@ -158,4 +190,4 @@ python3 services/gitlab-ingestion/test_pull.py
 GITLAB_WEBHOOK_SIGNING_TOKEN=whsec_Y2ktbG9jYWwtc21va2Uta2V5 python3 services/gitlab-ingestion/smoke_webhook.py
 ```
 
-`test_pull.py` mocks GitLab, including paging and rate-limit headers, with a fake clock. CI runs all three and builds the image. None of them call GitLab.
+`test_pull.py` mocks GitLab, including paging and rate-limit headers, with a fake clock. CI runs all three, plus `test_enrich.py` against Postgres ([Enrich worker](#enrich-worker)), and builds the image. None of them call GitLab.
