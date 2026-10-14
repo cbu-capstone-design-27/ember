@@ -47,16 +47,17 @@ GitLab sends one HTTPS POST per event, naming it in the `X-Gitlab-Event` header.
 | Merge request events | `Merge Request Hook` | MR opened, updated, approved, merged, closed; new commits on the source branch | The decision unit: what changed and why |
 | Issues events | `Issue Hook` / `Work Item Hook` | Issue or work item created, edited, closed, reopened | Ticket-side context |
 | Comments | `Note Hook` | Comment on an MR, issue, commit or snippet | MR review comments, where the reasoning lives |
+| Push events | `Push Hook` | Commits pushed to a branch; a branch deleted | Commits and branches between merge requests. Added for `enrich:gitlab` (EMBER-68) |
 
 - Scope is set by **which triggers are enabled on the webhook**, not by the receiver. Like the other workers, intake never filters.
 - **Confidential issues and confidential comments are separate triggers.** They stay off for the first cut.
-- Deferred: push, tag, pipeline, job, wiki, release and milestone triggers.
+- Deferred: tag, pipeline, job, wiki, release and milestone triggers.
 
 Delivery rules that shape the design:
 
 - **Not guaranteed-once.** GitLab treats 4xx, 5xx and timeouts as failures. After 4 in a row the webhook is **temporarily disabled** (backing off from 1 minute to 24 hours). After 40 it's **permanently disabled**. The receiver must answer 2xx fast and do no work inline, and the backfill must re-cover any gap.
 - **Redacted emails.** A user with no public email shows as `[REDACTED]`, so email can't be the only join key.
-- **Commit cap.** Push payloads carry only the newest 20 commits. Only matters if push is added later.
+- **Commit cap.** Push payloads carry only the newest 20 commits. `enrich:gitlab` fetches the rest from the compare API.
 
 ## API access (backfill and reconciliation)
 

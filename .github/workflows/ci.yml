@@ -175,6 +175,16 @@ jobs:
           # whsec_ + base64("ci-local-smoke-key"). Throwaway, not a real token.
           GITLAB_WEBHOOK_SIGNING_TOKEN: whsec_Y2ktbG9jYWwtc21va2Uta2V5
         run: python3 services/gitlab-ingestion/smoke_webhook.py
+      # EMBER-68: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      - name: GitLab enrich worker
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/gitlab-enrich-venv"
+          "$RUNNER_TEMP/gitlab-enrich-venv/bin/pip" install -q -r services/gitlab-ingestion/requirements.txt
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/gitlab-enrich-venv/bin/python3" services/gitlab-ingestion/test_enrich.py
       - name: GitLab ingestion container
         run: |
           set -euo pipefail
