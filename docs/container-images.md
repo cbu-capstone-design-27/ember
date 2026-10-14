@@ -8,6 +8,7 @@ The `image targets` and `image (<name>)` jobs in `.github/workflows/ci.yml` hand
 
 - **Targets.** Every `services/<name>/Dockerfile` and `apps/<name>/Dockerfile` is a target. The image is named after the directory.
 - **Every PR and push** to `develop` or `main` builds each target for `linux/amd64` (hv-workers) and `linux/arm64` (pi-cp). A broken Dockerfile fails `ci-ok`.
+- **Except `web`**, which builds only when `apps/web/` or `.github/workflows/ci.yml` changed (the `web` output of `detect changes`). A push to `main` or `develop` that leaves the web app alone publishes no new `web` tags, and the newest ones still point at the last web change.
 - **A push to `main` or `develop`** also publishes each image to `ghcr.io/cbu-capstone-design-27/ember/<name>`. Each branch gets its own tags, so the two lines can run side by side on different hv-workers (for example, a staging environment on `main` and a development environment on `develop`):
 
   | Branch    | Pinned tags (immutable)                          | Moving tags        |
@@ -20,7 +21,7 @@ The `image targets` and `image (<name>)` jobs in `.github/workflows/ci.yml` hand
 
 Publishing uses the workflow's `GITHUB_TOKEN`, so no secrets need to be set up.
 
-Today's targets are `github-ingestion`, `jira-ingestion` and `slack-ingestion`.
+Today's targets are `github-ingestion`, `gitlab-ingestion`, `jira-ingestion`, `slack-ingestion` and `web`.
 
 ## Adding a new service
 
