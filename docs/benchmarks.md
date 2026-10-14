@@ -43,8 +43,8 @@ What each command does:
 
 The retrieval suite makes real embedding calls: it embeds every node of the tenant and then every
 question. With the default `local-spark` profile that is free and needs `EMBEDDING_API_KEY` and a route to the
-Spark's embedding service (`docs/adr/0006-local-llm-on-the-spark.md`); with `openai-dev` it costs a few cents for
-a few hundred nodes and needs `OPENAI_API_KEY` (`docs/adr/0005-cloud-llm-and-embedding.md`). With a missing key the
+Spark's embedding service (`docs/adr/0008-local-llm-on-the-spark.md`); with `openai-dev` it costs a few cents for
+a few hundred nodes and needs `OPENAI_API_KEY` (`docs/adr/0007-cloud-llm-and-embedding.md`). With a missing key the
 command stops before loading anything. The loading suite makes no model calls.
 
 Search runs in memory over the nodes' text and the vectors the embed step produced. Neo4j's own
