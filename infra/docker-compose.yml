@@ -29,6 +29,10 @@
 #     --profile postgres up -d postgres
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile postgres run --rm postgres-migrate
+# The pipeline loader (EMBER-45) is a one-off run that reads ./data/raw/<tenant>/
+# (set PIPELINE_INPUT=/data/raw/<other-folder> to load a different folder under ./data):
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile pipeline run --rm pipeline
 
 name: ember
 
@@ -238,6 +242,34 @@ services:
       DATABASE_URL: "postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable"
     volumes:
       - ./k8s/apps/postgres/migrations:/migrations:ro
+
+  # EMBER-45. Not part of the default `up` (see profiles). Reads connector JSONL from
+  # ./data/raw/<tenant>/ (or PIPELINE_INPUT, a path inside the container under /data) and writes
+  # rejects to ./data/out/. Set PIPELINE_NEO4J_URI to the database to load into: bolt://neo4j:7687
+  # for the compose Neo4j, or the cluster's bolt:// address together with that cluster's
+  # PIPELINE_NEO4J_USER and PIPELINE_NEO4J_PASSWORD. The pipeline uses its own credentials, so the
+  # cluster password never replaces NEO4J_PASSWORD, which still configures the compose Neo4j.
+  # Arguments after the service name replace `command:` entirely, so pass the full list, e.g.
+  # `... run --rm pipeline --tenant <tenant> --input /data/raw/<tenant> --rejects /data/out/rejects.jsonl --reset`.
+  pipeline:
+    profiles: ["pipeline"]
+    build:
+      context: ..
+      dockerfile: services/pipeline/Dockerfile
+    container_name: ember-pipeline
+    environment:
+      NEO4J_URI: "${PIPELINE_NEO4J_URI:-bolt://neo4j:7687}"
+      NEO4J_USER: "${PIPELINE_NEO4J_USER:-neo4j}"
+      NEO4J_PASSWORD: "${PIPELINE_NEO4J_PASSWORD:-${NEO4J_PASSWORD:-change-me-locally}}"
+    volumes:
+      - ../data:/data
+    command:
+      - --tenant
+      - "${EMBER_TENANT:-brandon-dev}"
+      - --input
+      - "${PIPELINE_INPUT:-/data/raw/${EMBER_TENANT:-brandon-dev}}"
+      - --rejects
+      - /data/out/rejects.jsonl
 
 volumes:
   neo4j-data:
