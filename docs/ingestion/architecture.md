@@ -185,6 +185,11 @@ async def run_job(job):
 
 - **Long jobs:** a reconcile that pages through a long history saves its cursor after every page, so a shutdown costs one page.
 - **Rollouts:** Flux applies a new image tag and Kubernetes replaces pods one at a time, each stopping as above. A deploy never loses a job.
+
+### Interim: claiming without the job queue
+
+Until the [job queue](#job-queue) lands, enrich workers claim `raw_events` rows directly (EMBER-75). A worker `LISTEN`s on channel `raw_events`, whose payload is the source. On a notification for its source, once at start to catch up, and on a 30 s poll for missed notifications, it claims rows with `select ... from raw_events where source = :source and enriched_at is null and tenant is not null order by id limit :n for update skip locked`. It writes `source_records` and sets `enriched_at` in the same transaction. The queue replaces this.
+
 ### Concurrency
 
 A worker runs several jobs at once. The work is nearly all waiting on the network (source APIs, the LLM, Neo4j), so one asyncio process can keep several jobs in flight, and that is much cheaper on two 4 GB nodes than more replicas. The queue library runs it: each Deployment sets `CONCURRENCY` in its environment.
@@ -241,8 +246,20 @@ create table raw_events (
   received_at  timestamptz not null default now(),
   completed_at timestamptz,                       -- set when everything it produced is loaded
   envelope     jsonb       not null,
+  enriched_at  timestamptz,                       -- set by that source's enrich worker in the same transaction as its source_records write
   unique (source, delivery_id)
 );
+create index raw_events_unenriched on raw_events (source, id) where enriched_at is null;
+
+-- every insert notifies channel raw_events with the source as payload; wakes that source's enrich worker
+create function raw_events_notify() returns trigger language plpgsql as $$
+begin
+  perform pg_notify('raw_events', new.source);
+  return null;
+end
+$$;
+create trigger raw_events_notify after insert on raw_events
+  for each row execute function raw_events_notify();
 
 -- retention, daily: done events go 30 days after completion; unfinished ones stay until the source is removed
 delete from raw_events where completed_at < now() - interval '30 days';
