@@ -1,12 +1,12 @@
-# ADR 0006: Local LLM and embedding on the DGX Spark until cloud credits arrive
+# ADR 0008: Local LLM and embedding on the DGX Spark until cloud credits arrive
 
-- Status: Accepted (supersedes ADR 0005's default profile for now; ADR 0005's models stay available)
+- Status: Accepted (supersedes ADR 0007's default profile for now; ADR 0007's models stay available)
 - Date: 2026-10-13
 - Jira: EMBER-49
 
 ## Context
 
-ADR 0005 chose hosted OpenAI models for development. Cloud credits are still being arranged
+ADR 0007 chose hosted OpenAI models for development. Cloud credits are still being arranged
 (purchasing form: EMBER-60), so the pipeline runs on models we host ourselves on the shared DGX
 Spark until they arrive. ADR 0001 already runs the embedding model there.
 
