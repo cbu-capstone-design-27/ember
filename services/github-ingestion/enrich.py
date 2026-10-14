@@ -275,7 +275,8 @@ class Worker:
                 statement.on_conflict_do_nothing(index_elements=["source", "tenant", "object_id", "version"])
             )
             inserted += result.rowcount
-        raw.enriched_at = func.now()
+        # now() is the transaction's start, i.e. the claim, before any API call. clock_timestamp() is the write.
+        raw.enriched_at = func.clock_timestamp()
         return inserted
 
     async def fetch_extras(self, raw: RawEvent) -> dict:

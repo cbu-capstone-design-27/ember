@@ -227,7 +227,9 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await asyncio.to_thread(github.in_files.wait, 5))
         os.kill(os.getpid(), signal.SIGINT)
         await asyncio.wait_for(task, 5)
-        self.assertIsNotNone(await self.db.fetchval("select enriched_at from raw_events where id = $1", row))
+        enriched_at = await self.db.fetchval("select enriched_at from raw_events where id = $1", row)
+        files_called_at = [at for at, url in github.calls if "/files" in url][0]
+        self.assertGreaterEqual(enriched_at.timestamp(), files_called_at + github.slow - 0.1, "enriched_at predates the fetch")
         self.assertEqual(await self.db.fetchval("select count(*) from source_records"), 1)
 
     async def test_retry_after_is_stored_and_the_next_call_waits_for_it(self):
