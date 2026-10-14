@@ -188,7 +188,7 @@ async def run_job(job):
 
 ### Interim: claiming without the job queue
 
-Until the [job queue](#job-queue) lands, enrich workers claim `raw_events` rows directly (EMBER-75). A worker `LISTEN`s on channel `raw_events`, whose payload is the source. On a notification for its source, once at start to catch up, and on a 30 s poll for missed notifications, it claims rows with `select ... from raw_events where source = :source and enriched_at is null and tenant is not null order by id limit :n for update skip locked`. It writes `source_records` and sets `enriched_at` in the same transaction. The queue replaces this.
+Until the [job queue](#job-queue) lands, enrich workers claim `raw_events` rows directly (EMBER-75). A worker `LISTEN`s on channel `raw_events` (`RAW_EVENTS_CHANNEL` overrides it) and ignores the payload. On a notification, once at start to catch up, and on a 30 s poll for missed notifications, it claims rows with `select ... from raw_events where source = :source and enriched_at is null and tenant is not null order by id limit :n for update skip locked`. It writes `source_records` and sets `enriched_at` in the same transaction. The trigger lives in its own migration so EMBER-62 can swap it, and workers depend only on the channel name. The queue replaces this.
 
 ### Concurrency
 
@@ -251,7 +251,7 @@ create table raw_events (
 );
 create index raw_events_unenriched on raw_events (source, id) where enriched_at is null;
 
--- every insert notifies channel raw_events with the source as payload; wakes that source's enrich worker
+-- interim (EMBER-75, own migration): every insert notifies channel raw_events to wake the enrich workers. EMBER-62 may replace it
 create function raw_events_notify() returns trigger language plpgsql as $$
 begin
   perform pg_notify('raw_events', new.source);
