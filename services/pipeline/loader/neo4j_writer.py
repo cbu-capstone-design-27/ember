@@ -4,6 +4,7 @@ before being placed in a query."""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from itertools import groupby
 
@@ -69,6 +70,8 @@ class Neo4jWriter:
         if driver is None:
             from neo4j import GraphDatabase  # imported here so unit tests need no driver
 
+            # A first run asks for properties that do not exist yet; that is expected, not a problem.
+            logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
             driver = GraphDatabase.driver(uri, auth=(user, password))
         self._driver = driver
         self._database = database
