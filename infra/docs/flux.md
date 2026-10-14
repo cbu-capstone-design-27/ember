@@ -275,6 +275,7 @@ Everything on the cluster comes back from Git plus the age key in the vault.
 | `make neo4j-health` | Pod ready on hv-worker-1; a query works in the pod and on every node's IP |
 | `make postgres-health` | Postgres ready on hv-worker-2, migrations applied, the ingestion tables present, Postgres answering on every node's IP |
 | `make postgres-url` | Print the tailnet connection URL for Postgres, password included |
+| `make postgres-migrate` | Apply `k8s/apps/postgres/migrations` with the migrate Job's dbmate, by hand. Uses `DATABASE_URL`, else `make postgres-url`. Needs Docker |
 
 Removed with EMBER-57, because Flux does their job: `apps-up`, `apps-down`, `neo4j-prep`, `neo4j-up`, `neo4j-down`, `ts-operator-up`, `ts-operator-down`.
 
