@@ -187,7 +187,7 @@ To receive a real admin delivery later, point a tunnel at `JIRA_INGESTION_PORT` 
 
 ## Enrich worker
 
-`enrich.py` is `enrich:jira` (EMBER-66). It turns Jira rows in `raw_events` into `source_records` and sets `raw_events.enriched_at`, fetching from the REST API only what [`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md) says the payload lacks. It wakes on `LISTEN raw_events`, catches up at start, polls every 30 s, and runs `CONCURRENCY` rows at once (default 4). Ctrl+C finishes the rows in flight, then exits.
+`enrich.py` is `enrich:jira` (EMBER-66). It turns Jira rows in `raw_events` into `source_records` and sets `raw_events.enriched_at`, fetching from the REST API only what [`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md) says the payload lacks. It wakes on any notification on `RAW_EVENTS_CHANNEL` (default `raw_events`), ignoring the payload, catches up at start, polls every 30 s, and runs `CONCURRENCY` rows at once (default 4). Ctrl+C finishes the rows in flight, then exits.
 
 Run it against the local Postgres (Python 3.10+):
 

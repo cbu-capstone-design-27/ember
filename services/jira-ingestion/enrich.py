@@ -5,8 +5,8 @@
         python3 enrich.py
 
 Rows are claimed as docs/ingestion/architecture.md, "Interim: claiming without the job queue",
-describes: LISTEN raw_events, then claim once at start, on each jira notification, and every
-POLL_SECONDS. Each row is claimed, enriched and marked in its own transaction, CONCURRENCY
+describes: LISTEN on RAW_EVENTS_CHANNEL (default raw_events), then claim once at start, on any
+notification (the payload is ignored), and every POLL_SECONDS. Each row is claimed, enriched and marked in its own transaction, CONCURRENCY
 (default 4) at a time. What each event becomes and what is fetched follows
 docs/ingestion/jira-webhooks.md. SIGINT or SIGTERM stops claiming, lets in-flight rows finish,
 and exits 0.
@@ -43,6 +43,7 @@ from pull_test import (
 
 SOURCE = "jira"
 POLL_SECONDS = 30.0
+DEFAULT_CHANNEL = "raw_events"
 DEFAULT_CONCURRENCY = 4
 JIRA_TIME = "%Y-%m-%dT%H:%M:%S.%f%z"   # 2026-10-13T14:05:11.123-0700
 
@@ -147,6 +148,7 @@ class Worker:
         exchange=urllib_exchange,
         concurrency: int = DEFAULT_CONCURRENCY,
         poll_seconds: float = POLL_SECONDS,
+        channel: str = DEFAULT_CHANNEL,
     ) -> None:
         self.engine = engine
         self.session = async_sessionmaker(engine, expire_on_commit=False)
@@ -155,6 +157,7 @@ class Worker:
         self.api_token = api_token
         self.exchange = exchange
         self.poll_seconds = poll_seconds
+        self.channel = channel
         self.slots = asyncio.Semaphore(concurrency)
         self.wake = asyncio.Event()
         self.stopping = asyncio.Event()
@@ -176,8 +179,8 @@ class Worker:
         try:
             async with self.engine.connect() as listen:
                 listener = (await listen.get_raw_connection()).driver_connection
-                await listener.add_listener("raw_events", self._notified)
-                log.info("listening on raw_events")
+                await listener.add_listener(self.channel, self._notified)
+                log.info("listening on %s", self.channel)
                 self.wake.set()   # catch up on rows inserted while stopped
                 while not self.stopping.is_set():
                     try:
@@ -187,15 +190,15 @@ class Worker:
                     self.wake.clear()
                     await self._drain()
                 await asyncio.gather(*list(self.tasks))
-                await listener.remove_listener("raw_events", self._notified)
+                await listener.remove_listener(self.channel, self._notified)
         finally:
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.remove_signal_handler(sig)
         log.info("stopped")
 
-    def _notified(self, _conn, _pid, _channel, payload: str) -> None:
-        if payload == SOURCE:
-            self.wake.set()
+    def _notified(self, _conn, _pid, _channel, _payload: str) -> None:
+        # Any notification wakes the claim, which filters by source. The payload isn't part of the contract.
+        self.wake.set()
 
     async def _drain(self) -> None:
         """Start one task per claimable row, up to CONCURRENCY at once, until none is left."""
@@ -348,6 +351,7 @@ def main(exchange=urllib_exchange) -> int:
             await Worker(
                 engine, origin=origin, email=os.environ.get("JIRA_EMAIL", ""),
                 api_token=os.environ.get("JIRA_API_TOKEN", ""), exchange=exchange, concurrency=concurrency,
+                channel=os.environ.get("RAW_EVENTS_CHANNEL", "").strip() or DEFAULT_CHANNEL,
             ).run()
         finally:
             await engine.dispose()
