@@ -185,6 +185,29 @@ Success ends with `smoke ok: 5 envelopes` on stderr.
 
 To receive a real admin delivery later, point a tunnel at `JIRA_INGESTION_PORT` (default `8081`) and set the webhook URL to `https://<tunnel-host>/webhook/jira` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8081` or `ngrok http 8081`. The tunnel is not part of this smoke and CI does not start one. Jira will not POST to port `8081` directly. Terminate TLS on port `443`.
 
+## Enrich worker
+
+`enrich.py` is `enrich:jira` (EMBER-66). It turns Jira rows in `raw_events` into `source_records` and sets `raw_events.enriched_at`, fetching from the REST API only what [`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md) says the payload lacks. It wakes on `LISTEN raw_events`, catches up at start, polls every 30 s, and runs `CONCURRENCY` rows at once (default 4). Ctrl+C finishes the rows in flight, then exits.
+
+Run it against the local Postgres (Python 3.10+):
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres up -d postgres
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres run --rm postgres-migrate
+
+python3 -m venv .venv && .venv/bin/pip install -r services/jira-ingestion/requirements.txt
+export DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable'
+export JIRA_BASE_URL JIRA_EMAIL JIRA_API_TOKEN   # from .env; only comment, worklog and link events call Jira
+.venv/bin/python services/jira-ingestion/enrich.py
+```
+
+Only rows with a `tenant` are claimed. Calls go to `JIRA_BASE_URL` alone, so a row from another site fails and is retried on the next poll. Its test needs a Postgres it can create a database on, and dbmate:
+
+```sh
+PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
+    .venv/bin/python services/jira-ingestion/test_enrich.py
+```
+
 ## Test
 
 ```sh

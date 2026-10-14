@@ -1,0 +1,3 @@
+# enrich.py (EMBER-66). The other scripts here use the standard library only.
+SQLAlchemy[asyncio]==2.0.54   # the extra installs greenlet, which async engines need
+asyncpg==0.32.0
