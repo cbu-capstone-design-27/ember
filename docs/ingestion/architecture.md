@@ -185,6 +185,26 @@ async def run_job(job):
 
 - **Long jobs:** a reconcile that pages through a long history saves its cursor after every page, so a shutdown costs one page.
 - **Rollouts:** Flux applies a new image tag and Kubernetes replaces pods one at a time, each stopping as above. A deploy never loses a job.
+
+### How enrich wakes and claims rows (EMBER-67)
+
+The enrich stage works from `raw_events` directly instead of from queue jobs. The row's status columns are its job:
+
+- **Wake.** The database sends `NOTIFY raw_events, '<source>'` after every insert into `raw_events`, from a trigger that EMBER-62 adds. Intake only writes rows. Each `enrich:<source>` worker holds `LISTEN raw_events` and wakes on its own source's payload. It also polls every 30 s, which covers a notification missed during a reconnect, retries, and the time before the trigger exists.
+- **Claim.** Each of the worker's `CONCURRENCY` runners takes one row, in that row's own transaction:
+  ```sql
+  select … from raw_events
+   where source = '<source>' and tenant is not null and enriched_at is null and enrich_attempts < 8
+   order by id for update skip locked limit 1;
+  ```
+  Two runners never take the same row. If a worker dies, its connection drops, the lock goes with it, and the row is claimed again.
+- **Finish.** The worker writes the row's `source_records` (`on conflict do nothing`, so reprocessing adds nothing), sets `enriched_at`, and commits, all in that transaction.
+- **Fail.** A failure rolls back the records, adds one to `enrich_attempts`, and stores `enrich_error`. The worker leaves that row alone for 2, 4, 8 … seconds (at most one poll interval), then retries it. An error no retry can fix (a revoked token, a missing scope) sets `enrich_attempts` to the maximum straight away.
+- **Catch up.** At start, a worker claims straight away, so rows inserted while it was stopped are picked up.
+- **Order.** Rows are claimed by `id` for now. EMBER-63's source ordering column comes first once it lands.
+
+`services/slack-ingestion/enrich.py` is the first worker built this way (`enrich:slack`).
+
 ### Concurrency
 
 A worker runs several jobs at once. The work is nearly all waiting on the network (source APIs, the LLM, Neo4j), so one asyncio process can keep several jobs in flight, and that is much cheaper on two 4 GB nodes than more replicas. The queue library runs it: each Deployment sets `CONCURRENCY` in its environment.
@@ -241,8 +261,13 @@ create table raw_events (
   received_at  timestamptz not null default now(),
   completed_at timestamptz,                       -- set when everything it produced is loaded
   envelope     jsonb       not null,
+  enriched_at     timestamptz,                    -- set by enrich; null = waiting for enrich (EMBER-67)
+  enrich_attempts int  not null default 0,        -- failed enrich tries; at the worker's maximum the row is left for a person
+  enrich_error    text,                           -- the last enrich failure
   unique (source, delivery_id)
 );
+-- what each enrich worker claims next
+create index raw_events_enrich_pending on raw_events (source, id) where enriched_at is null;
 
 -- retention, daily: done events go 30 days after completion; unfinished ones stay until the source is removed
 delete from raw_events where completed_at < now() - interval '30 days';
@@ -304,7 +329,7 @@ Retention for `raw_events` is 30 days after an event is fully processed. One tha
 
 ### Job queue
 
-The queue is a library on the same Postgres, not code we write. Procrastinate is proposed: it is Python, uses only Postgres, and has `LISTEN/NOTIFY` built in. Stages call the protocol below, so the library can be swapped behind it. A job names the row it works on instead of carrying data.
+The enrich stage doesn't use it: its jobs are `raw_events` rows ([How enrich wakes and claims rows](#how-enrich-wakes-and-claims-rows-ember-67)). For the other stages, the queue is a library on the same Postgres, not code we write. Procrastinate is proposed: it is Python, uses only Postgres, and has `LISTEN/NOTIFY` built in. Stages call the protocol below, so the library can be swapped behind it. A job names the row it works on instead of carrying data.
 
 ```python
 JobKind = Literal["enrich", "reconcile", "extract", "load"]     # one library queue per kind
@@ -430,7 +455,8 @@ Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images 
 | Each `pull_test.py` backfill | That source's `Enricher.reconcile` |
 | Stdout as the hand-off | `raw_events` and the job queue |
 | Slack's in-process `RecentEvents` de-duplication | `unique (source, delivery_id)` |
-| Per-process rate limiting in the backfills | Shared `rate_limits` |
+| Per-process rate limiting in the backfills | Shared `rate_limits` (built for Slack: `services/slack-ingestion/pg_gates.py`) |
+| Nothing | `enrich:slack` is built: `services/slack-ingestion/enrich.py` (EMBER-67), in the slack-ingestion image for now |
 | Placeholder `github-webhook` behind nginx | Service `intake`, one nginx location for every source |
 | `packages/ingestion-envelope` | Unchanged contract; gains the shared verify helpers |
 
