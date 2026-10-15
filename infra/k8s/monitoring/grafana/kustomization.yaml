@@ -1,0 +1,17 @@
+# What the Grafana Operator (infrastructure/grafana-operator) keeps on the Grafana Cloud stack: the
+# Ember folder and dashboard. dashboards/*.json is the source of truth; an edit made in Grafana is
+# overwritten at the next sync (k8s/README.md, Monitoring).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - grafana.yaml
+  - dashboards.yaml
+  # Secret grafana-operator: the service account token the operator uses (make grafana-secret)
+  - grafana-operator.sops.yaml
+# The name gets a hash of the JSON, so an edit changes the GrafanaDashboard and the operator pushes it
+configMapGenerator:
+  - name: grafana-dashboards
+    files:
+      - dashboards/ember.json
+configurations:
+  - kustomizeconfig.yaml

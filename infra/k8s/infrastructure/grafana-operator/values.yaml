@@ -1,0 +1,12 @@
+# Values for the Grafana Operator chart (grafana/grafana-operator). Flux installs it from
+# helmrelease.yaml, which pins the chart version. It manages no Grafana of its own: its one Grafana
+# object points at the Grafana Cloud stack (monitoring/grafana/grafana.yaml). Everything else is the
+# chart's default, CRDs included.
+# Only the monitoring namespace holds Grafana objects
+watchNamespaces: monitoring
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 256Mi

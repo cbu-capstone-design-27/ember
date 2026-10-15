@@ -43,6 +43,7 @@ infra/k8s/
     namespaces.yaml           # ember, tailscale, headlamp, cnpg-system, monitoring (prune: disabled)
     tailscale-operator/       # HelmRepository, HelmRelease, values.yaml, operator-oauth.sops.yaml
     cnpg/                     # HelmRepository, HelmRelease, values.yaml (CloudNativePG operator)
+    grafana-operator/         # HelmRepository, HelmRelease, values.yaml (keeps the Grafana Cloud dashboards)
   apps/
     nginx/                    # reverse proxy behind the public Ingress
     intake/                   # webhook listener for every source (EMBER-62), webhooks.sops.yaml
@@ -52,6 +53,7 @@ infra/k8s/
   monitoring/
     helmrepository.yaml       # Grafana's charts
     k8s-monitoring/           # HelmRelease, values.yaml, grafana-cloud.sops.yaml (EMBER-91)
+    grafana/                  # Grafana Cloud as a Grafana object, folder and dashboards/ember.json, grafana-operator.sops.yaml
 .sops.yaml                    # (repo root) which files SOPS encrypts, and to which age key
 ```
 
@@ -59,9 +61,9 @@ infra/k8s/
 flowchart LR
   gh["GitHub: develop<br/>infra/k8s"] -->|every 1m| src["GitRepository<br/>flux-system"]
   src --> fs["Kustomization flux-system<br/>clusters/homelab"]
-  fs -->|creates| infra["Kustomization infrastructure<br/>namespaces, Tailscale operator, CloudNativePG"]
+  fs -->|creates| infra["Kustomization infrastructure<br/>namespaces, Tailscale operator, CloudNativePG, Grafana Operator"]
   fs -->|creates| apps["Kustomization apps<br/>nginx, intake, Neo4j, Postgres, Headlamp"]
-  fs -->|creates| mon["Kustomization monitoring<br/>Grafana Cloud collector"]
+  fs -->|creates| mon["Kustomization monitoring<br/>Grafana Cloud collector and dashboard"]
   infra -->|healthy first| apps
   infra -->|healthy first| mon
   key[("Secret sops-age<br/>from Ansible Vault")] -.decrypts.-> infra
@@ -73,9 +75,9 @@ flowchart LR
 |---|---|---|
 | GitRepository `flux-system` | `https://github.com/cbu-capstone-design-27/ember`, branch `develop` | Fetches only `infra/k8s` every minute. The repo is public, so no credentials |
 | Kustomization `flux-system` | `infra/k8s/clusters/homelab` | Applies Flux itself and the three Kustomizations below. Flux upgrades itself from `gotk-components.yaml` |
-| Kustomization `infrastructure` | `infra/k8s/infrastructure` | Namespaces, the Tailscale operator and the CloudNativePG operator. `wait: true`: Ready only when everything it applied is healthy |
+| Kustomization `infrastructure` | `infra/k8s/infrastructure` | Namespaces, the Tailscale operator, the CloudNativePG operator and the Grafana Operator. `wait: true`: Ready only when everything it applied is healthy |
 | Kustomization `apps` | `infra/k8s/apps` | Ember workloads. `dependsOn: infrastructure`, so the Tailscale operator exists before any Ingress and CloudNativePG before the Postgres Cluster |
-| Kustomization `monitoring` | `infra/k8s/monitoring` | The collector that sends metrics, logs and events to Grafana Cloud (`infra/k8s/README.md`, Monitoring). `dependsOn: infrastructure` for its namespace. Separate from `apps` so a broken collector never holds up a deploy |
+| Kustomization `monitoring` | `infra/k8s/monitoring` | The collector that sends metrics, logs and events to Grafana Cloud, and the dashboard the Grafana Operator keeps there (`infra/k8s/README.md`, Monitoring). `dependsOn: infrastructure` for its namespace and the operator's CRDs. Separate from `apps` so a broken collector never holds up a deploy |
 
 All three **prune**: an object removed from Git is deleted from the cluster. That also cleans up the old hash-suffixed ConfigMaps that a config edit leaves behind. Namespaces are the exception. They carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so dropping one from `namespaces.yaml` cannot take Neo4j's or Postgres's data with it.
 
@@ -151,7 +153,14 @@ The plugin comes from the image `ghcr.io/headlamp-k8s/headlamp-plugin-flux:v0.7.
 
 ## Secrets with SOPS
 
-Secrets live in Git only as SOPS-encrypted `*.sops.yaml` files. Flux decrypts them on the cluster. Today there are three: `infrastructure/tailscale-operator/operator-oauth.sops.yaml`, the Tailscale operator's OAuth client; `apps/intake/webhooks.sops.yaml`, the GitHub App's webhook secret (`make intake-secret`); and `monitoring/k8s-monitoring/grafana-cloud.sops.yaml`, the Grafana Cloud push credentials (`make grafana-secret`).
+Secrets live in Git only as SOPS-encrypted `*.sops.yaml` files. Flux decrypts them on the cluster. Today there are four:
+
+- `infrastructure/tailscale-operator/operator-oauth.sops.yaml`: the Tailscale operator's OAuth client.
+- `apps/intake/webhooks.sops.yaml`: the GitHub App's webhook secret (`make intake-secret`).
+- `monitoring/k8s-monitoring/grafana-cloud.sops.yaml`: the Grafana Cloud push credentials.
+- `monitoring/grafana/grafana-operator.sops.yaml`: the Grafana Operator's service account token.
+
+`make grafana-secret` writes the last two.
 
 ### How it works
 
@@ -233,6 +242,7 @@ Each chart is a Flux HelmRelease with its HelmRepository and its `values.yaml` b
 | `cnpg/cloudnative-pg` | `infrastructure/cnpg/` | 0.29.1 (operator 1.30.1) | Installs and upgrades its CRDs (`crds: CreateReplace`). Runs the Postgres in `apps/postgres` (`infra/k8s/README.md`, Postgres) |
 | `neo4j/neo4j` | `apps/neo4j/` | 2026.9.0 | Pinned to hv-worker-1 with a 10Gi `local-path-retain` volume; install and upgrade timeout 10m |
 | `headlamp/headlamp` | `apps/headlamp/` | 0.45.0 | See Headlamp above |
+| `grafana/grafana-operator` | `infrastructure/grafana-operator/` | 5.25.0 | Installs and upgrades its CRDs (`crds: CreateReplace`). Watches only namespace `monitoring`, where `monitoring/grafana` points it at Grafana Cloud |
 | `grafana/k8s-monitoring` | `monitoring/k8s-monitoring/` | 4.5.3 | Alloy collectors through the Alloy operator, kube-state-metrics, Node Exporter. Installs and upgrades the Alloy CRD (`crds: CreateReplace`). Credentials from `grafana-cloud.sops.yaml` (`infra/k8s/README.md`, Monitoring) |
 
 How values reach the chart: each directory's `kustomization.yaml` turns `values.yaml` into a ConfigMap whose name ends in a hash of the file. `kustomizeconfig.yaml` lets kustomize rename the HelmRelease's `valuesFrom` to match. An edit to `values.yaml` therefore changes the HelmRelease, and Flux upgrades the release.
