@@ -23,7 +23,7 @@ Each stored row has `origin = 'webhook'`, the envelope `{"type": "<source>", "bo
 
 `result` in the metric is `stored`, `duplicate`, `handshake`, `unauthorized`, `bad_request`, `too_large`, `disconnected`, `unstorable`, `unavailable`, `error` or `unknown_source`. An unknown source is counted as `source="unknown"`, so made-up paths can't add series. Logs name the delivery, the result and an error's type, never the payload.
 
-At most 8 deliveries are read and handled at once; the rest wait unread, so bodies in memory stay under 64 MiB.
+At most 8 deliveries are read and handled at once; the rest wait unread. Parsing and storing a delivery takes up to about 15 times its size, so 8 near the 8 MiB cap peak around 800 MiB, which the cluster's 1 GiB limit covers. A typical delivery is tens of KiB.
 
 SIGINT or SIGTERM stops accepting connections and lets requests in flight finish (up to 20 s), then the process exits.
 
@@ -69,7 +69,9 @@ DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=
   GITHUB_WEBHOOK_SECRET=throwaway-local-secret python3 services/intake/intake.py
 ```
 
-To send it real deliveries, point a tunnel at the port (`cloudflared tunnel --url http://127.0.0.1:8080`) and set the App's webhook URL to `https://<tunnel-host>/webhook/github` with the same secret.
+On the cluster it runs from `infra/k8s/apps/intake`, behind nginx at `https://ember.tail470a31.ts.net/webhook/{source}`. [`infra/k8s/README.md`, "intake"](../../infra/k8s/README.md#intake) covers the Deployment, its logs and metrics, and setting the webhook secret.
+
+To send real deliveries to a local intake instead, point a tunnel at the port (`cloudflared tunnel --url http://127.0.0.1:8080`) and set the App's webhook URL to `https://<tunnel-host>/webhook/github` with the same secret.
 
 ## Test
 

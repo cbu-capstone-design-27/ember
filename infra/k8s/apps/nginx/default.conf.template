@@ -20,13 +20,15 @@ server {
         return 200 "ok\n";
     }
 
-    # GitHub App webhook -> Service github-webhook
-    location = /webhook/github {
+    # Every source's webhooks (/webhook/github, /webhook/gitlab, ...) -> Service intake, which knows
+    # the sources and answers 404 for any other
+    location /webhook/ {
         limit_except POST { deny all; }
-        # Same cap as MAX_BODY_BYTES in services/github-ingestion/envelope.py
+        # Same cap as MAX_BODY_BYTES in services/intake/intake.py
         client_max_body_size 8m;
-        set $github_webhook github-webhook.ember.svc.cluster.local:8080;
-        proxy_pass http://$github_webhook;
+        set $intake intake.ember.svc.cluster.local:8080;
+        # With no URI after the address, the request's own URI is passed on unchanged
+        proxy_pass http://$intake;
         proxy_set_header Host $host;
         proxy_connect_timeout 5s;
         # GitHub drops a delivery that takes longer than 10 seconds

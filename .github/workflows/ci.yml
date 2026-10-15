@@ -125,15 +125,13 @@ jobs:
           # The image's first start runs initdb with TCP off, so wait for TCP rather than the socket
           timeout 60 sh -c 'until docker exec pg pg_isready -q -h 127.0.0.1; do sleep 1; done'
           PATH="$RUNNER_TEMP:$PATH" python3 infra/k8s/apps/postgres/test_migrations.py
-      - name: Placeholder webhook listener compiles
-        run: python3 -m py_compile infra/k8s/apps/github-webhook/listener.py
       - name: nginx reverse-proxy config loads
         run: |
           set -euo pipefail
           out=$(docker run --rm -e NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
             -v "$PWD/infra/k8s/apps/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
             nginx:1.28-alpine nginx -T)
-          grep -F 'location = /webhook/github' <<<"$out"
+          grep -F 'location /webhook/ {' <<<"$out"
       - name: Ingestion envelope contract
         run: python3 packages/ingestion-envelope/test_contract.py
       # EMBER-62: on the pg container and dbmate from "Postgres migrations match the ingestion doc"

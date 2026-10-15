@@ -23,7 +23,7 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make flux-health` | Flux's controllers are healthy and every Kustomization is applied; lists what is deployed and at which commit |
 | `make sync` | Fetch `develop` and apply it now instead of within the next minute |
 | `make apps-diff` | Shows what this checkout's `infrastructure/` and `apps/` would change on the cluster. Deploys nothing |
-| `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, a POST to `/webhook/github` reaches the placeholder listener (the response's `listener` field says `placeholder`), the same POST works through Funnel's public address, and an unknown path returns 404. Deploys nothing |
+| `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Deploys nothing |
 | `make flux-preview BRANCH=<branch>` | Deploys a pushed branch instead of `develop`, to try a change before merging it. Tell the team, since it replaces what everyone else sees |
 | `make flux-preview-end` | Goes back to `develop`, removing anything only the branch had |
 | `make flux-up` | First install only, or after `make reset`: installs Flux from `clusters/homelab/flux-system`, gives it the age key, waits for the first sync, then health. Safe to re-run |
@@ -61,61 +61,88 @@ The reverse proxy for the public hostname. A single `nginx:1.28-alpine` replica 
 
 | Request | Where it goes |
 |---|---|
-| `POST /webhook/github` | Service `github-webhook` on port 8080 (next section). Other methods on this path are refused |
+| `POST /webhook/{source}` | Service `intake` on port 8080 (next section), which serves every source and answers 404 for one it doesn't have. Other methods are refused |
 | `GET /healthz` | Answered by nginx itself with `ok`. It exists for the Deployment's probes and `make apps-health`, and does not depend on any other Service |
 | Anything else | 404 |
 
 The config is `apps/nginx/default.conf.template`. Kustomize ships it as a ConfigMap whose name ends in a hash of the file's contents, so an edit changes the name and Flux rolls the Deployment onto the new config by itself once it is merged. If nginx cannot load the edited file, the new pod fails to start, the old pod keeps serving, and the `apps` Kustomization reports not Ready (`flux get kustomizations`). The file is a template because the image fills in `${NGINX_LOCAL_RESOLVERS}` (the cluster's DNS server) when the container starts; leave that placeholder as it is.
 
-To add a route, copy the `location = /webhook/github` block and change the path and the Service it proxies to. Keep the Service's address in a variable, as that block does (`set $github_webhook github-webhook.ember.svc.cluster.local:8080;` then `proxy_pass http://$github_webhook;`). With a variable, nginx looks the Service up when a request arrives instead of when it starts, so nginx starts and stays up even when that Service is absent. With the name written straight into `proxy_pass`, nginx would refuse to start until the Service exists.
+A new source needs no route: it is an adapter in intake, under the same `/webhook/`. To add a route for something else, copy the `location /webhook/` block and change the path and the Service it proxies to. Keep the Service's address in a variable, as that block does (`set $intake intake.ember.svc.cluster.local:8080;` then `proxy_pass http://$intake;`). With a variable, nginx looks the Service up when a request arrives instead of when it starts, so nginx starts and stays up even when that Service is absent. With the name written straight into `proxy_pass`, nginx would refuse to start until the Service exists.
 
 The webhook route accepts request bodies up to 8 MiB (`client_max_body_size 8m`). That matches intake's limit (`MAX_BODY_BYTES` in `services/intake/intake.py`), so nginx and intake agree on which deliveries are too large. A route that does not set its own cap gets nginx's default of 1 MiB. nginx passes the body and GitHub's headers (`X-GitHub-*`, `X-Hub-Signature-256`) through unchanged, so a signature check behind it sees exactly what GitHub sent.
 
 `apps/nginx/ingress.yaml` publishes nginx on the public internet through the Tailscale operator and Funnel (below). The hostname comes from `tls.hosts: [ember]` and is what the GitHub App registers as its callback and webhook URL, so it must not change. Add new backends as routes in nginx and leave the Ingress pointing at nginx. Nothing handles the App's callback URL yet, so that path returns 404 like any other; when something does, it is one more `location`.
 
-### github-webhook
+### intake
 
-A placeholder listener, not the real GitHub ingestion worker. It is there to prove that a delivery from GitHub reaches a container on the cluster before the worker is deployed (EMBER-56). One `python:3.12-slim` replica in namespace `ember` behind ClusterIP Service `github-webhook` on port 8080.
+The webhook listener for every source (EMBER-62): `services/intake`, whose README has the contract. Two replicas in namespace `ember` behind ClusterIP Service `intake` on port 8080, from `apps/intake/`. For each delivery it checks the signature, stores the body in Postgres `raw_events`, and answers 200 once that commits. It never calls a source API.
 
-On `POST /webhook/github` it reads the body, discards it, and returns 200 with `{"status": "ok", "listener": "placeholder"}`. It logs one line per delivery with the event name, the delivery id, the body size and whether a signature header was present. It stores nothing and never logs the payload.
+- **Image.** `deployment.yaml` pins a `develop-<run>-<sha>` tag of `ghcr.io/cbu-capstone-design-27/ember/intake` (`docs/container-images.md`). To deploy a newer intake, change the tag there and merge. The package is public, so there is no `imagePullSecret`.
+- **Postgres.** `DATABASE_URL` comes from Secret `postgres-app` (Postgres below). A pod is ready only while `GET /health` reaches Postgres, so nginx never sends a delivery to a pod that cannot store it. The liveness probe asks `/metrics`, which doesn't touch Postgres, so a database outage makes the pods unready rather than restarting them.
+- **Webhook secret.** `GITHUB_WEBHOOK_SECRET` comes from Secret `intake-webhooks` (next section). Intake refuses to start without it, so a missing Secret leaves the pods in `CreateContainerConfigError` and never stores an unsigned delivery.
+- **Stopping.** On SIGTERM a pod waits 5 s (`preStop`) while the Service and nginx stop sending it deliveries, then finishes the requests in flight, for up to 20 s. A rollout starts the new pod and waits for it to be ready before stopping an old one, and PodDisruptionBudget `intake` keeps one pod up through a drain or `make reboot`.
+- **Memory.** About 60 MiB idle. The 1 GiB limit covers 8 deliveries near the 8 MiB cap at once, the most intake handles at a time.
 
-It does not verify signatures, so anyone on the internet can POST to it. That is acceptable only because it stores nothing; the real worker has to check the signature.
+Only `/webhook/` is public. `/health` and `/metrics` answer on the Service inside the cluster:
 
-The code is `apps/github-webhook/listener.py`. It predates the GHCR images (`docs/container-images.md`), so the file is shipped as a ConfigMap and mounted into a stock `python:3.12-slim` image instead of being built into one. As with nginx, the ConfigMap's name carries a content hash, so an edit to `listener.py` rolls the Deployment once Flux applies it.
+```bash
+kubectl --context homelab -n ember port-forward svc/intake 8080 &
+curl -s localhost:8080/metrics | grep intake_deliveries
+```
 
 To see deliveries:
 
 ```bash
-kubectl --context homelab -n ember logs deploy/github-webhook
+kubectl --context homelab -n ember logs -l app=intake --prefix
 ```
 
-Lines with the delivery id `apps-health` are the test deliveries that `make apps-health` sends.
+Each stored or duplicate delivery logs one line with the source, the result, the delivery id, the event and the account, never the payload. Refused deliveries aren't logged: they show up in `/metrics` (`result="unauthorized"` for a bad signature) and in the App's Recent Deliveries on GitHub. The unsigned pings `make apps-health` sends are counted there too.
 
-To watch a real delivery arrive, set the GitHub App's webhook URL to `https://ember.tail470a31.ts.net/webhook/github`. GitHub then sends a `ping`, which shows up in those logs. Do this for that one `ping` only. The placeholder answers 200 and there is no secret, so GitHub records every delivery as successful while the placeholder throws it away. Once you have seen the `ping`, clear the webhook URL (or subscribe the App to no events) until the real worker is in.
+#### The webhook secret
 
-Service `github-webhook` on port 8080 is the stable name nginx proxies to. EMBER-62 replaces it with `services/intake`, which has the webhook secret and the signature check. Three things to know when doing that:
+GitHub signs each delivery with the App's webhook secret, and intake checks it. The value lives in three places that must match: the GitHub App's settings, the vault, and `apps/intake/webhooks.sops.yaml`. To set or rotate it:
 
-- Flux prunes, so taking the placeholder Deployment out of `apps/github-webhook/` deletes it. Keep the pods' label `app: github-webhook` if you replace the Deployment's pod template in place instead (a Deployment's selector cannot be changed), so Service `github-webhook` keeps finding them.
-- The webhook checks in `make apps-health` look for `"listener": "placeholder"` in the response. Update them in `ansible/playbooks/apps.yml` when the real worker goes in.
-- Intake (EMBER-62) replaces it, from the public `intake` image on GHCR, so no `imagePullSecret` is needed.
+1. Generate one: `openssl rand -hex 32`.
+2. Keep it in the vault as `vault_github_webhook_secret` (`.venv/bin/ansible-vault edit group_vars/all/vault.yml` from `infra/ansible`).
+3. Overwrite `apps/intake/webhooks.sops.yaml` with the plain Secret, then encrypt it in place from the repo root (Secrets above). Writing a new file needs only the public key; editing the encrypted one needs the private key.
+
+   ```yaml
+   apiVersion: v1
+   kind: Secret
+   metadata:
+     name: intake-webhooks
+     namespace: ember
+   stringData:
+     GITHUB_WEBHOOK_SECRET: "<the secret>"
+   ```
+
+   ```bash
+   infra/ansible/.venv/bin/sops -e -i infra/k8s/apps/intake/webhooks.sops.yaml
+   ```
+
+4. Merge it. A changed Secret reaches running pods only after `kubectl --context homelab -n ember rollout restart deploy/intake`.
+5. In the GitHub App's settings (`ember-ingest`), under Webhook: set the secret, the URL `https://ember.tail470a31.ts.net/webhook/github`, and Active.
+
+Between steps 4 and 5 GitHub's deliveries are refused with 401. GitHub doesn't retry them, but each one can be redelivered from the App's Advanced tab, Recent Deliveries, for 3 days.
 
 ### Restarts
 
-nginx and the listener come back by themselves after a pod or node restart. Their Deployments, Services, ConfigMaps and the Ingress are stored in the cluster, k3s starts on boot on every node, the Tailscale proxy keeps its identity and certificate in a Secret, and a pod restarting on the same node uses the image already cached there.
+nginx and intake come back by themselves after a pod or node restart. Their Deployments, Services, ConfigMaps and the Ingress are stored in the cluster, k3s starts on boot on every node, the Tailscale proxy keeps its identity and certificate in a Secret, and a pod restarting on the same node uses the image already cached there.
 
 The limits:
 
-- A pod that is moved to the other worker needs Docker Hub to be reachable, because its image is cached only on the worker that ran it before.
+- A pod that is moved to the other worker needs its registry to be reachable (Docker Hub for nginx, GHCR for intake), because its image is cached only on the worker that ran it before.
 - Everything depends on pi-cp, which runs the API server, the datastore and the only CoreDNS replica.
 - nginx and the Tailscale proxy are single pods, so the public URL is down while either one restarts. A second nginx replica would not help, because the Tailscale proxy is not moved to another node while its own node is down.
 
-To check, delete the pods (`kubectl --context homelab -n ember delete pod -l 'app in (nginx, github-webhook)'`) or reboot every node with `make reboot`, then run `make apps-health` and `make ts-operator-health`.
+To check, delete the pods (`kubectl --context homelab -n ember delete pod -l 'app in (nginx, intake)'`) or reboot every node with `make reboot`, then run `make apps-health` and `make ts-operator-health`.
 
 ### Troubleshooting the public route
 
 | Symptom | Check |
 |---|---|
-| `502 Bad Gateway` on `/webhook/github` | nginx is up but cannot reach the listener: the listener is not running, or Service `github-webhook` is missing. `kubectl --context homelab -n ember get deploy,svc github-webhook` |
+| `502 Bad Gateway` on `/webhook/github` | nginx is up but cannot reach intake: no intake pod is ready, or Service `intake` is missing. `kubectl --context homelab -n ember get deploy,svc,pods -l app=intake`. Pods that never get ready usually mean Postgres is down (`make postgres-health`); `CreateContainerConfigError` means Secret `intake-webhooks` or `postgres-app` is missing |
+| GitHub's Recent Deliveries show 401 | The App's webhook secret and Secret `intake-webhooks` differ, or the pods still run with the old one. Set them to the same value (The webhook secret, above) and restart intake |
 | `make apps-health` fails on the hostname check | The Tailscale device was recreated as `ember-1`, which is not the hostname GitHub posts to. Remove the stale `ember` device in the Tailscale admin console, then `kubectl --context homelab -n ember delete ingress ember` and `make sync`; Flux recreates the Ingress and the proxy comes back as `ember` |
 | After a config edit, the new nginx pod crash-loops while the old one keeps serving | nginx could not load the edited config. `kubectl --context homelab -n ember get pods -l app=nginx` names the pod that is restarting, and `kubectl --context homelab -n ember logs <that pod>` shows the line nginx rejected. Fix `apps/nginx/default.conf.template` and merge the fix |
 

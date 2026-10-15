@@ -479,7 +479,6 @@ Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images 
 | Stdout as the hand-off | `raw_events` and the job queue |
 | Slack's in-process `RecentEvents` de-duplication | `unique (source, delivery_id)` |
 | Per-process rate limiting in the backfills | Shared `rate_limits` |
-| Placeholder `github-webhook` behind nginx | Service `intake`, one nginx location for every source |
 | `packages/ingestion-envelope` | Unchanged contract. Verification lives in intake's adapters, the only code that verifies a delivery |
 
 ## Decisions

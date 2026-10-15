@@ -130,7 +130,7 @@ apps-diff: ## Show what this checkout's k8s/ would change on the cluster
 	flux --context $(CONTEXT) diff kustomization infrastructure --path ../k8s/infrastructure || [ $$? -eq 1 ]
 	flux --context $(CONTEXT) diff kustomization apps --path ../k8s/apps || [ $$? -eq 1 ]
 
-apps-health: ## Apps rolled out; the GitHub webhook answers through nginx, from the tailnet and through Funnel
+apps-health: ## Apps rolled out; intake refuses an unsigned webhook through nginx, from the tailnet and through Funnel
 	ansible-playbook playbooks/apps.yml --tags health
 
 ts-operator-health: ## Operator ready and logged in; every Tailscale Ingress has a hostname and answers HTTPS
