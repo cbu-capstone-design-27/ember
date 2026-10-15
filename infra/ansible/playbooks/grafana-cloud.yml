@@ -237,7 +237,8 @@
           ansible.builtin.assert:
             that: answer != 'nothing' and (answer | float) >= item.min
             fail_msg: >-
-              Grafana Cloud has no {{ item.what }}. k8s/README.md, Monitoring, says where to look
+              Missing on Grafana Cloud: {{ item.what }} (got {{ answer }}, need {{ item.min }}).
+              k8s/README.md, Monitoring, says where to look
             quiet: true
           loop: "{{ answers.results | map(attribute='item') | list }}"
           loop_control:
