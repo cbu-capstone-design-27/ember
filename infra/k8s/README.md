@@ -289,8 +289,9 @@ To set the values or rotate the token:
 4. Commit and merge the file. The collector reads the Secret again within a minute, with no restart.
 5. Once data still arrives (Explore in Grafana shows a fresh `up` from cluster `homelab`), delete the old token.
 
-If the token is wrong or expired, nothing arrives and the collector logs the refusal:
+If the token is wrong or expired, nothing arrives and the collectors log the refusal. `alloy-metrics` sends the metrics and events, and the `alloy-logs` pods send the pod logs:
 
 ```bash
-kubectl --context homelab -n monitoring logs -l app.kubernetes.io/instance=k8s-monitoring --prefix | grep -iE 'status|error'
+kubectl --context homelab -n monitoring logs deploy/k8s-monitoring-alloy-metrics -c alloy | grep -E 'level=(error|warn)'
+kubectl --context homelab -n monitoring logs -l app.kubernetes.io/name=alloy-logs -c alloy --prefix | grep -E 'level=(error|warn)'
 ```
