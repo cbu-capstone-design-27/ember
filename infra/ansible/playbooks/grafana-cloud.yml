@@ -20,32 +20,29 @@
     - name: Secret
       tags: [secret]
       block:
+        # Names only, so this one can say which is missing without showing a value
         - name: Require the Grafana Cloud values in the vault
           ansible.builtin.assert:
-            that:
-              - lookup('vars', item.value, default='') is string
-              - lookup('vars', item.value, default='') | length > 0
-              - lookup('vars', item.value, default='') == lookup('vars', item.value, default='') | trim
+            that: lookup('vars', item, default='__missing__') != '__missing__'
             fail_msg: >-
-              Add {{ item.value }} with .venv/bin/ansible-vault edit group_vars/all/vault.yml
+              Add {{ item }} with .venv/bin/ansible-vault edit group_vars/all/vault.yml
               (k8s/README.md, "The Grafana Cloud token" says where each value comes from)
             quiet: true
-          loop: "{{ grafana_cloud_keys | dict2items }}"
-          loop_control:
-            label: "{{ item.value }}"
-          no_log: true
+          loop: "{{ grafana_cloud_keys.values() | list }}"
 
-        # The collector appends nothing, so these are the full push URLs from the stack's details page
-        - name: Require full push URLs
+        # The user IDs are numbers, which YAML reads as integers, so compare as strings
+        - name: Require each to be set, without spaces around it
           ansible.builtin.assert:
             that:
-              - vault_grafana_cloud_prometheus_url is match('https://.*/api/prom/push$')
-              - vault_grafana_cloud_loki_url is match('https://.*/loki/api/v1/push$')
-            fail_msg: >-
-              vault_grafana_cloud_prometheus_url must end in /api/prom/push and
-              vault_grafana_cloud_loki_url in /loki/api/v1/push
+              - lookup('vars', item) | string | length > 0
+              - lookup('vars', item) | string == lookup('vars', item) | string | trim
+            fail_msg: One of the vault_grafana_cloud_* values is empty or has spaces around it
             quiet: true
+          loop: "{{ grafana_cloud_keys.values() | list }}"
+          no_log: true
 
+        # The collector appends nothing, so the Secret holds full push URLs. The stack's Prometheus page
+        # shows the full one; its Loki page shows only the host, so add Loki's push path when it's missing.
         - name: Build the Secret
           ansible.builtin.set_fact:
             grafana_cloud_secret:
@@ -54,8 +51,24 @@
               metadata:
                 name: grafana-cloud
                 namespace: monitoring
-              stringData: "{{ dict(grafana_cloud_keys.keys() | zip(grafana_cloud_keys.values() | map('extract', vars))) }}"
+              stringData: "{{ values | combine({'loki-url': loki_url}) }}"
+          vars:
+            values: "{{ dict(grafana_cloud_keys.keys() | zip(grafana_cloud_keys.values() | map('extract', vars) | map('string'))) }}"
+            loki_url: >-
+              {{ values['loki-url'] if values['loki-url'] is match('.*/loki/api/v1/push$')
+                 else values['loki-url'] | regex_replace('/+$', '') ~ '/loki/api/v1/push' }}
           no_log: true
+
+        - name: Require full push URLs
+          ansible.builtin.assert:
+            that:
+              - grafana_cloud_secret.stringData['prometheus-url'] is match('https://[^/]+/api/prom/push$')
+              - grafana_cloud_secret.stringData['loki-url'] is match('https://[^/]+/loki/api/v1/push$')
+            fail_msg: >-
+              vault_grafana_cloud_prometheus_url must be the remote write endpoint
+              (https://<host>/api/prom/push), and vault_grafana_cloud_loki_url the Loki URL
+              (https://<host>, with or without /loki/api/v1/push)
+            quiet: true
 
         # Encrypting again gives new ciphertext every time, so only write when a value changed
         - name: Read the values the file holds now

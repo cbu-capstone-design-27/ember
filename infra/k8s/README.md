@@ -277,7 +277,7 @@ The collector pushes with a Grafana Cloud access policy token that can only writ
 |---|---|---|
 | `vault_grafana_cloud_prometheus_url` | `prometheus-url` | The stack's Prometheus details: the remote write endpoint, ending `/api/prom/push` |
 | `vault_grafana_cloud_prometheus_user` | `prometheus-username` | Same page: the username (instance ID) |
-| `vault_grafana_cloud_loki_url` | `loki-url` | The stack's Loki details: the URL with `/loki/api/v1/push` added |
+| `vault_grafana_cloud_loki_url` | `loki-url` | The stack's Loki details: the URL (`https://logs-prod-<n>.grafana.net`). `make grafana-secret` adds `/loki/api/v1/push` |
 | `vault_grafana_cloud_loki_user` | `loki-username` | Same page: the user |
 | `vault_grafana_cloud_access_token` | `access-token` | Access Policies: a policy for this stack with `metrics:write` and `logs:write` only, then Add token |
 
@@ -285,7 +285,7 @@ To set the values or rotate the token:
 
 1. Create the token under Access Policies.
 2. Put the values in the vault (`.venv/bin/ansible-vault edit group_vars/all/vault.yml` from `infra/ansible`).
-3. `make grafana-secret` (from `infra/ansible`) writes the encrypted Secret. It never prints a value. When the file already holds the vault's values, it leaves the file alone, so running it again makes no diff. It refuses a URL that is not the full push URL.
+3. `make grafana-secret` (from `infra/ansible`) writes the encrypted Secret. It never prints a value. When the file already holds the vault's values, it leaves the file alone, so running it again makes no diff. It refuses a Prometheus URL that is not the full remote write endpoint and a Loki URL with any other path, and names any vault variable that is missing.
 4. Commit and merge the file. The collector reads the Secret again within a minute, with no restart.
 5. Once data still arrives (Explore in Grafana shows a fresh `up` from cluster `homelab`), delete the old token.
 
