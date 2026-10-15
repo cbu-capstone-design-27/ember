@@ -62,6 +62,15 @@ The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/intake/adapte
 | `deployment`, `deployment_status` | Deployments | **No** |
 | `discussion`, `discussion_comment` | Discussions | **No** |
 
+**Recommended subscriptions** (EMBER-92). Subscribe the App to the events enrich maps (`MAPPED` in `services/github-ingestion/enrich.py`):
+
+- `issues`, `issue_comment`, `milestone`, `label`
+- `pull_request`, `pull_request_review`, `pull_request_review_comment`
+- `push`, `create`, `delete`, `commit_comment`, `release`, `repository`
+- `installation`, `installation_repositories` (always sent)
+
+Uncheck the CI events (`workflow_*`, `check_*`, `status`) in the App's settings. Enrich marks them enriched in one bulk statement without making a record, so they only add load: 904 of the 981 deliveries one repository sent in 30 minutes were CI events. GitHub has no API for an App's event subscriptions, so this is set on the App's settings page.
+
 **Rules enrich follows:**
 - **Fetch only what's missing.** The payload is the record of that moment and is kept as it is. Fetched data is added beside it in `source_records.record`.
 - **Every call uses the installation token** (App JWT → installation access token, 1 hour) and **goes through the shared limiter** (`rate_limits`, bucket = installation). Throttling (`Retry-After`, or `x-ratelimit-remaining: 0`) waits and doesn't count as a failure, as in `pull_test.py`.
