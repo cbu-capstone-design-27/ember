@@ -44,7 +44,7 @@ infra/k8s/
     cnpg/                     # HelmRepository, HelmRelease, values.yaml (CloudNativePG operator)
   apps/
     nginx/                    # reverse proxy behind the public Ingress
-    github-webhook/           # placeholder listener (EMBER-62 replaces it with intake)
+    intake/                   # webhook listener for every source (EMBER-62), webhooks.sops.yaml
     neo4j/                    # HelmRepository, HelmRelease, values.yaml, service-lb.yaml
     postgres/                 # CloudNativePG Cluster, service-lb.yaml, migrate-job.yaml, migrations/
     headlamp/                 # HelmRepository, HelmRelease, values.yaml, ingress.yaml, viewer.yaml
@@ -56,7 +56,7 @@ flowchart LR
   gh["GitHub: develop<br/>infra/k8s"] -->|every 1m| src["GitRepository<br/>flux-system"]
   src --> fs["Kustomization flux-system<br/>clusters/homelab"]
   fs -->|creates| infra["Kustomization infrastructure<br/>namespaces, Tailscale operator, CloudNativePG"]
-  fs -->|creates| apps["Kustomization apps<br/>nginx, github-webhook, Neo4j, Postgres, Headlamp"]
+  fs -->|creates| apps["Kustomization apps<br/>nginx, intake, Neo4j, Postgres, Headlamp"]
   infra -->|healthy first| apps
   key[("Secret sops-age<br/>from Ansible Vault")] -.decrypts.-> infra
   key -.decrypts.-> apps
@@ -77,7 +77,7 @@ What runs on the cluster:
 |---|---|---|
 | `flux-system` | source, kustomize, helm, notification controllers | `gotk-components.yaml` |
 | `tailscale` | Tailscale operator + one proxy per Tailscale Ingress | HelmRelease, chart 1.102.4 |
-| `ember` | nginx, github-webhook placeholder | Plain manifests |
+| `ember` | nginx, intake | Plain manifests |
 | `ember` | Neo4j (pinned to hv-worker-1) | HelmRelease, chart 2026.9.0 |
 | `cnpg-system` | CloudNativePG operator | HelmRelease, chart 0.29.1 |
 | `ember` | Postgres (pinned to hv-worker-2), migrate Job | CloudNativePG `Cluster`, plain manifests |
@@ -87,7 +87,7 @@ Public and tailnet addresses:
 
 | URL | Reachable from | Serves |
 |---|---|---|
-| `https://ember.tail470a31.ts.net` | Internet (Funnel) | nginx, which routes `/webhook/github` and `/healthz` |
+| `https://ember.tail470a31.ts.net` | Internet (Funnel) | nginx, which routes `/webhook/` to intake and answers `/healthz` |
 | `https://headlamp.tail470a31.ts.net` | Tailnet only | Headlamp |
 | `bolt://hv-worker-1.tail470a31.ts.net:7687` | Tailnet only | Neo4j |
 | `hv-worker-2.tail470a31.ts.net:5432` | Tailnet only | Postgres (`make postgres-url`) |
@@ -323,7 +323,7 @@ How it was verified, on a cluster reset to bare k3s:
 
 ### Open follow-ups
 
-- [ ] EMBER-62: replace the placeholder `github-webhook` with `intake`. No pull secret is needed: the GHCR packages are public (`docs/container-images.md`)
+- [x] EMBER-62: replace the placeholder `github-webhook` with `intake`. No pull secret is needed: the GHCR packages are public (`docs/container-images.md`)
 - [ ] Flux image automation: ImageRepository and ImagePolicy on the `<branch>-<run>-<sha>` tags. Decide whether it pushes to `develop` (needs a branch-protection bypass) or opens PRs from its own branch
 - [ ] Move Neo4j's password from `apps/neo4j/values.yaml` into a SOPS Secret (`passwordFromSecret`), and update `neo4j-health`, which reads the password from `values.yaml`
 - [ ] Remove the now-duplicate `vault_ts_oauth_client_id` and `vault_ts_oauth_client_secret` from the vault

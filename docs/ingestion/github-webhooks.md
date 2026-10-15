@@ -157,7 +157,6 @@ Catch-up has two steps, both run by `scheduler:github` and done by `enrich:githu
 | **Events the App has no permission for** (`status`, checks, Actions, deployments, discussions) | GitHub doesn't send them | None. See [open questions](#open-questions) |
 | **Repository added to or removed from the installation** | `installation_repositories` | Added: reconcile it from the start. Removed: stop. Data is kept (EMBER-53) |
 | **Installation not mapped to a tenant** | Stored with `tenant = null`, not processed | `ember-admin map` assigns the tenant and enqueues what was stored |
-| **The cluster URL still ends at the placeholder** (`infra/k8s/apps/github-webhook/listener.py`) | It answers 200 and stores nothing, so GitHub records success | Nothing can recover these. Don't point the App at it until intake replaces it (EMBER-56) |
 
 ## Open questions
 

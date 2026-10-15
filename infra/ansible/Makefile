@@ -21,7 +21,8 @@ DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-j
 
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
-	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate headlamp-token
+	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate headlamp-token \
+	intake-secret
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -130,8 +131,11 @@ apps-diff: ## Show what this checkout's k8s/ would change on the cluster
 	flux --context $(CONTEXT) diff kustomization infrastructure --path ../k8s/infrastructure || [ $$? -eq 1 ]
 	flux --context $(CONTEXT) diff kustomization apps --path ../k8s/apps || [ $$? -eq 1 ]
 
-apps-health: ## Apps rolled out; the GitHub webhook answers through nginx, from the tailnet and through Funnel
+apps-health: ## Apps rolled out; intake refuses an unsigned webhook through nginx, from the tailnet and through Funnel
 	ansible-playbook playbooks/apps.yml --tags health
+
+intake-secret: ## Write k8s/apps/intake/webhooks.sops.yaml, encrypted, from vault_github_webhook_secret. Commit it
+	ansible-playbook playbooks/intake.yml --tags secret
 
 ts-operator-health: ## Operator ready and logged in; every Tailscale Ingress has a hostname and answers HTTPS
 	ansible-playbook playbooks/tailscale-operator.yml --tags health
