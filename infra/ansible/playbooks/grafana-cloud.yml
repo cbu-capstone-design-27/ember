@@ -1,0 +1,107 @@
+---
+# Writes k8s/monitoring/k8s-monitoring/grafana-cloud.sops.yaml, Secret grafana-cloud, from the vault,
+# encrypted with the public key in .sops.yaml. The collector pushes metrics and logs to the Grafana
+# Cloud stack with it (k8s/README.md, "The Grafana Cloud token"). No value is printed. Commit the file
+# it writes. Use make grafana-secret.
+- name: Grafana Cloud
+  hosts: localhost
+  gather_facts: false
+  vars:
+    repo_dir: "{{ playbook_dir }}/../../.."
+    secret_file: infra/k8s/monitoring/k8s-monitoring/grafana-cloud.sops.yaml
+    # Secret key -> vault variable
+    grafana_cloud_keys:
+      prometheus-url: vault_grafana_cloud_prometheus_url
+      prometheus-username: vault_grafana_cloud_prometheus_user
+      loki-url: vault_grafana_cloud_loki_url
+      loki-username: vault_grafana_cloud_loki_user
+      access-token: vault_grafana_cloud_access_token
+  tasks:
+    - name: Secret
+      tags: [secret]
+      block:
+        # Names only, so this one can say which is missing without showing a value
+        - name: Require the Grafana Cloud values in the vault
+          ansible.builtin.assert:
+            that: lookup('vars', item, default='__missing__') != '__missing__'
+            fail_msg: >-
+              Add {{ item }} with .venv/bin/ansible-vault edit group_vars/all/vault.yml
+              (k8s/README.md, "The Grafana Cloud token" says where each value comes from)
+            quiet: true
+          loop: "{{ grafana_cloud_keys.values() | list }}"
+
+        # The user IDs are numbers, which YAML reads as integers, so compare as strings
+        - name: Require each to be set, without spaces around it
+          ansible.builtin.assert:
+            that:
+              - lookup('vars', item) | string | length > 0
+              - lookup('vars', item) | string == lookup('vars', item) | string | trim
+            fail_msg: One of the vault_grafana_cloud_* values is empty or has spaces around it
+            quiet: true
+          loop: "{{ grafana_cloud_keys.values() | list }}"
+          no_log: true
+
+        # The collector appends nothing, so the Secret holds full push URLs. The stack's Prometheus page
+        # shows the full one; its Loki page shows only the host, so add Loki's push path when it's missing.
+        - name: Build the Secret
+          ansible.builtin.set_fact:
+            grafana_cloud_secret:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: grafana-cloud
+                namespace: monitoring
+              stringData: "{{ values | combine({'loki-url': loki_url}) }}"
+          vars:
+            values: "{{ dict(grafana_cloud_keys.keys() | zip(grafana_cloud_keys.values() | map('extract', vars) | map('string'))) }}"
+            loki_url: >-
+              {{ values['loki-url'] if values['loki-url'] is match('.*/loki/api/v1/push$')
+                 else values['loki-url'] | regex_replace('/+$', '') ~ '/loki/api/v1/push' }}
+          no_log: true
+
+        - name: Require full push URLs
+          ansible.builtin.assert:
+            that:
+              - grafana_cloud_secret.stringData['prometheus-url'] is match('https://[^/]+/api/prom/push$')
+              - grafana_cloud_secret.stringData['loki-url'] is match('https://[^/]+/loki/api/v1/push$')
+            fail_msg: >-
+              vault_grafana_cloud_prometheus_url must be the remote write endpoint
+              (https://<host>/api/prom/push), and vault_grafana_cloud_loki_url the Loki URL
+              (https://<host>, with or without /loki/api/v1/push)
+            quiet: true
+
+        # Encrypting again gives new ciphertext every time, so only write when a value changed
+        - name: Read the values the file holds now
+          ansible.builtin.command:
+            argv: [sops, --decrypt, --extract, '["stringData"]', --output-type, json, "{{ secret_file }}"]
+            chdir: "{{ repo_dir }}"
+          environment:
+            SOPS_AGE_KEY: "{{ vault_sops_age_key | default('') }}"
+          register: current
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Encrypt the Secret
+          ansible.builtin.command:
+            argv: [sops, --encrypt, --filename-override, "{{ secret_file }}",
+                   --input-type, json, --output-type, yaml, /dev/stdin]
+            chdir: "{{ repo_dir }}"
+            stdin: "{{ grafana_cloud_secret | to_json }}"
+          register: encrypted
+          when: current.rc != 0 or (current.stdout | from_json) != grafana_cloud_secret.stringData
+          changed_when: false
+          no_log: true
+
+        - name: Write it to {{ secret_file }}
+          ansible.builtin.copy:
+            content: "{{ encrypted.stdout }}\n"
+            dest: "{{ repo_dir }}/{{ secret_file }}"
+            mode: "0644"
+          when: encrypted is not skipped
+
+        - name: Say what to do next
+          ansible.builtin.debug:
+            msg: >-
+              {{ secret_file ~ ' is written. Commit and merge it; the collector reads it within a minute, without a restart'
+                 if encrypted is not skipped else secret_file ~ ' already holds the vault values; nothing to do' }}

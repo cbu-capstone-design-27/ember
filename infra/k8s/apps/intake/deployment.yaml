@@ -22,6 +22,10 @@ spec:
     metadata:
       labels:
         app: intake
+      # The collector scrapes /metrics on both pods (k8s/README.md, Monitoring)
+      annotations:
+        k8s.grafana.com/scrape: "true"
+        k8s.grafana.com/metrics.portName: http
     spec:
       enableServiceLinks: false
       automountServiceAccountToken: false

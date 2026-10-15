@@ -1,0 +1,23 @@
+# The collector from infra/k8s/monitoring (EMBER-91). Waits for infrastructure, which creates its
+# namespace. Nothing depends on it, so a broken collector doesn't hold up apps.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: monitoring
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: infrastructure
+  interval: 10m
+  retryInterval: 1m
+  timeout: 10m
+  path: ./infra/k8s/monitoring
+  prune: true
+  wait: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age

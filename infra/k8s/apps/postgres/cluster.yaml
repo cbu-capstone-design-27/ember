@@ -31,3 +31,14 @@ spec:
       memory: 512Mi
     limits:
       memory: 1Gi
+  # The collector scrapes the instance's exporter on port metrics (k8s/README.md, Monitoring). The
+  # operator copies these annotations onto everything it creates; the collector looks only at pods.
+  inheritedMetadata:
+    annotations:
+      k8s.grafana.com/scrape: "true"
+      k8s.grafana.com/metrics.portName: metrics
+  # The enrich backlog and unmapped rows, on top of the operator's default queries
+  monitoring:
+    customQueriesConfigMap:
+      - name: postgres-monitoring
+        key: queries
