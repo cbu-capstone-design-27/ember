@@ -329,11 +329,11 @@ There are two tokens:
 | `vault_grafana_cloud_loki_url` | `loki-url` | The stack's Loki details: the URL (`https://logs-prod-<n>.grafana.net`). `make grafana-secret` adds `/loki/api/v1/push` |
 | `vault_grafana_cloud_loki_user` | `loki-username` | Same page: the user |
 | `vault_grafana_cloud_access_token` | `access-token` | Access Policies: a policy for this stack with `metrics:write` and `logs:write` only, then Add token |
-| `vault_grafana_cloud_sa_token` | `token` (Secret `grafana-operator`) | In Grafana (`zestylagoon2114.grafana.net`): Administration → Users and access → Service accounts, account `grafana-operator`, role Editor, Add service account token |
+| `vault_grafana_cloud_sa_token` | `token` (Secret `grafana-operator`) | In Grafana (`zestylagoon2114.grafana.net`): Administration → Users and access → Service accounts, account `k3-dashboards`, role Editor (with no role it can only read folders, and every sync fails 403), Add service account token |
 
 To set the values or rotate a token:
 
-1. Create the new token: under Access Policies for the collector, or on service account `grafana-operator` for the operator.
+1. Create the new token: under Access Policies for the collector, or on service account `k3-dashboards` for the operator.
 2. Put the values in the vault (`.venv/bin/ansible-vault edit group_vars/all/vault.yml` from `infra/ansible`).
 3. `make grafana-secret` (from `infra/ansible`) writes both encrypted Secrets.
    - It never prints a value.
