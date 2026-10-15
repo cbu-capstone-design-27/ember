@@ -295,14 +295,52 @@ Each panel's data source is the dashboard's Metrics or Logs variable, which find
 
 #### Synthetic checks
 
-Grafana Cloud Synthetic Monitoring tests the public URL from outside, which nothing on the cluster can do: Funnel, DNS and the Tailscale proxy are all in the path. The two checks were set up by hand under Synthetics in Grafana's menu, as HTTP checks. The operator doesn't manage Synthetic Monitoring, so this table is the record. To rebuild them, use these settings:
+Grafana Cloud Synthetic Monitoring tests the public URL from outside, which nothing on the cluster can do: Funnel, DNS and the Tailscale proxy are all in the path. The two checks were set up by hand under Synthetics in Grafana's menu, as Scripted (k6) checks. The operator doesn't manage Synthetic Monitoring, so this section is the record. To rebuild one, create a Scripted check with its job name, its URL as the instance, and its script. Run it from one probe location (Calgary) every 10 minutes, with alerting off.
 
-| Job name | Request | Expected |
-|---|---|---|
-| `ember-healthz` | `GET https://ember.tail470a31.ts.net/healthz` | Status 200, body matches `ok` |
-| `ember-webhook-unsigned` | `POST https://ember.tail470a31.ts.net/webhook/github`, headers `Content-Type: application/json`, `X-GitHub-Event: ping` and `X-GitHub-Delivery: synthetic-check`, body `{}` | Status 401, body matches `invalid signature`. Only intake answers this way, so it proves the route reaches intake |
+| Job name | What it proves |
+|---|---|
+| `ember-healthz` | Funnel, DNS, the Tailscale proxy and nginx answer. nginx returns `ok` itself, without asking intake |
+| `ember-webhook-unsigned` | The webhook route reaches intake. Only intake turns away an unsigned delivery with 401 `invalid signature` |
 
-Both run every 10 minutes from one probe location, about 8,600 runs a month of the free tier's allowance. Each POST counts once in `intake_deliveries_total{result="unauthorized"}`, so the unauthorized count never drops to 0. Their results are metrics on the stack, such as `probe_success{job="ember-healthz"}`, which `make grafana-health` checks.
+`ember-healthz`:
+
+```js
+import { expect } from 'https://jslib.k6.io/k6-testing/0.5.0/index.js';
+import http from 'k6/http';
+
+// Funnel, DNS, the Tailscale proxy and nginx answer (nginx returns "ok" itself, without asking intake)
+export default function main() {
+  const resp = http.get('https://ember.tail470a31.ts.net/healthz', { responseType: 'text' });
+  expect(resp.status).toBe(200);
+  expect(resp.body.trim()).toBe('ok');
+}
+```
+
+`ember-webhook-unsigned`:
+
+```js
+import { expect } from 'https://jslib.k6.io/k6-testing/0.5.0/index.js';
+import http from 'k6/http';
+
+// An unsigned delivery is turned away by intake itself, which proves the route reaches intake.
+// Each run adds 1 to intake_deliveries_total{result="unauthorized"}.
+export default function main() {
+  const resp = http.post('https://ember.tail470a31.ts.net/webhook/github', '{}', {
+    headers: {
+      'Content-Type': 'application/json',
+      'X-GitHub-Event': 'ping',
+      'X-GitHub-Delivery': 'synthetic-check',
+    },
+    responseType: 'text',
+    // 401 is the answer this check wants, so k6 shouldn't count it as a failed request
+    responseCallback: http.expectedStatuses(401),
+  });
+  expect(resp.status).toBe(401);
+  expect(resp.json('error')).toBe('invalid signature');
+}
+```
+
+The scripts ask for `responseType: 'text'` because the k6 version Synthetic Monitoring runs returns the body as binary otherwise. Test a changed script with Test on the check's page before saving. Together the two run about 8,600 times a month of the free tier's allowance. Each run of the second counts once in `intake_deliveries_total{result="unauthorized"}`, so the unauthorized count never drops to 0. Their results are metrics on the stack, such as `probe_success{job="ember-healthz"}`, which `make grafana-health` checks.
 
 #### Free tier usage
 
