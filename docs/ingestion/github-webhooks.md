@@ -59,8 +59,8 @@ The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/intake/adapte
 | `status` | Commit statuses | Not subscribed on `ember-ingest`. Enrich skips them if they arrive |
 | `check_run`, `check_suite` | Checks | Not subscribed on `ember-ingest`. Enrich skips them if they arrive |
 | `workflow_run`, `workflow_job` | Actions | Not subscribed on `ember-ingest`. Enrich skips them if they arrive |
-| `deployment`, `deployment_status` | Deployments | **No** |
-| `discussion`, `discussion_comment` | Discussions | **No** |
+| `deployment`, `deployment_status` | Deployments | Yes, skipped by enrich (not mapped) |
+| `discussion`, `discussion_comment` | Discussions | Yes, skipped by enrich (not mapped) |
 
 **Recommended subscriptions** (EMBER-92). Subscribe the App to the events enrich maps (`MAPPED` in `services/github-ingestion/enrich.py`):
 
