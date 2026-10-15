@@ -5,10 +5,11 @@
 
 # Webhook requests also log who sent them. For GitHub, target is integration:<App id> for an App and
 # repository:<id> or organization:<id> for a webhook set on a repo or org. These headers are not
-# secret; the signature header is never logged.
+# secret; the signature header is never logged. upstream lists each intake pod tried, in order, so a
+# failover shows as two addresses.
 log_format webhook '$http_x_forwarded_for [$time_local] "$request" $status $body_bytes_sent $request_time '
                    '"$http_user_agent" event=$http_x_github_event delivery=$http_x_github_delivery '
-                   'hook=$http_x_github_hook_id '
+                   'hook=$http_x_github_hook_id upstream="$upstream_addr" upstream_status="$upstream_status" '
                    'target=$http_x_github_hook_installation_target_type:$http_x_github_hook_installation_target_id';
 
 server {
