@@ -2,6 +2,16 @@
 # by the image entrypoint to /etc/nginx/conf.d/default.conf, replacing the welcome-page config. The
 # entrypoint substitutes only names that are set in the environment, so nginx's own variables survive.
 # To publish another path, add a location; everything not listed is 404.
+
+# Webhook requests also log who sent them. For GitHub, target is integration:<App id> for an App and
+# repository:<id> or organization:<id> for a webhook set on a repo or org. These headers are not
+# secret; the signature header is never logged. upstream lists each intake pod tried, in order, so a
+# failover shows as two addresses.
+log_format webhook '$http_x_forwarded_for [$time_local] "$request" $status $body_bytes_sent $request_time '
+                   '"$http_user_agent" event=$http_x_github_event delivery=$http_x_github_delivery '
+                   'hook=$http_x_github_hook_id upstream="$upstream_addr" upstream_status="$upstream_status" '
+                   'target=$http_x_github_hook_installation_target_type:$http_x_github_hook_installation_target_id';
+
 server {
     listen 80;
     server_name _;
@@ -9,8 +19,9 @@ server {
 
     # Cluster DNS, read from the pod's resolv.conf by the image entrypoint. With the upstream in a
     # variable, nginx looks the Service up at request time instead of at start, so it starts and
-    # stays up whether or not the listener (or CoreDNS) is there yet.
-    resolver ${NGINX_LOCAL_RESOLVERS} valid=60s ipv6=off;
+    # stays up whether or not the listener (or CoreDNS) is there yet. Answers are kept 5 s, so a pod
+    # that stops or starts is dropped or used within 5 s (intake's preStop waits that long).
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=5s ipv6=off;
     resolver_timeout 5s;
 
     # Probes only
@@ -23,15 +34,24 @@ server {
     # Every source's webhooks (/webhook/github, /webhook/gitlab, ...) -> Service intake, which knows
     # the sources and answers 404 for any other
     location /webhook/ {
+        access_log /var/log/nginx/access.log webhook;
         limit_except POST { deny all; }
         # Same cap as MAX_BODY_BYTES in services/intake/intake.py
         client_max_body_size 8m;
-        set $intake intake.ember.svc.cluster.local:8080;
+        # The headless Service, which resolves to every ready intake pod, so nginx can fail over
+        set $intake intake-pods.ember.svc.cluster.local:8080;
         # With no URI after the address, the request's own URI is passed on unchanged
         proxy_pass http://$intake;
         proxy_set_header Host $host;
-        proxy_connect_timeout 5s;
-        # GitHub drops a delivery that takes longer than 10 seconds
+        # A pod on a worker that is going down stays listed until Kubernetes notices, a minute or more.
+        # Give up on it after 2 s and send the delivery to the other pod. non_idempotent also resends
+        # a POST that a pod took and then dropped: intake's unique (source, delivery_id) turns a
+        # delivery that was stored already into a 200 "duplicate", so a resend never stores it twice.
+        proxy_connect_timeout 2s;
+        proxy_next_upstream error timeout non_idempotent;
+        proxy_next_upstream_tries 2;
+        # GitHub drops a delivery that takes longer than 10 seconds, so a retry after that is pointless
+        proxy_next_upstream_timeout 10s;
         proxy_read_timeout 10s;
     }
 

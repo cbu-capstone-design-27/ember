@@ -1,11 +1,34 @@
-# In-cluster only: http://intake.ember.svc.cluster.local:8080
-# What nginx proxies /webhook/ to. Its /health and /metrics are not routed publicly.
+# In-cluster only: http://intake.ember.svc.cluster.local:8080, one virtual IP for both pods, for
+# port-forward and other in-cluster clients. nginx uses intake-pods below. /health and /metrics are
+# not routed publicly.
 apiVersion: v1
 kind: Service
 metadata:
   name: intake
   namespace: ember
+  labels:
+    app: intake
 spec:
+  selector:
+    app: intake
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# Headless: its DNS name returns each ready pod's own address instead of one virtual IP, so nginx
+# can try the other pod when one does not answer (apps/nginx/default.conf.template). A worker that
+# reboots keeps its pod listed as ready until Kubernetes notices, a minute or more; through the
+# virtual IP, deliveries sent to that pod in the meantime were lost.
+apiVersion: v1
+kind: Service
+metadata:
+  name: intake-pods
+  namespace: ember
+  labels:
+    app: intake
+spec:
+  clusterIP: None
   selector:
     app: intake
   ports:
