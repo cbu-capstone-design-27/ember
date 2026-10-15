@@ -18,8 +18,9 @@ server {
 
     # Cluster DNS, read from the pod's resolv.conf by the image entrypoint. With the upstream in a
     # variable, nginx looks the Service up at request time instead of at start, so it starts and
-    # stays up whether or not the listener (or CoreDNS) is there yet.
-    resolver ${NGINX_LOCAL_RESOLVERS} valid=60s ipv6=off;
+    # stays up whether or not the listener (or CoreDNS) is there yet. Answers are kept 5 s, so a pod
+    # that stops or starts is dropped or used within 5 s (intake's preStop waits that long).
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=5s ipv6=off;
     resolver_timeout 5s;
 
     # Probes only
@@ -36,12 +37,20 @@ server {
         limit_except POST { deny all; }
         # Same cap as MAX_BODY_BYTES in services/intake/intake.py
         client_max_body_size 8m;
-        set $intake intake.ember.svc.cluster.local:8080;
+        # The headless Service, which resolves to every ready intake pod, so nginx can fail over
+        set $intake intake-pods.ember.svc.cluster.local:8080;
         # With no URI after the address, the request's own URI is passed on unchanged
         proxy_pass http://$intake;
         proxy_set_header Host $host;
-        proxy_connect_timeout 5s;
-        # GitHub drops a delivery that takes longer than 10 seconds
+        # A pod on a worker that is going down stays listed until Kubernetes notices, a minute or more.
+        # Give up on it after 2 s and send the delivery to the other pod. non_idempotent also resends
+        # a POST that a pod took and then dropped: intake's unique (source, delivery_id) turns a
+        # delivery that was stored already into a 200 "duplicate", so a resend never stores it twice.
+        proxy_connect_timeout 2s;
+        proxy_next_upstream error timeout non_idempotent;
+        proxy_next_upstream_tries 2;
+        # GitHub drops a delivery that takes longer than 10 seconds, so a retry after that is pointless
+        proxy_next_upstream_timeout 10s;
         proxy_read_timeout 10s;
     }
 
