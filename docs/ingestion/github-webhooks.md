@@ -56,9 +56,9 @@ The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/intake/adapte
 | `issues`, `issue_comment` | Issues | Yes |
 | `milestone` | Issues or Pull requests | Yes |
 | `pull_request`, `pull_request_review`, `pull_request_review_comment` | Pull requests | Yes |
-| `status` | Commit statuses | Yes, skipped by enrich |
-| `check_run`, `check_suite` | Checks | Yes, skipped by enrich |
-| `workflow_run`, `workflow_job` | Actions | Yes, skipped by enrich |
+| `status` | Commit statuses | Not subscribed on `ember-ingest`. Enrich skips them if they arrive |
+| `check_run`, `check_suite` | Checks | Not subscribed on `ember-ingest`. Enrich skips them if they arrive |
+| `workflow_run`, `workflow_job` | Actions | Not subscribed on `ember-ingest`. Enrich skips them if they arrive |
 | `deployment`, `deployment_status` | Deployments | **No** |
 | `discussion`, `discussion_comment` | Discussions | **No** |
 
@@ -163,13 +163,13 @@ Catch-up has two steps, both run by `scheduler:github` and done by `enrich:githu
 | **Edits** | `edited` carries the new object and `changes` with the old values, so each edit is kept | Step 2 sees only the latest version. Edits in between are lost if steps 1 and 2 both missed them |
 | **Deletes** (issues, comments, labels, milestones, releases, branches) | The `deleted` action or `delete` event writes a tombstone | Step 2 can't see a delete: the object just isn't listed any more. Step 1 recovers it within 3 days. After that a missed delete stays missed (`architecture.md`'s [failures table](architecture.md#failures-and-replay)) |
 | **Out of order** (a comment before its issue's `opened`, `closed` before `edited`) | Each is still written as its own versioned row | The [ordering value](#ordering-value-ember-63) decides which is current |
-| **Events the App has no permission for** (deployments, discussions) | GitHub doesn't send them | None. See [open questions](#open-questions) |
+| **Events the App has no permission for** | None known. As of 2026-10-14 the App also reads Deployments and Discussions (`GET /app`), so those events arrive whenever they're subscribed | None. See [open questions](#open-questions) |
 | **Repository added to or removed from the installation** | `installation_repositories` | Added: reconcile it from the start. Removed: stop. Data is kept (EMBER-53) |
 | **Installation not mapped to a tenant** | Stored with `tenant = null`, not processed | `ember-admin map` assigns the tenant and enqueues what was stored |
 
 ## Open questions
 
-1. **The subscription list and the permissions disagree.** `RECOMMENDED_WEBHOOK_EVENTS` lists `deployment`, `deployment_status`, `discussion` and `discussion_comment`, but the App has no Deployments or Discussions permission, so GitHub never sends them. Add the read permissions (each installation has to accept them), or drop them from the list?
+1. **The subscription list and the permissions disagree.** Resolved: as of 2026-10-14 the App has Deployments and Discussions read permission (`GET /app`), so `deployment`, `deployment_status`, `discussion` and `discussion_comment` arrive whenever they're subscribed. Enrich doesn't map them and skips them.
 2. **`architecture.md` says a push lists up to 20 commits.** GitHub's webhook reference says up to 2048. 20 is the limit of the Events API, not webhooks. This doc uses 2048. `architecture.md` needs a one-line fix.
 3. **Pull request files:** fetch the list on `opened`, `reopened` and `synchronize` as proposed, and keep `patch`? It is the only per-event call, and `pull_test.py` doesn't fetch files today.
 4. **Redelivery from enrich:** step 1 needs the App JWT, which enrich holds already (`architecture.md`, [Per-source auth](architecture.md#per-source-auth)). Confirm `scheduler:github` runs it before each reconcile.
