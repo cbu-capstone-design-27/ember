@@ -1,0 +1,94 @@
+---
+# Writes k8s/monitoring/k8s-monitoring/grafana-cloud.sops.yaml, Secret grafana-cloud, from the vault,
+# encrypted with the public key in .sops.yaml. The collector pushes metrics and logs to the Grafana
+# Cloud stack with it (k8s/README.md, "The Grafana Cloud token"). No value is printed. Commit the file
+# it writes. Use make grafana-secret.
+- name: Grafana Cloud
+  hosts: localhost
+  gather_facts: false
+  vars:
+    repo_dir: "{{ playbook_dir }}/../../.."
+    secret_file: infra/k8s/monitoring/k8s-monitoring/grafana-cloud.sops.yaml
+    # Secret key -> vault variable
+    grafana_cloud_keys:
+      prometheus-url: vault_grafana_cloud_prometheus_url
+      prometheus-username: vault_grafana_cloud_prometheus_user
+      loki-url: vault_grafana_cloud_loki_url
+      loki-username: vault_grafana_cloud_loki_user
+      access-token: vault_grafana_cloud_access_token
+  tasks:
+    - name: Secret
+      tags: [secret]
+      block:
+        - name: Require the Grafana Cloud values in the vault
+          ansible.builtin.assert:
+            that:
+              - lookup('vars', item.value, default='') is string
+              - lookup('vars', item.value, default='') | length > 0
+              - lookup('vars', item.value, default='') == lookup('vars', item.value, default='') | trim
+            fail_msg: >-
+              Add {{ item.value }} with .venv/bin/ansible-vault edit group_vars/all/vault.yml
+              (k8s/README.md, "The Grafana Cloud token" says where each value comes from)
+            quiet: true
+          loop: "{{ grafana_cloud_keys | dict2items }}"
+          loop_control:
+            label: "{{ item.value }}"
+          no_log: true
+
+        # The collector appends nothing, so these are the full push URLs from the stack's details page
+        - name: Require full push URLs
+          ansible.builtin.assert:
+            that:
+              - vault_grafana_cloud_prometheus_url is match('https://.*/api/prom/push$')
+              - vault_grafana_cloud_loki_url is match('https://.*/loki/api/v1/push$')
+            fail_msg: >-
+              vault_grafana_cloud_prometheus_url must end in /api/prom/push and
+              vault_grafana_cloud_loki_url in /loki/api/v1/push
+            quiet: true
+
+        - name: Build the Secret
+          ansible.builtin.set_fact:
+            grafana_cloud_secret:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: grafana-cloud
+                namespace: monitoring
+              stringData: "{{ dict(grafana_cloud_keys.keys() | zip(grafana_cloud_keys.values() | map('extract', vars))) }}"
+          no_log: true
+
+        # Encrypting again gives new ciphertext every time, so only write when a value changed
+        - name: Read the values the file holds now
+          ansible.builtin.command:
+            argv: [sops, --decrypt, --extract, '["stringData"]', --output-type, json, "{{ secret_file }}"]
+            chdir: "{{ repo_dir }}"
+          environment:
+            SOPS_AGE_KEY: "{{ vault_sops_age_key | default('') }}"
+          register: current
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Encrypt the Secret
+          ansible.builtin.command:
+            argv: [sops, --encrypt, --filename-override, "{{ secret_file }}",
+                   --input-type, json, --output-type, yaml, /dev/stdin]
+            chdir: "{{ repo_dir }}"
+            stdin: "{{ grafana_cloud_secret | to_json }}"
+          register: encrypted
+          when: current.rc != 0 or (current.stdout | from_json) != grafana_cloud_secret.stringData
+          changed_when: false
+          no_log: true
+
+        - name: Write it to {{ secret_file }}
+          ansible.builtin.copy:
+            content: "{{ encrypted.stdout }}\n"
+            dest: "{{ repo_dir }}/{{ secret_file }}"
+            mode: "0644"
+          when: encrypted is not skipped
+
+        - name: Say what to do next
+          ansible.builtin.debug:
+            msg: >-
+              {{ secret_file ~ ' is written. Commit and merge it; the collector reads it within a minute, without a restart'
+                 if encrypted is not skipped else secret_file ~ ' already holds the vault values; nothing to do' }}

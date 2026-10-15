@@ -1,0 +1,14 @@
+# Grafana's k8s-monitoring chart: Alloy collectors, kube-state-metrics and Node Exporter
+# (k8s/README.md, Monitoring).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - helmrelease.yaml
+  # Secret grafana-cloud: the Grafana Cloud push URLs, user IDs and access token (make grafana-secret)
+  - grafana-cloud.sops.yaml
+configMapGenerator:
+  - name: k8s-monitoring-values
+    files:
+      - values.yaml
+configurations:
+  - kustomizeconfig.yaml

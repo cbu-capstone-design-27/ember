@@ -38,8 +38,9 @@ infra/k8s/
       kustomization.yaml
     infrastructure.yaml       # Flux Kustomization -> infra/k8s/infrastructure
     apps.yaml                 # Flux Kustomization -> infra/k8s/apps, dependsOn infrastructure
+    monitoring.yaml           # Flux Kustomization -> infra/k8s/monitoring, dependsOn infrastructure
   infrastructure/
-    namespaces.yaml           # ember, tailscale, headlamp, cnpg-system (prune: disabled)
+    namespaces.yaml           # ember, tailscale, headlamp, cnpg-system, monitoring (prune: disabled)
     tailscale-operator/       # HelmRepository, HelmRelease, values.yaml, operator-oauth.sops.yaml
     cnpg/                     # HelmRepository, HelmRelease, values.yaml (CloudNativePG operator)
   apps/
@@ -48,6 +49,9 @@ infra/k8s/
     neo4j/                    # HelmRepository, HelmRelease, values.yaml, service-lb.yaml
     postgres/                 # CloudNativePG Cluster, service-lb.yaml, migrate-job.yaml, migrations/
     headlamp/                 # HelmRepository, HelmRelease, values.yaml, ingress.yaml, viewer.yaml
+  monitoring/
+    helmrepository.yaml       # Grafana's charts
+    k8s-monitoring/           # HelmRelease, values.yaml, grafana-cloud.sops.yaml (EMBER-91)
 .sops.yaml                    # (repo root) which files SOPS encrypts, and to which age key
 ```
 
@@ -57,19 +61,23 @@ flowchart LR
   src --> fs["Kustomization flux-system<br/>clusters/homelab"]
   fs -->|creates| infra["Kustomization infrastructure<br/>namespaces, Tailscale operator, CloudNativePG"]
   fs -->|creates| apps["Kustomization apps<br/>nginx, intake, Neo4j, Postgres, Headlamp"]
+  fs -->|creates| mon["Kustomization monitoring<br/>Grafana Cloud collector"]
   infra -->|healthy first| apps
+  infra -->|healthy first| mon
   key[("Secret sops-age<br/>from Ansible Vault")] -.decrypts.-> infra
   key -.decrypts.-> apps
+  key -.decrypts.-> mon
 ```
 
 | Flux object | Path | What it does |
 |---|---|---|
 | GitRepository `flux-system` | `https://github.com/cbu-capstone-design-27/ember`, branch `develop` | Fetches only `infra/k8s` every minute. The repo is public, so no credentials |
-| Kustomization `flux-system` | `infra/k8s/clusters/homelab` | Applies Flux itself and the two Kustomizations below. Flux upgrades itself from `gotk-components.yaml` |
+| Kustomization `flux-system` | `infra/k8s/clusters/homelab` | Applies Flux itself and the three Kustomizations below. Flux upgrades itself from `gotk-components.yaml` |
 | Kustomization `infrastructure` | `infra/k8s/infrastructure` | Namespaces, the Tailscale operator and the CloudNativePG operator. `wait: true`: Ready only when everything it applied is healthy |
 | Kustomization `apps` | `infra/k8s/apps` | Ember workloads. `dependsOn: infrastructure`, so the Tailscale operator exists before any Ingress and CloudNativePG before the Postgres Cluster |
+| Kustomization `monitoring` | `infra/k8s/monitoring` | The collector that sends metrics, logs and events to Grafana Cloud (`infra/k8s/README.md`, Monitoring). `dependsOn: infrastructure` for its namespace. Separate from `apps` so a broken collector never holds up a deploy |
 
-Both `infrastructure` and `apps` **prune**: an object removed from Git is deleted from the cluster. That also cleans up the old hash-suffixed ConfigMaps that a config edit leaves behind. Namespaces are the exception. They carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so dropping one from `namespaces.yaml` cannot take Neo4j's or Postgres's data with it.
+All three **prune**: an object removed from Git is deleted from the cluster. That also cleans up the old hash-suffixed ConfigMaps that a config edit leaves behind. Namespaces are the exception. They carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so dropping one from `namespaces.yaml` cannot take Neo4j's or Postgres's data with it.
 
 What runs on the cluster:
 
@@ -115,7 +123,7 @@ make flux-preview BRANCH=<branch>
 make flux-preview-end        # after the PR merges, or to abandon the preview
 ```
 
-`flux-preview` suspends the `flux-system` Kustomization, points the GitRepository at your branch, applies `clusters/homelab/*.yaml` from your checkout, and reconciles `infrastructure` and `apps`. The cluster is shared, so tell the team: everyone sees your branch until you end the preview.
+`flux-preview` suspends the `flux-system` Kustomization, points the GitRepository at your branch, applies `clusters/homelab/*.yaml` from your checkout, and reconciles `infrastructure`, `apps` and `monitoring`. The cluster is shared, so tell the team: everyone sees your branch until you end the preview.
 
 `flux-preview-end` points Flux back at `develop` and resumes `flux-system`. Anything only your branch had is pruned. Run it **after** your PR merges. Ending a preview of a branch that is not merged rolls its changes back.
 
@@ -143,7 +151,7 @@ The plugin comes from the image `ghcr.io/headlamp-k8s/headlamp-plugin-flux:v0.7.
 
 ## Secrets with SOPS
 
-Secrets live in Git only as SOPS-encrypted `*.sops.yaml` files. Flux decrypts them on the cluster. Today there is one: `infrastructure/tailscale-operator/operator-oauth.sops.yaml`, the Tailscale operator's OAuth client.
+Secrets live in Git only as SOPS-encrypted `*.sops.yaml` files. Flux decrypts them on the cluster. Today there are three: `infrastructure/tailscale-operator/operator-oauth.sops.yaml`, the Tailscale operator's OAuth client; `apps/intake/webhooks.sops.yaml`, the GitHub App's webhook secret (`make intake-secret`); and `monitoring/k8s-monitoring/grafana-cloud.sops.yaml`, the Grafana Cloud push credentials (`make grafana-secret`).
 
 ### How it works
 
@@ -225,6 +233,7 @@ Each chart is a Flux HelmRelease with its HelmRepository and its `values.yaml` b
 | `cnpg/cloudnative-pg` | `infrastructure/cnpg/` | 0.29.1 (operator 1.30.1) | Installs and upgrades its CRDs (`crds: CreateReplace`). Runs the Postgres in `apps/postgres` (`infra/k8s/README.md`, Postgres) |
 | `neo4j/neo4j` | `apps/neo4j/` | 2026.9.0 | Pinned to hv-worker-1 with a 10Gi `local-path-retain` volume; install and upgrade timeout 10m |
 | `headlamp/headlamp` | `apps/headlamp/` | 0.45.0 | See Headlamp above |
+| `grafana/k8s-monitoring` | `monitoring/k8s-monitoring/` | 4.5.3 | Alloy collectors through the Alloy operator, kube-state-metrics, Node Exporter. Installs and upgrades the Alloy CRD (`crds: CreateReplace`). Credentials from `grafana-cloud.sops.yaml` (`infra/k8s/README.md`, Monitoring) |
 
 How values reach the chart: each directory's `kustomization.yaml` turns `values.yaml` into a ConfigMap whose name ends in a hash of the file. `kustomizeconfig.yaml` lets kustomize rename the HelmRelease's `valuesFrom` to match. An edit to `values.yaml` therefore changes the HelmRelease, and Flux upgrades the release.
 
@@ -253,7 +262,7 @@ Everything on the cluster comes back from Git plus the age key in the vault.
    - applies `gotk-components.yaml` and waits for the CRDs,
    - creates Secret `flux-system/sops-age` from `vault_sops_age_key` (server-side apply, so no plain copy is left in an annotation),
    - applies `gotk-sync.yaml`,
-   - then waits up to 15 minutes for `infrastructure` and `apps` to be Ready.
+   - then waits up to 15 minutes for `infrastructure`, `apps` and `monitoring` to be Ready.
 5. Run `make apps-health`, `make ts-operator-health`, `make neo4j-health` and `make postgres-health`.
 
 ---
@@ -265,7 +274,7 @@ Everything on the cluster comes back from Git plus the age key in the vault.
 | `make flux-up` | First install, or after `make reset`: installs Flux and its age key, then health. Safe to re-run |
 | `make flux-health` | Controllers healthy, every Kustomization Ready, lists what is deployed and which branch is followed |
 | `make sync` | Fetch `develop` and apply it now instead of within the next minute |
-| `make apps-diff` | What this checkout's `infrastructure/` and `apps/` would change on the cluster. Deploys nothing |
+| `make apps-diff` | What this checkout's `infrastructure/`, `apps/` and `monitoring/` would change on the cluster. Deploys nothing |
 | `make flux-preview BRANCH=<branch>` | Deploy a pushed branch instead of `develop` |
 | `make flux-preview-end` | Go back to `develop` |
 | `make flux-components` | Regenerate `gotk-components.yaml` after changing `FLUX_VERSION` in the Makefile. Commit it; Flux upgrades itself |

@@ -1,0 +1,48 @@
+# Custom metrics for the Postgres exporter (EMBER-91). cluster.yaml lists this ConfigMap under
+# monitoring, and the exporter runs each query against database ember when the collector scrapes it,
+# as role cnpg_metrics_exporter (granted the columns it reads by migration
+# 20261015120000_raw_events_metrics_grant.sql). The cnpg.io/reload label makes the instance pick up an
+# edit without a restart. Each column becomes cnpg_<query>_<column>.
+#
+# A source with no rows exports no series, so a graph sums them "or vector(0)".
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-monitoring
+  labels:
+    cnpg.io/reload: ""
+data:
+  queries: |
+    raw_events_backlog:
+      query: |
+        select source, count(*) as rows,
+               extract(epoch from now() - min(received_at)) as oldest_age_seconds
+          from public.raw_events
+         where enriched_at is null and tenant is not null
+         group by source
+      metrics:
+        - source:
+            usage: LABEL
+            description: The source the rows came from
+        - rows:
+            usage: GAUGE
+            description: Rows waiting for that source's enrich worker
+        - oldest_age_seconds:
+            usage: GAUGE
+            description: Seconds since the oldest waiting row arrived
+    raw_events_unmapped:
+      query: |
+        select source, count(*) as rows, count(distinct account_id) as accounts
+          from public.raw_events
+         where enriched_at is null and tenant is null
+         group by source
+      metrics:
+        - source:
+            usage: LABEL
+            description: The source the rows came from
+        - rows:
+            usage: GAUGE
+            description: Rows from accounts with no installations row, which enrich never claims
+        - accounts:
+            usage: GAUGE
+            description: Distinct accounts among those rows

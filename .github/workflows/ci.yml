@@ -107,6 +107,7 @@ jobs:
           kubectl kustomize infra/k8s/clusters/homelab/flux-system > /dev/null
           kubectl kustomize infra/k8s/infrastructure > /dev/null
           kubectl kustomize infra/k8s/apps > /dev/null
+          kubectl kustomize infra/k8s/monitoring > /dev/null
       # EMBER-61: the migrations apply, roll back, and build the schema docs/ingestion/architecture.md
       # defines, on the Postgres version the cluster runs (apps/postgres/cluster.yaml)
       - name: Postgres migrations match the ingestion doc

@@ -7,12 +7,13 @@ Manifests for the `homelab` k3s cluster. Node and k3s setup live in `../ansible`
 | `clusters/homelab/` | Flux itself (`flux-system/`) and the two Flux `Kustomization`s that point it at the directories below |
 | `infrastructure/` | Cluster-wide pieces: namespaces, CRDs, operators, ingress, cert-manager |
 | `apps/` | Ember workloads, one subdirectory per app, each listed in `apps/kustomization.yaml` |
+| `monitoring/` | The collector that sends the cluster's metrics, logs and events to Grafana Cloud ([Monitoring](#monitoring)) |
 
 ## How deploys work
 
 The full guide to Flux here (why, layout, secrets, recovery, troubleshooting) is `../docs/flux.md`.
 
-Flux runs on the cluster and follows the `develop` branch (ADR 0003). About once a minute it fetches `infra/k8s`, applies `infrastructure/`, waits until everything there is healthy, then applies `apps/`. **Merging to `develop` is the deploy.** Nobody runs `kubectl apply` or `helm` against the cluster.
+Flux runs on the cluster and follows the `develop` branch (ADR 0003). About once a minute it fetches `infra/k8s`, applies `infrastructure/`, waits until everything there is healthy, then applies `apps/` and `monitoring/`. Those two don't wait for each other, so a broken collector never holds up a deploy. **Merging to `develop` is the deploy.** Nobody runs `kubectl apply` or `helm` against the cluster.
 
 Flux also deletes what is removed from Git (pruning), including the old hashed ConfigMaps a config edit leaves behind. Namespaces are the exception: they carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so dropping one from `namespaces.yaml` does not delete it and everything in it.
 
@@ -22,9 +23,10 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 |---|---|
 | `make flux-health` | Flux's controllers are healthy and every Kustomization is applied; lists what is deployed and at which commit |
 | `make sync` | Fetch `develop` and apply it now instead of within the next minute |
-| `make apps-diff` | Shows what this checkout's `infrastructure/` and `apps/` would change on the cluster. Deploys nothing |
+| `make apps-diff` | Shows what this checkout's `infrastructure/`, `apps/` and `monitoring/` would change on the cluster. Deploys nothing |
 | `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Deploys nothing |
 | `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret in the vault ([The webhook secret](#the-webhook-secret)). Commit the result |
+| `make grafana-secret` | Writes `monitoring/k8s-monitoring/grafana-cloud.sops.yaml`, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud token](#the-grafana-cloud-token)). Commit the result |
 | `make flux-preview BRANCH=<branch>` | Deploys a pushed branch instead of `develop`, to try a change before merging it. Tell the team, since it replaces what everyone else sees |
 | `make flux-preview-end` | Goes back to `develop`, removing anything only the branch had |
 | `make flux-up` | First install only, or after `make reset`: installs Flux from `clusters/homelab/flux-system`, gives it the age key, waits for the first sync, then health. Safe to re-run |
@@ -230,3 +232,65 @@ A web UI for the cluster, with the Flux plugin for what Flux has deployed: `http
 Headlamp asks for a token. Get one valid for 24 hours with `make headlamp-token` (from `infra/ansible`). It signs you in as ServiceAccount `headlamp-viewer`, which has the built-in `view` role plus Flux's objects, so it can look at everything except Secrets and change nothing. Use `make sync` or `flux` for actions.
 
 The Flux plugin comes from the image `ghcr.io/headlamp-k8s/headlamp-plugin-flux`, pinned in `values.yaml`; an init container copies it into the pod.
+
+### Monitoring
+
+Grafana's `k8s-monitoring` chart (EMBER-91): release `k8s-monitoring` in namespace `monitoring`, from `monitoring/k8s-monitoring/`. Flux applies it as its own Kustomization, `monitoring`. It sends everything to the Grafana Cloud stack `https://zestylagoon2114.grafana.net`, owned by Jacob Pugh (Infrastructure Lead). The stack is on the free tier: 10k active metric series, 50 GB of logs a month, and 14 days' retention. Nothing is stored on the cluster.
+
+| Workload | Where it runs | What it collects |
+|---|---|---|
+| Alloy `alloy-metrics` | One pod, preferring hv-worker-2 | Scrapes the kubelet, cAdvisor, kube-state-metrics, Node Exporter and annotated pods into Prometheus (Mimir), and Kubernetes events into Loki |
+| Alloy `alloy-logs` | Every node, pi-cp included | Every pod's log, read from `/var/log/pods`, into Loki |
+| kube-state-metrics | One pod, preferring hv-worker-2 | Node, pod and workload state, and Flux's Kustomizations, HelmReleases and sources as `gotk_resource_info` (Flux's documented setup) |
+| Node Exporter | Every node, pi-cp included | CPU, memory, disk and network, and `node_boot_time_seconds`, which changes on every reboot |
+
+The Alloy operator, also in `monitoring`, runs the two Alloy collectors from the chart's `Alloy` objects. `alloy-metrics` is a Deployment rather than the chart's usual StatefulSet: when its node goes down, the pod is recreated on another node once Kubernetes evicts it, about 5 minutes later. A StatefulSet's pod would wait for the node to come back. It and kube-state-metrics prefer hv-worker-2 because hv-worker-1 reboots often (EMBER-90).
+
+The collector scrapes a pod that carries these annotations:
+
+```yaml
+annotations:
+  k8s.grafana.com/scrape: "true"
+  k8s.grafana.com/metrics.portName: http   # the container port that serves /metrics
+```
+
+intake has them (`intake_deliveries_total{source,result}`), and so does Postgres (below). New workers should expose `/metrics` and carry the same annotations. Only pods are discovered, not Services. Every series counts against the free tier's 10k, so keep label values bounded. intake, for example, counts a made-up source as `unknown` rather than by name.
+
+**Postgres.** CloudNativePG's exporter (`cnpg_*`, port 9187) runs the operator's default queries plus two of ours, from `apps/postgres/monitoring.yaml`:
+
+| Metric | What it counts |
+|---|---|
+| `cnpg_raw_events_backlog_rows{source}` | Rows waiting for that source's enrich worker: `enriched_at` null, tenant set |
+| `cnpg_raw_events_backlog_oldest_age_seconds{source}` | How long the oldest of those has waited since it arrived |
+| `cnpg_raw_events_unmapped_rows{source}` | Rows from accounts with no `installations` row (tenant null). Enrich never claims these |
+| `cnpg_raw_events_unmapped_accounts{source}` | Distinct accounts among those rows |
+
+A source with no such rows exports no series, so it shows as missing rather than 0. The queries run as role `cnpg_metrics_exporter`. Migration `20261015120000_raw_events_metrics_grant.sql` lets that role read only the columns these queries use, never the envelope. A query that needs another column needs a new migration that grants it.
+
+**Volume fill.** The kubelet reports nothing for local-path volumes. They are plain directories (`hostPath`), and their 10Gi size isn't enforced, so Postgres and Neo4j can grow until their node's disk is full. To see how full they are, watch that disk (`node_filesystem_avail_bytes{mountpoint="/"}`: Postgres on hv-worker-2, Neo4j on hv-worker-1), and Postgres's own size, `cnpg_pg_database_size_bytes`.
+
+#### The Grafana Cloud token
+
+The collector pushes with a Grafana Cloud access policy token that can only write metrics and logs (`metrics:write`, `logs:write`). The token, the push URLs and the user IDs live in the vault and in Secret `grafana-cloud` (`monitoring/k8s-monitoring/grafana-cloud.sops.yaml`):
+
+| Vault variable | Secret key | Where it comes from, in the Grafana Cloud portal (grafana.com) |
+|---|---|---|
+| `vault_grafana_cloud_prometheus_url` | `prometheus-url` | The stack's Prometheus details: the remote write endpoint, ending `/api/prom/push` |
+| `vault_grafana_cloud_prometheus_user` | `prometheus-username` | Same page: the username (instance ID) |
+| `vault_grafana_cloud_loki_url` | `loki-url` | The stack's Loki details: the URL with `/loki/api/v1/push` added |
+| `vault_grafana_cloud_loki_user` | `loki-username` | Same page: the user |
+| `vault_grafana_cloud_access_token` | `access-token` | Access Policies: a policy for this stack with `metrics:write` and `logs:write` only, then Add token |
+
+To set the values or rotate the token:
+
+1. Create the token under Access Policies.
+2. Put the values in the vault (`.venv/bin/ansible-vault edit group_vars/all/vault.yml` from `infra/ansible`).
+3. `make grafana-secret` (from `infra/ansible`) writes the encrypted Secret. It never prints a value. When the file already holds the vault's values, it leaves the file alone, so running it again makes no diff. It refuses a URL that is not the full push URL.
+4. Commit and merge the file. The collector reads the Secret again within a minute, with no restart.
+5. Once data still arrives (Explore in Grafana shows a fresh `up` from cluster `homelab`), delete the old token.
+
+If the token is wrong or expired, nothing arrives and the collector logs the refusal:
+
+```bash
+kubectl --context homelab -n monitoring logs -l app.kubernetes.io/instance=k8s-monitoring --prefix | grep -iE 'status|error'
+```
