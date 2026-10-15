@@ -97,7 +97,13 @@ To see deliveries:
 kubectl --context homelab -n ember logs -l app=intake --prefix
 ```
 
-Each stored or duplicate delivery logs one line with the source, the result, the delivery id, the event and the account, never the payload. Refused deliveries aren't logged: they show up in `/metrics` (`result="unauthorized"` for a bad signature) and in the App's Recent Deliveries on GitHub. The unsigned pings `make apps-health` sends are counted there too.
+Each stored or duplicate delivery logs one line with the source, the result, the delivery id, the event and the account, never the payload. Intake doesn't log refused deliveries: they show up in `/metrics` (`result="unauthorized"` for a bad signature) and in the App's Recent Deliveries on GitHub. nginx logs every webhook request, refused or not, with its status and sender:
+
+```bash
+kubectl --context homelab -n ember logs deploy/nginx | grep ' event='
+```
+
+`target=integration:5075660` is the `ember-ingest` App. `target=repository:<id>` or `organization:<id>` is a webhook set directly on a repo or org (`gh api repositories/<id> --jq .full_name` names the repo); if it answers 401, that webhook has a different secret or none.
 
 #### The webhook secret
 
