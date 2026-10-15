@@ -26,7 +26,8 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make apps-diff` | Shows what this checkout's `infrastructure/`, `apps/` and `monitoring/` would change on the cluster. Deploys nothing |
 | `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Deploys nothing |
 | `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret in the vault ([The webhook secret](#the-webhook-secret)). Commit the result |
-| `make grafana-secret` | Writes `monitoring/k8s-monitoring/grafana-cloud.sops.yaml`, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud token](#the-grafana-cloud-token)). Commit the result |
+| `make grafana-secret` | Writes the collector's and the Grafana Operator's Secrets, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud tokens](#the-grafana-cloud-tokens)). Commit the result |
+| `make grafana-health` | Checks Grafana Cloud end to end: the operator synced the stack and the Ember dashboard, and the stack has metrics from every node, intake, Postgres and Flux, pod logs, Kubernetes events and both synthetic checks. Deploys nothing |
 | `make flux-preview BRANCH=<branch>` | Deploys a pushed branch instead of `develop`, to try a change before merging it. Tell the team, since it replaces what everyone else sees |
 | `make flux-preview-end` | Goes back to `develop`, removing anything only the branch had |
 | `make flux-up` | First install only, or after `make reset`: installs Flux from `clusters/homelab/flux-system`, gives it the age key, waits for the first sync, then health. Safe to re-run |
@@ -235,7 +236,17 @@ The Flux plugin comes from the image `ghcr.io/headlamp-k8s/headlamp-plugin-flux`
 
 ### Monitoring
 
-Grafana's `k8s-monitoring` chart (EMBER-91): release `k8s-monitoring` in namespace `monitoring`, from `monitoring/k8s-monitoring/`. Flux applies it as its own Kustomization, `monitoring`. It sends everything to the Grafana Cloud stack `https://zestylagoon2114.grafana.net`, owned by Jacob Pugh (Infrastructure Lead). The stack is on the free tier: 10k active metric series, 50 GB of logs a month, and 14 days' retention. Nothing is stored on the cluster.
+Grafana's `k8s-monitoring` chart (EMBER-91): release `k8s-monitoring` in namespace `monitoring`, from `monitoring/k8s-monitoring/`. Flux applies it as its own Kustomization, `monitoring`. It sends everything to the Grafana Cloud stack `https://zestylagoon2114.grafana.net`, owned by Jacob Pugh (Infrastructure Lead). The stack is on the free tier: 10k active metric series, 50 GB of logs a month, and 14 days' retention. Nothing is stored on the cluster. The Grafana Operator keeps the dashboard there from Git ([Dashboards](#dashboards)).
+
+**Where to look.** All of these are at `https://zestylagoon2114.grafana.net`. `make grafana-health` checks that each one has data.
+
+| What | Where |
+|---|---|
+| Nodes, pods, Postgres, webhooks, the enrich backlog, Flux | Dashboard **Ember** (folder Ember, `/d/ember`) |
+| One node, pod or workload in depth | The Kubernetes Monitoring app (Kubernetes in Grafana's menu). It reads the same metrics |
+| A metric or a log line | Explore. Metrics: data source `grafanacloud-zestylagoon2114-prom`, for example `up{cluster="homelab"}` or `intake_deliveries_total`. Logs: `grafanacloud-zestylagoon2114-logs`, for example `{namespace="ember", container="nginx"} \|= " event="` |
+| Kubernetes events, such as a node's Rebooted or NodeNotReady | Explore, logs: `{job="integrations/kubernetes/eventhandler"}` |
+| The public URL from outside | Synthetics in Grafana's menu ([Synthetic checks](#synthetic-checks)) |
 
 | Workload | Where it runs | What it collects |
 |---|---|---|
@@ -269,9 +280,47 @@ A source with no such rows exports no series, so it shows as missing rather than
 
 **Volume fill.** The kubelet reports nothing for local-path volumes. They are plain directories (`hostPath`), and their 10Gi size isn't enforced, so Postgres and Neo4j can grow until their node's disk is full. To see how full they are, watch that disk (`node_filesystem_avail_bytes{mountpoint="/"}`: Postgres on hv-worker-2, Neo4j on hv-worker-1), and Postgres's own size, `cnpg_pg_database_size_bytes`.
 
-#### The Grafana Cloud token
+#### Dashboards
 
-The collector pushes with a Grafana Cloud access policy token that can only write metrics and logs (`metrics:write`, `logs:write`). The token, the push URLs and the user IDs live in the vault and in Secret `grafana-cloud` (`monitoring/k8s-monitoring/grafana-cloud.sops.yaml`):
+The Grafana Operator (release `grafana-operator` in namespace `monitoring`, from `infrastructure/grafana-operator/`) keeps folder Ember and dashboard Ember on the stack. It signs in to the stack as Grafana object `grafana-cloud` (`monitoring/grafana/grafana.yaml`). The dashboard is `monitoring/grafana/dashboards/ember.json`, applied by `GrafanaDashboard` `ember`. The operator is in `infrastructure/` so that its CRDs exist before `monitoring/` uses them.
+
+Git is the source of truth: the operator overwrites an edit made in Grafana at its next sync, within 10 minutes. To change the dashboard:
+
+1. Edit it in Grafana, then export it as JSON (Export in the dashboard's toolbar), with the option to share it with another instance left off.
+2. Replace `dashboards/ember.json` with the file, keeping `"uid": "ember"`, and merge.
+
+Each panel's data source is the dashboard's Metrics or Logs variable, which finds the stack's `…-prom` and `…-logs` data sources by name. To add a dashboard, add its JSON under `dashboards/`, list it in `monitoring/grafana/kustomization.yaml` and add a `GrafanaDashboard` like `ember`'s to `dashboards.yaml`.
+
+`kubectl --context homelab -n monitoring get grafana,grafanadashboard,grafanafolder` shows whether the operator synced each one, and `describe` says why one didn't.
+
+#### Synthetic checks
+
+Grafana Cloud Synthetic Monitoring tests the public URL from outside, which nothing on the cluster can do: Funnel, DNS and the Tailscale proxy are all in the path. The two checks were set up by hand under Synthetics in Grafana's menu, as HTTP checks. The operator doesn't manage Synthetic Monitoring, so this table is the record. To rebuild them, use these settings:
+
+| Job name | Request | Expected |
+|---|---|---|
+| `ember-healthz` | `GET https://ember.tail470a31.ts.net/healthz` | Status 200, body matches `ok` |
+| `ember-webhook-unsigned` | `POST https://ember.tail470a31.ts.net/webhook/github`, headers `Content-Type: application/json`, `X-GitHub-Event: ping` and `X-GitHub-Delivery: synthetic-check`, body `{}` | Status 401, body matches `invalid signature`. Only intake answers this way, so it proves the route reaches intake |
+
+Both run every 10 minutes from one probe location, about 8,600 runs a month of the free tier's allowance. Each POST counts once in `intake_deliveries_total{result="unauthorized"}`, so the unauthorized count never drops to 0. Their results are metrics on the stack, such as `probe_success{job="ember-healthz"}`, which `make grafana-health` checks.
+
+#### Free tier usage
+
+Free-tier usage is on grafana.com: the organization's usage page shows active series and the month's log gigabytes against the limits. In Grafana, data source `grafanacloud-usage` holds the same numbers, for example `grafanacloud_instance_active_series`. EMBER-91 measured about 3,900 active series out of 10k. Before adding a scrape, check what it adds. The collector's own count of the series it sends is `prometheus_remote_write_wal_storage_active_series`:
+
+```bash
+kubectl --context homelab -n monitoring port-forward deploy/k8s-monitoring-alloy-metrics 12345 &
+curl -s localhost:12345/metrics | grep -E '^prometheus_remote_write_wal_storage_active_series|^prometheus_remote_storage_samples_failed_total'
+```
+
+To cut series, drop metrics with `metricsTuning.excludeMetrics` under the feature in `monitoring/k8s-monitoring/values.yaml`. In intake and future workers, keep label values bounded.
+
+#### The Grafana Cloud tokens
+
+There are two tokens:
+
+- **Collector:** pushes metrics and logs with a Grafana Cloud access policy token that can only write them (`metrics:write`, `logs:write`). The token, the push URLs and the user IDs live in the vault and in Secret `grafana-cloud` (`monitoring/k8s-monitoring/grafana-cloud.sops.yaml`).
+- **Grafana Operator:** manages the dashboards with a token for a Grafana service account, kept in the vault and in Secret `grafana-operator` (`monitoring/grafana/grafana-operator.sops.yaml`).
 
 | Vault variable | Secret key | Where it comes from, in the Grafana Cloud portal (grafana.com) |
 |---|---|---|
@@ -280,18 +329,25 @@ The collector pushes with a Grafana Cloud access policy token that can only writ
 | `vault_grafana_cloud_loki_url` | `loki-url` | The stack's Loki details: the URL (`https://logs-prod-<n>.grafana.net`). `make grafana-secret` adds `/loki/api/v1/push` |
 | `vault_grafana_cloud_loki_user` | `loki-username` | Same page: the user |
 | `vault_grafana_cloud_access_token` | `access-token` | Access Policies: a policy for this stack with `metrics:write` and `logs:write` only, then Add token |
+| `vault_grafana_cloud_sa_token` | `token` (Secret `grafana-operator`) | In Grafana (`zestylagoon2114.grafana.net`): Administration → Users and access → Service accounts, account `grafana-operator`, role Editor, Add service account token |
 
-To set the values or rotate the token:
+To set the values or rotate a token:
 
-1. Create the token under Access Policies.
+1. Create the new token: under Access Policies for the collector, or on service account `grafana-operator` for the operator.
 2. Put the values in the vault (`.venv/bin/ansible-vault edit group_vars/all/vault.yml` from `infra/ansible`).
-3. `make grafana-secret` (from `infra/ansible`) writes the encrypted Secret. It never prints a value. When the file already holds the vault's values, it leaves the file alone, so running it again makes no diff. It refuses a Prometheus URL that is not the full remote write endpoint and a Loki URL with any other path, and names any vault variable that is missing.
-4. Commit and merge the file. The collector reads the Secret again within a minute, with no restart.
-5. Once data still arrives (Explore in Grafana shows a fresh `up` from cluster `homelab`), delete the old token.
+3. `make grafana-secret` (from `infra/ansible`) writes both encrypted Secrets.
+   - It never prints a value.
+   - It leaves a file alone when it already holds the vault's values, so running it again makes no diff.
+   - It refuses a Prometheus URL that is not the full remote write endpoint and a Loki URL with any other path.
+   - It names any vault variable that is missing.
+4. Commit and merge the files. The collector and the operator read their Secret again within a minute or two, with no restart.
+5. Once `make grafana-health` passes, delete the old token.
 
-If the token is wrong or expired, nothing arrives and the collectors log the refusal. `alloy-metrics` sends the metrics and events, and the `alloy-logs` pods send the pod logs:
+If the collector's token is wrong or expired, nothing arrives and the collectors log the refusal. `alloy-metrics` sends the metrics and events, and the `alloy-logs` pods send the pod logs:
 
 ```bash
 kubectl --context homelab -n monitoring logs deploy/k8s-monitoring-alloy-metrics -c alloy | grep -E 'level=(error|warn)'
 kubectl --context homelab -n monitoring logs -l app.kubernetes.io/name=alloy-logs -c alloy --prefix | grep -E 'level=(error|warn)'
 ```
+
+If the operator's token is wrong, `kubectl --context homelab -n monitoring describe grafana grafana-cloud` shows the 401, and the dashboard stops updating.

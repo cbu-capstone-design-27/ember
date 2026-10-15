@@ -22,7 +22,7 @@ DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-j
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
 	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate headlamp-token \
-	intake-secret grafana-secret
+	intake-secret grafana-secret grafana-health
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -139,8 +139,11 @@ apps-health: ## Apps rolled out; intake refuses an unsigned webhook through ngin
 intake-secret: ## Write k8s/apps/intake/webhooks.sops.yaml, encrypted, from vault_github_webhook_secret. Commit it
 	ansible-playbook playbooks/intake.yml --tags secret
 
-grafana-secret: ## Write k8s/monitoring/k8s-monitoring/grafana-cloud.sops.yaml, encrypted, from vault_grafana_cloud_*. Commit it
+grafana-secret: ## Write the Grafana Cloud Secrets (collector, operator), encrypted, from vault_grafana_cloud_*. Commit them
 	ansible-playbook playbooks/grafana-cloud.yml --tags secret
+
+grafana-health: ## Operator synced the dashboard; Grafana Cloud has metrics, logs, events and the synthetic checks
+	ansible-playbook playbooks/grafana-cloud.yml --tags health
 
 ts-operator-health: ## Operator ready and logged in; every Tailscale Ingress has a hostname and answers HTTPS
 	ansible-playbook playbooks/tailscale-operator.yml --tags health
