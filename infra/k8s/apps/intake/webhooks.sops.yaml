@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: intake-webhooks
+    namespace: ember
+stringData:
+    GITHUB_WEBHOOK_SECRET: ENC[AES256_GCM,data:avrO+3OI/LRxkUZTGB2IaVs6pOvCf5WaNOwaTCjcxEdwXscZWH0UcirjKXustxGMnmkJARSKMuuk/BIt0Gl9xw==,iv:I9vUoNhQg+08pSVSOoAj+nwuwgXanDr0VFZdwHW6xlA=,tag:9HqxzJA993WHFq2bLiiliA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBoWTJTYi9vT2RIK1VJS2xi
+            VGNxNHFvN0d0bVp4aGF2WnZ3TVovMUhKeWswCm5TUHhWRW1pN20yL0RXNEpMWjlY
+            ZjBVRkgvQk8weXhRVFh6djVwSkV4c2cKLS0tIFRyeE14bXV1QjB2UGw4RXpQdE1W
+            Y2VpZHJLd0R6ZnlIaEs0VXFibDhDd0kKAaIK0KaudlcSbUUF/CHMs7X5EEG62rnc
+            LXbWOjDIRDBI5kX4JlT4qgt9bTv4lRopXaOINY7f3o+vOhAw+tY6hg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-15T03:34:46Z"
+    mac: ENC[AES256_GCM,data:30Penq1v2UYaweiGKOOF92hkOiVZL0lvwbqx1xUB4vqOwlil2nmaCgBJcyc8HQyUSEpslM+eauj23AmQ6pTsmSuqireBVOLOmwUoSdUosP+RVi97cI5aiFZEK0sPt5A7Y3pswoQtH60mrDqxNqj62RM7H3C2yrUHQU+6fWK/wYw=,iv:wUS3rGvDNBQ4PcYnge4JfovZoDUa9Jzl79RjvxCNP4I=,tag:Cg6DW1i0e89zpKUnGrnl9w==,type:str]
+    version: 3.13.3

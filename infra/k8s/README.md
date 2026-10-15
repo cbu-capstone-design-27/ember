@@ -24,6 +24,7 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make sync` | Fetch `develop` and apply it now instead of within the next minute |
 | `make apps-diff` | Shows what this checkout's `infrastructure/` and `apps/` would change on the cluster. Deploys nothing |
 | `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Deploys nothing |
+| `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret in the vault ([The webhook secret](#the-webhook-secret)). Commit the result |
 | `make flux-preview BRANCH=<branch>` | Deploys a pushed branch instead of `develop`, to try a change before merging it. Tell the team, since it replaces what everyone else sees |
 | `make flux-preview-end` | Goes back to `develop`, removing anything only the branch had |
 | `make flux-up` | First install only, or after `make reset`: installs Flux from `clusters/homelab/flux-system`, gives it the age key, waits for the first sync, then health. Safe to re-run |
@@ -103,24 +104,9 @@ Each stored or duplicate delivery logs one line with the source, the result, the
 GitHub signs each delivery with the App's webhook secret, and intake checks it. The value lives in three places that must match: the GitHub App's settings, the vault, and `apps/intake/webhooks.sops.yaml`. To set or rotate it:
 
 1. Generate one: `openssl rand -hex 32`.
-2. Keep it in the vault as `vault_github_webhook_secret` (`.venv/bin/ansible-vault edit group_vars/all/vault.yml` from `infra/ansible`).
-3. Overwrite `apps/intake/webhooks.sops.yaml` with the plain Secret, then encrypt it in place from the repo root (Secrets above). Writing a new file needs only the public key; editing the encrypted one needs the private key.
-
-   ```yaml
-   apiVersion: v1
-   kind: Secret
-   metadata:
-     name: intake-webhooks
-     namespace: ember
-   stringData:
-     GITHUB_WEBHOOK_SECRET: "<the secret>"
-   ```
-
-   ```bash
-   infra/ansible/.venv/bin/sops -e -i infra/k8s/apps/intake/webhooks.sops.yaml
-   ```
-
-4. Merge it. A changed Secret reaches running pods only after `kubectl --context homelab -n ember rollout restart deploy/intake`.
+2. Keep it in the vault as `vault_github_webhook_secret` (`.venv/bin/ansible-vault edit group_vars/all/vault.yml` from `infra/ansible`). The vault is where it lives; the other two copies are made from it.
+3. `make intake-secret` (from `infra/ansible`) writes `apps/intake/webhooks.sops.yaml`, Secret `intake-webhooks`, encrypted with the public key in `.sops.yaml`. It never prints the value, and it leaves the file alone when it already holds the vault's value, so running it again makes no diff.
+4. Commit and merge the file. A changed Secret reaches running pods only after `kubectl --context homelab -n ember rollout restart deploy/intake`.
 5. In the GitHub App's settings (`ember-ingest`), under Webhook: set the secret, the URL `https://ember.tail470a31.ts.net/webhook/github`, and Active.
 
 Between steps 4 and 5 GitHub's deliveries are refused with 401. GitHub doesn't retry them, but each one can be redelivered from the App's Advanced tab, Recent Deliveries, for 3 days.
