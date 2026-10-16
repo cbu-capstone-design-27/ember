@@ -1,0 +1,64 @@
+"""Seed source_records with the Photon synthetic Jira and Slack data, for trying the MCP server locally.
+
+    DATABASE_URL=postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable \
+        python3 apps/mcp/seed_photon.py
+
+Rows take the shapes the enrich workers store (`{"payload": ...}`), under tenant "photon".
+Reruns are no-ops: rows conflict on (source, tenant, object_id, version).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
+import asyncpg
+
+FIXTURES = Path(__file__).resolve().parents[2] / "services" / "pipeline" / "fixtures" / "photon"
+COMMENT_ISSUE = re.compile(r"/issue/(\d+)/comment/")
+
+
+def bodies(name: str) -> list[dict]:
+    return [json.loads(line)["body"] for line in (FIXTURES / name).read_text().splitlines() if line]
+
+
+def jira_time(value: str) -> datetime:
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%f%z")
+
+
+def rows() -> list[tuple]:
+    """(source, kind, object_id, version, occurred_at, record) for every Jira issue, comment and Slack message."""
+    out = []
+    jira = bodies("jira-intake.jsonl")
+    issues = {b["id"]: b for b in jira if "fields" in b and "key" in b}
+    for issue in issues.values():
+        updated = issue["fields"]["updated"]
+        out.append(("jira", "issue", issue["id"], updated, jira_time(updated),
+                    {"webhookEvent": "jira:issue_updated", "issue": issue}))
+    for comment in (b for b in jira if "author" in b and "body" in b and "/comment/" in b.get("self", "")):
+        issue = issues[COMMENT_ISSUE.search(comment["self"]).group(1)]
+        out.append(("jira", "comment", f"{issue['id']}/comment/{comment['id']}", comment["updated"], jira_time(comment["updated"]),
+                    {"webhookEvent": "comment_created", "comment": comment,
+                     "issue": {"id": issue["id"], "key": issue["key"], "self": issue["self"]}}))
+    for message in (b for b in bodies("slack-intake.jsonl") if "ts" in b and "text" in b and "channel" in b):
+        out.append(("slack", "message", f"{message['channel']}/{message['ts']}", message["ts"],
+                    datetime.fromtimestamp(float(message["ts"]), timezone.utc), message))
+    return out
+
+
+async def main() -> None:
+    db = await asyncpg.connect(os.environ["DATABASE_URL"])
+    await db.executemany(
+        "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record)"
+        " values ($1, 'photon', $2, $3, $4, $5, $6) on conflict do nothing",
+        [(*row[:5], json.dumps({"payload": row[5]})) for row in rows()])
+    print(await db.fetch("select source, kind, count(*) from source_records group by 1, 2 order by 1, 2"))
+    await db.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
