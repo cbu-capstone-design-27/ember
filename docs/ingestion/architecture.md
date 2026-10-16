@@ -217,7 +217,7 @@ Some jobs also cover many events:
 
 - **load** drains up to 100 unloaded episodes for one subgraph per job, so a burst of 50 Slack messages becomes one or two load jobs.
 - **reconcile** pages through many objects in one job.
-- **enrich** and **extract** stay one event per job, so one bad payload dead-letters only itself.
+- **enrich** and **extract** stay one event per job, so one bad payload dead-letters only itself. Until the queue lands, `enrich:github` claims mapped rows in batches (`BATCH`, default 25, one savepoint per row, so a bad row still fails alone) and marks unmapped events enriched in one bulk statement (EMBER-92).
 
 Raise `CONCURRENCY` first, then replicas, then add KEDA.
 
