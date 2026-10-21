@@ -32,7 +32,7 @@ EMBEDDING_URL=http://<spark>:8000 EMBEDDING_API_KEY=... \
 | `EMBED_BATCH` | 32 | Rows per request |
 | `SOURCE_RECORDS_CHANNEL` | `source_records` | NOTIFY channel |
 
-Postgres needs the `vector` extension. Locally, the compose `postgres` profile runs `pgvector/pgvector`; on the cluster, the CloudNativePG image ships it.
+Postgres needs the `vector` extension. Locally, the compose `postgres` profile runs `pgvector/pgvector`; on the cluster, the CloudNativePG image ships it and `infra/k8s/apps/postgres/database.yaml` has the operator create it, since the migrate Job's role isn't a superuser.
 
 ## Tests
 
