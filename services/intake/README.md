@@ -82,4 +82,4 @@ PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
   python3 services/intake/test_intake.py
 ```
 
-CI runs it in the `sanity` job on the `postgres:18.6` container.
+CI runs it in the `sanity` job on the `pgvector/pgvector:0.8.7-pg18-trixie` container.

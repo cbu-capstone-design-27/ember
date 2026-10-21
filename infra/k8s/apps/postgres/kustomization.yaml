@@ -19,3 +19,5 @@ configMapGenerator:
       - migrations/20261013120100_raw_events_notify.sql
       - migrations/20261014202756_raw_events_occurred_at.sql
       - migrations/20261015120000_raw_events_metrics_grant.sql
+      - migrations/20261021120000_source_records_embedding.sql
+      - migrations/20261021120100_source_records_notify.sql

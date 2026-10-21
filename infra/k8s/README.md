@@ -221,7 +221,7 @@ Once merged, the new file changes the hashed name of the ConfigMap the Job mount
 To run the test locally you need `psql`, `dbmate`, and a Postgres it may create databases on:
 
 ```bash
-docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55432:5432 postgres:18.6
+docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55432:5432 pgvector/pgvector:0.8.7-pg18-trixie
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
   python3 infra/k8s/apps/postgres/test_migrations.py
 ```
