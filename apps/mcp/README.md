@@ -88,7 +88,7 @@ Returns the newest version of that object: `source`, `tenant`, `kind`, `object_i
 
 ## Tests
 
-[`test_mcp.py`](test_mcp.py) runs against a real Postgres with pgvector built from the repo migrations, as the enrich tests do, and a stub embedding server that hashes words into 1024 dimensions, so texts sharing words are close. It is the `MCP server against Postgres` step in CI.
+[`test_mcp.py`](test_mcp.py) runs against a real Postgres with pgvector built from the repo migrations, as the enrich tests do, and a stub embedding server that hashes words into 1024 dimensions, so texts sharing words are close. It also seeds the photon data with `seed_photon.py` and checks five hand-written questions find their records, so it needs `services/embed/requirements.txt` too. It is the `MCP server against Postgres` step in CI.
 
 ```sh
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' python3 apps/mcp/test_mcp.py

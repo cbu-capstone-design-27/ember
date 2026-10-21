@@ -1,6 +1,7 @@
 """ember_mcp against a real Postgres with pgvector and a stub embedding server (EMBER-79, EMBER-78).
 
-Needs psql, dbmate, the packages in requirements.txt, and a Postgres server with the vector extension
+Needs psql, dbmate, the packages in requirements.txt and services/embed/requirements.txt (the photon
+seed embeds through the embed worker), and a Postgres server with the vector extension
 it may create and drop a database on:
 
     PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
@@ -11,6 +12,8 @@ It builds the repo migrations in database ember_test_mcp.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import math
 import os
@@ -32,6 +35,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
+import seed_photon  # noqa: E402
 from ember_mcp import retrieval, server  # noqa: E402
 
 MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
@@ -211,6 +215,23 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
             result = await client.call_tool("search", {"question": QUESTION})
         self.assertTrue(result.is_error)
         self.assertIn("returned 1023 dimensions", result.content[0].text)
+
+    async def test_hand_written_questions_find_their_photon_records(self):
+        """EMBER-78's acceptance questions over the photon synthetic data, embedded by the seed's path.
+        Each expected record is in the top 3. The third and fourth share few words with their records."""
+        with contextlib.redirect_stdout(io.StringIO()):
+            await seed_photon.main()
+        questions = {
+            "Why can't I use dots in branch names?": "C08PHOTONDV/1789392360.000100",
+            "Caps Lock turns on when I use it as a Hyper key": "10087",  # PHO-87
+            "Why do launched programs stay hidden behind other windows?": "C08PHOTONBG/1789971000.000100",
+            "Running a development build quits the release app": "10105",  # PHO-105, Photon-Dev
+            "Pressing the arrow keys in clipboard history doesn't move between items": "10036",  # PHO-36
+        }
+        for question, object_id in questions.items():
+            with self.subTest(question):
+                hits = await retrieval.search(question, k=3)
+                self.assertIn(object_id, [h["object_id"] for h in hits])
 
     async def test_stdio_server_lists_and_calls_its_tools(self):
         params = StdioServerParameters(command=sys.executable, args=["-m", "ember_mcp"], cwd=HERE, env={
