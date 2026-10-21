@@ -7,6 +7,8 @@ resources:
   - service.yaml
   # Secret llm-tunnel-ssh: id_ed25519, from vault_llm_tunnel_ssh_key (make llm-tunnel-secret)
   - ssh.sops.yaml
+  # Secret spark-model-keys: LLM_API_KEY, EMBEDDING_API_KEY, the vLLM keys pods send through the tunnel
+  - model-keys.sops.yaml
 configMapGenerator:
   # The Spark's ED25519 host key, from ssh-keyscan; the same from this machine and from the nodes.
   # Not secret. The name gets a content hash, so a new host key restarts the pod

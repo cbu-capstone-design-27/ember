@@ -1,9 +1,10 @@
-# TEMPORARY (EMBER-49): an SSH tunnel to the chat model on the DGX Spark, until the model has an
-# endpoint the cluster can reach without one (k8s/README.md, llm-tunnel). Remove this directory then.
+# TEMPORARY (EMBER-49): an SSH tunnel to the models on the DGX Spark, until they have endpoints the
+# cluster can reach without one (k8s/README.md, llm-tunnel). Remove this directory then.
 #
-# The model listens only on the Spark's loopback, 127.0.0.1:8001 (ADR 0008): the Spark is shared,
-# can't join Tailscale and keeps one public port. Its SSH port is open, so this pod logs in as
-# save-water and forwards port 8001 to that loopback. Pods use http://llm-tunnel.ember:8001/v1.
+# Both models listen only on the Spark's loopback: chat on 127.0.0.1:8001 (ADR 0008) and embeddings
+# on 127.0.0.1:8000. The Spark is shared and can't join Tailscale. Its SSH port is open, so this pod
+# logs in as save-water and forwards both ports to that loopback. Pods use
+# http://llm-tunnel.ember:8001/v1 (chat) and http://llm-tunnel.ember:8000/v1 (embeddings).
 # ssh exits when the connection dies (ServerAliveInterval) or the forward fails, and Kubernetes
 # restarts it.
 apiVersion: apps/v1
@@ -63,6 +64,8 @@ spec:
             # 0.0.0.0 inside the pod, so the Service reaches it
             - -L
             - 0.0.0.0:8001:127.0.0.1:8001
+            - -L
+            - 0.0.0.0:8000:127.0.0.1:8000
             - save-water@172.99.171.11
           env:
             # nobody's home doesn't exist; ssh may look there, and the root filesystem is read-only
@@ -71,7 +74,10 @@ spec:
           ports:
             - name: llm
               containerPort: 8001
-          # ssh opens 8001 only after it has logged in and set up the forward
+            - name: embedding
+              containerPort: 8000
+          # ssh opens its ports only after it has logged in and set up every forward
+          # (ExitOnForwardFailure), so 8001 being open means 8000 is too
           readinessProbe:
             tcpSocket:
               port: llm
