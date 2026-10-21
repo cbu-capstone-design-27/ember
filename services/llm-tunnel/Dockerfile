@@ -1,3 +1,5 @@
+# TEMPORARY (EMBER-49): remove with Deployment llm-tunnel once the Spark's chat model has an
+# endpoint the cluster can reach without a tunnel (README.md).
 FROM alpine:3.22
 
 # Only the OpenSSH client. The tunnel is `ssh -N -L ...`, run by Deployment llm-tunnel
