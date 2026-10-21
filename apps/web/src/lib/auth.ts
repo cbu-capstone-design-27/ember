@@ -12,7 +12,7 @@ import { betterAuth } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
 import { bearer, deviceAuthorization } from "better-auth/plugins";
-import { createDatabase, DEFAULT_DATABASE_URL } from "./db.ts";
+import { closeDatabase, createDatabase, DEFAULT_DATABASE_URL } from "./db.ts";
 import { sourcesSchema } from "./sources.ts";
 
 export const MIN_PASSWORD_LENGTH = 8;
@@ -116,9 +116,7 @@ export async function migrateDatabase(settings: AuthSettings = {}) {
   try {
     await migrate(options);
   } finally {
-    const db = options.database as { end?: () => Promise<void>; close?: () => void };
-    if (typeof db.end === "function") await db.end();
-    else db.close?.();
+    await closeDatabase(options.database);
   }
 }
 

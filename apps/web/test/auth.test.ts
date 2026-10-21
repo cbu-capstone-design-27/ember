@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import pg from "pg";
 import { authOptions, CLI_CLIENT_ID, createAuth, migrate, whoami, type Auth } from "../src/lib/auth.ts";
-import { databaseKind } from "../src/lib/db.ts";
+import { closeDatabase, databaseKind, POSTGRES_SCHEMA, type PostgresDatabase } from "../src/lib/db.ts";
 import { formatUserCode, openDeviceRequest } from "../src/lib/device.ts";
 
 const BASE = "http://localhost:3000";
@@ -55,6 +55,10 @@ function bearer(token: string) {
   return new Headers({ authorization: `Bearer ${token}` });
 }
 
+function isPostgres(db: unknown): db is PostgresDatabase {
+  return !!db && typeof db === "object" && "pool" in db && db.pool instanceof pg.Pool;
+}
+
 function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<void> | void) {
   describe(`auth on ${label}`, () => {
     let auth: Auth;
@@ -62,14 +66,9 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
     const email = `ada-${Date.now()}@example.com`;
     const password = "correct horse battery";
 
-    async function close(db: unknown) {
-      if (db instanceof pg.Pool) await db.end();
-      else (db as { close?: () => void } | undefined)?.close?.();
-    }
-
     after(async () => {
-      await close(migrationOptions?.database);
-      await close((auth?.options as { database?: unknown })?.database);
+      await closeDatabase(migrationOptions?.database);
+      await closeDatabase((auth?.options as { database?: unknown })?.database);
       await cleanup();
     });
 
@@ -78,6 +77,17 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       await migrate(migrationOptions);
       await migrate(migrationOptions); // a second start changes nothing
       auth = createAuth({ databaseUrl: databaseUrl(), secret: SECRET, baseURL: BASE });
+    });
+
+    // EMBER-80: on Postgres the web app shares the database with ingestion, whose tables are in public
+    test("on Postgres the tables are in their own schema", async (t) => {
+      const db = migrationOptions?.database;
+      if (!isPostgres(db)) return t.skip("SQLite has no schemas");
+      const { rows } = await db.pool.query<{ table_name: string }>(
+        "select table_name from information_schema.tables where table_schema = $1",
+        [POSTGRES_SCHEMA],
+      );
+      assert.deepEqual(rows.map((r) => r.table_name).sort(), ["account", "deviceCode", "session", "user", "verification"]);
     });
 
     test("sign up creates the account and signs in", async () => {
@@ -157,8 +167,10 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
     test("passwords are not stored in plain text", async () => {
       const db = auth.options.database as unknown;
       let stored: string;
-      if (db instanceof pg.Pool) {
-        const r = await db.query(`select password from account where "providerId" = 'credential' limit 1`);
+      if (isPostgres(db)) {
+        const r = await db.pool.query(
+          `select password from ${POSTGRES_SCHEMA}.account where "providerId" = 'credential' limit 1`,
+        );
         stored = r.rows[0].password;
       } else {
         const row = (db as { prepare: (s: string) => { get: () => { password: string } } })
