@@ -5,11 +5,13 @@
 
 It claims rows as docs/ingestion/architecture.md, "Interim: claiming without the job queue",
 describes: LISTEN on RAW_EVENTS_CHANNEL (default raw_events), and claim once at start, on any
-notification on it (the payload is ignored) and on a 30 s poll. Each row is claimed, enriched and marked (`enriched_at`) in its own
-transaction, at most CONCURRENCY (default 4) at once. What each event becomes and what it fetches
-is docs/ingestion/github-webhooks.md. API calls reuse pull_test.py's helpers and wait on the
-shared `rate_limits` row for the installation. SIGINT or SIGTERM stops claiming, lets in-flight
-rows finish, and exits 0.
+notification on it (the payload is ignored) and on a 30 s poll. Each claim cycle first marks every
+row whose event is not in MAPPED (CI events and the like) enriched in one statement. It then claims
+mapped rows BATCH (default 25) at a time; each batch is enriched and marked (`enriched_at`) in one
+transaction, at most CONCURRENCY (default 4) batches at once. What each event becomes and what it
+fetches is docs/ingestion/github-webhooks.md. API calls reuse pull_test.py's helpers and wait on the
+shared `rate_limits` row for the installation. File lists and compares are fetched once per head
+and kept in a small LRU. SIGINT or SIGTERM stops claiming, lets in-flight batches finish, and exits 0.
 
 Needs GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH (or GITHUB_APP_PRIVATE_KEY) only for events
 that fetch: pull_request opened/reopened/synchronize, and pushes with a full commits array.
@@ -22,9 +24,10 @@ import os
 import signal
 import sys
 import time
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -54,6 +57,7 @@ FULL_PUSH = 2048  # GitHub's cap on a push payload's commits array
 PR_FILE_ACTIONS = ("opened", "reopened", "synchronize")
 TOKEN_TTL = 50 * 60  # installation tokens last an hour
 INSERT_CHUNK = 1000
+FETCH_CACHE = 500  # file lists and compares kept in memory, least recently used dropped
 
 # event: (kind, payload key of the object, object_id pattern, version field)
 OBJECTS = {
@@ -68,6 +72,9 @@ OBJECTS = {
     "label": ("label", "label", "{repo}/label/{id}", None),
     "repository": ("repository", "repository", "{id}", None),
 }
+# Events to_records handles. Every other github row is marked enriched in bulk without a claim.
+# installation* make no record yet but stay per-row work (github-webhooks.md, "Event types").
+MAPPED = (*OBJECTS, "push", "create", "delete", "installation", "installation_repositories")
 # Versions the doc sets to <received_at> because the object has no usable time of its own
 RECEIVED_VERSION = {("pull_request_review", "dismissed"), ("release", "edited"), ("release", "deleted")}
 
@@ -110,6 +117,8 @@ def to_records(raw_event: RawEvent, fetched: dict) -> list[dict]:
     body = raw_event.envelope["body"]
     repo = (body.get("repository") or {}).get("full_name")
     received = raw_event.received_at.isoformat()
+    if event not in MAPPED:
+        return []
 
     def row(kind: str, object_id: str, version: str, payload: dict, tombstone: bool = False, extras: dict | None = None) -> dict:
         record: dict = {"payload": payload}
@@ -131,8 +140,7 @@ def to_records(raw_event: RawEvent, fetched: dict) -> list[dict]:
         return [row("ref", f"{repo}:{_full_ref(body)}", f"deleted:{received}", body, tombstone=True)]
     if event not in OBJECTS:
         # installation and installation_repositories make no record. Updating `installations` and
-        # starting or stopping reconcile is out of scope for EMBER-65. Events the App has no
-        # permission for (status, checks, ...) are never delivered.
+        # starting or stopping reconcile is out of scope for EMBER-65.
         return []
 
     kind, key, pattern, version_field = OBJECTS[event]
@@ -167,22 +175,25 @@ class Worker:
         exchange=urllib_exchange,
         app_jwt=env_app_jwt,
         concurrency: int = 4,
+        batch: int = 25,
         poll_seconds: float = POLL_SECONDS,
     ) -> None:
         url = make_url(database_url).set(drivername="postgresql+asyncpg")
         if "sslmode" in url.query:  # libpq's name; asyncpg takes the same values as `ssl`
             url = url.difference_update_query(["sslmode"]).update_query_dict({"ssl": url.query["sslmode"]})
-        # Each in-flight row holds one connection for its transaction and briefly a second for rate_limits
+        # Each in-flight batch holds one connection for its transaction and briefly a second for rate_limits
         self.engine = create_async_engine(url, pool_size=2 * concurrency + 1)
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         self.exchange = exchange
         self.app_jwt = app_jwt
         self.poll_seconds = poll_seconds
+        self.batch = batch
         self.slots = asyncio.Semaphore(concurrency)
         self.wake = asyncio.Event()
         self.stopping = asyncio.Event()
         self.tasks: set[asyncio.Task] = set()
         self.tokens: dict[str, tuple[str, float]] = {}
+        self.fetched: OrderedDict[tuple, asyncio.Future] = OrderedDict()
         # ponytail: failed rows are skipped until the next poll, in memory. The job queue's retry and dead letter replace it.
         self.failed: set[int] = set()
 
@@ -217,8 +228,20 @@ class Worker:
                 loop.remove_signal_handler(sig)
             await self.engine.dispose()
 
+    async def _skip_unmapped(self) -> None:
+        """Mark every claimable row whose event the worker doesn't map, in one statement."""
+        async with self.sessions.begin() as session:
+            result = await session.execute(
+                update(RawEvent)
+                .where(*self._claimable(), func.split_part(RawEvent.event_name, ":", 1).not_in(MAPPED))
+                .values(enriched_at=func.clock_timestamp())
+            )
+        if result.rowcount:
+            print(f"raw_events: skipped {result.rowcount} unmapped", flush=True)
+
     async def _claim_until_empty(self) -> None:
-        """Start one job per free slot until a claim finds no row."""
+        """Skip unmapped rows, then start one batch per free slot until a claim comes back short."""
+        await self._skip_unmapped()
         while not self.stopping.is_set():
             await self.slots.acquire()
             claimed = asyncio.get_running_loop().create_future()
@@ -228,33 +251,39 @@ class Worker:
             if not await claimed:
                 return
 
+    def _claimable(self):
+        return (RawEvent.source == SOURCE, RawEvent.enriched_at.is_(None), RawEvent.tenant.is_not(None))
+
     def _claim(self):
         query = (
             select(RawEvent)
-            .where(RawEvent.source == SOURCE, RawEvent.enriched_at.is_(None), RawEvent.tenant.is_not(None))
+            .where(*self._claimable(), func.split_part(RawEvent.event_name, ":", 1).in_(MAPPED))
             .order_by(RawEvent.id)
-            .limit(1)
+            .limit(self.batch)
             .with_for_update(skip_locked=True)
         )
         return query.where(RawEvent.id.not_in(self.failed)) if self.failed else query
 
     async def _job(self, claimed: asyncio.Future) -> None:
-        raw_id = None
+        """Claim up to BATCH rows and enrich them in one transaction. `claimed` is whether the batch was full."""
         try:
             async with self.sessions.begin() as session:
-                raw = None if self.stopping.is_set() else await session.scalar(self._claim())
-                claimed.set_result(raw is not None)
-                if raw is None:
-                    return
-                raw_id = raw.id
-                count = await self.enrich(session, raw)
-            print(f"raw_events {raw_id} {raw.event_name}: {count} new source_records", flush=True)
-        except Exception as exc:  # noqa: BLE001 one bad row must not stop the worker
+                rows = [] if self.stopping.is_set() else list(await session.scalars(self._claim()))
+                claimed.set_result(len(rows) == self.batch)
+                for raw in rows:
+                    try:
+                        # A savepoint per row, so one bad row rolls back alone and the rest still commit
+                        async with session.begin_nested():
+                            count = await self.enrich(session, raw)
+                    except Exception as exc:  # noqa: BLE001 one bad row must not stop the batch
+                        self.failed.add(raw.id)
+                        print(f"raw_events {raw.id} failed, retried after the next poll: {exc!r}", file=sys.stderr, flush=True)
+                    else:
+                        print(f"raw_events {raw.id} {raw.event_name}: {count} new source_records", flush=True)
+        except Exception as exc:  # noqa: BLE001 a failed claim or commit must not stop the worker
             if not claimed.done():
                 claimed.set_result(False)
-            if raw_id is not None:
-                self.failed.add(raw_id)
-            print(f"raw_events {raw_id} failed, retried after the next poll: {exc!r}", file=sys.stderr, flush=True)
+            print(f"raw_events batch failed, retried on the next claim: {exc!r}", file=sys.stderr, flush=True)
         finally:
             self.slots.release()
 
@@ -281,14 +310,34 @@ class Worker:
         """Only what the payload lacks (github-webhooks.md, "Event types")."""
         event, _, action = raw.event_name.partition(":")
         body = raw.envelope["body"]
+        repo = body["repository"]["full_name"]
         if event == "push" and len(body.get("commits") or []) >= FULL_PUSH and body["before"].strip("0"):
             # A new branch (before = 000...) has no base to compare against, so it keeps the payload's commits
-            pages = await self.get_pages(raw, f"/compare/{body['before']}...{body['after']}")
+            path = f"/compare/{body['before']}...{body['after']}"
+            pages = await self.cached_pages(raw, (raw.tenant, repo, path), path)
             return {"compare": [commit for page in pages for commit in page.get("commits", [])]}
         if event == "pull_request" and action in PR_FILE_ACTIONS:
-            pages = await self.get_pages(raw, f"/pulls/{body['pull_request']['number']}/files")
+            pull = body["pull_request"]
+            path = f"/pulls/{pull['number']}/files"
+            pages = await self.cached_pages(raw, (raw.tenant, repo, path, pull["head"]["sha"]), path)
             return {"files": [item for page in pages for item in page]}
         return {}
+
+    async def cached_pages(self, raw: RawEvent, key: tuple, path: str) -> list:
+        """get_pages once per key, shared by every row and batch that asks for it. A failed fetch isn't kept."""
+        future = self.fetched.get(key)
+        if future is None:
+            future = self.fetched[key] = asyncio.ensure_future(self.get_pages(raw, path))
+            if len(self.fetched) > FETCH_CACHE:
+                self.fetched.popitem(last=False)
+        else:
+            self.fetched.move_to_end(key)
+        try:
+            return await future
+        except Exception:
+            if self.fetched.get(key) is future:
+                del self.fetched[key]
+            raise
 
     async def get_pages(self, raw: RawEvent, path: str) -> list:
         body = raw.envelope["body"]
@@ -370,7 +419,8 @@ def main() -> int:
         print("Set DATABASE_URL, e.g. postgresql://ember:...@localhost:5432/ember?sslmode=disable", file=sys.stderr)
         return 2
     concurrency = int(os.environ.get("CONCURRENCY", "4"))
-    asyncio.run(Worker(database_url, concurrency=concurrency).run())
+    batch = int(os.environ.get("BATCH", "25"))
+    asyncio.run(Worker(database_url, concurrency=concurrency, batch=batch).run())
     return 0
 
 
