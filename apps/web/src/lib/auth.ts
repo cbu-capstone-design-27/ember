@@ -2,14 +2,23 @@
 // GitHub OAuth (EMBER-12) is added later as a socialProviders entry, and
 // organizations (tenants) through Better Auth's organization plugin, without
 // changing how sign-in works.
+//
+// The CLI signs in through the browser (EMBER-81): `ember auth login` asks for
+// a device code, the user approves it on /device, and the CLI receives a
+// session token it sends as `Authorization: Bearer <token>`. The flow is in
+// the README, under "CLI sign-in".
 
 import { betterAuth } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
+import { bearer, deviceAuthorization } from "better-auth/plugins";
 import { createDatabase, DEFAULT_DATABASE_URL } from "./db.ts";
 import { sourcesSchema } from "./sources.ts";
 
 export const MIN_PASSWORD_LENGTH = 8;
+
+/** The only client allowed to ask for a device code: the Ember CLI (EMBER-87). */
+export const CLI_CLIENT_ID = "ember-cli";
 
 /**
  * Columns Ember adds to Better Auth's `user` table. `sources` is the list of
@@ -44,12 +53,37 @@ export function authOptions(settings: AuthSettings = {}) {
       minPasswordLength: MIN_PASSWORD_LENGTH,
     },
     user: { additionalFields: userFields },
-    plugins: [nextCookies()],
+    plugins: [
+      // Codes last 30 minutes and the CLI polls every 5 s (the plugin's defaults).
+      deviceAuthorization({
+        verificationUri: "/device",
+        validateClient: (clientId) => clientId === CLI_CLIENT_ID,
+      }),
+      bearer(),
+      nextCookies(), // last, so it sees the cookies the other plugins set
+    ],
   };
 }
 
 export function createAuth(settings: AuthSettings = {}) {
   return betterAuth(authOptions(settings));
+}
+
+export type Auth = ReturnType<typeof createAuth>;
+
+export interface CliUser {
+  name: string;
+  email: string;
+}
+
+/**
+ * Who a CLI token belongs to (GET /api/whoami), or null when the token is
+ * missing, wrong or expired. A browser session cookie works too.
+ */
+export async function whoami(auth: Auth, headers: Headers): Promise<CliUser | null> {
+  const session = await auth.api.getSession({ headers });
+  if (!session) return null;
+  return { name: session.user.name, email: session.user.email };
 }
 
 // Better Auth 1.7 creates string[] columns as TEXT on SQLite, then warns on the
@@ -88,7 +122,7 @@ export async function migrateDatabase(settings: AuthSettings = {}) {
   }
 }
 
-const globalAuth = globalThis as unknown as { emberAuth?: ReturnType<typeof createAuth> };
+const globalAuth = globalThis as unknown as { emberAuth?: Auth };
 
 /** The app's single auth instance (one per server process). */
 export function getAuth() {

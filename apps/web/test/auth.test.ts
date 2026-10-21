@@ -1,5 +1,6 @@
 // EMBER-51 acceptance: sign up, log in and log out work, on SQLite and (when
-// TEST_POSTGRES_URL is set) on Postgres with no code change.
+// TEST_POSTGRES_URL is set) on Postgres with no code change. EMBER-81: the CLI
+// signs in through the browser with a device code, on both databases too.
 // Run: npm test            (SQLite only)
 //      TEST_POSTGRES_URL=postgres://... npm test   (both)
 
@@ -9,13 +10,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import pg from "pg";
-import { authOptions, createAuth, migrate } from "../src/lib/auth.ts";
+import { authOptions, CLI_CLIENT_ID, createAuth, migrate, whoami, type Auth } from "../src/lib/auth.ts";
 import { databaseKind } from "../src/lib/db.ts";
+import { formatUserCode, openDeviceRequest } from "../src/lib/device.ts";
 
 const BASE = "http://localhost:3000";
 const SECRET = "test-secret-at-least-32-characters-long!!";
-
-type Auth = ReturnType<typeof createAuth>;
+const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 async function call(auth: Auth, path: string, init: { body?: unknown; cookie?: string } = {}) {
   const headers = new Headers({ origin: BASE });
@@ -35,6 +36,23 @@ async function call(auth: Auth, path: string, init: { body?: unknown; cookie?: s
     .map((c) => c.split(";")[0])
     .join("; ");
   return { status: response.status, json, cookie };
+}
+
+/** A POST the way the CLI sends it: JSON, with no Origin and no cookie. */
+async function cli(auth: Auth, path: string, body: unknown, headers: Record<string, string> = {}) {
+  const response = await auth.handler(
+    new Request(`${BASE}/api/auth${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    }),
+  );
+  const text = await response.text();
+  return { status: response.status, json: text ? JSON.parse(text) : null };
+}
+
+function bearer(token: string) {
+  return new Headers({ authorization: `Bearer ${token}` });
 }
 
 function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<void> | void) {
@@ -150,6 +168,123 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       }
       assert.ok(stored && stored !== password && !stored.includes(password));
     });
+
+    describe("CLI sign-in through the browser", () => {
+      const requestCode = (clientId = CLI_CLIENT_ID) => cli(auth, "/device/code", { client_id: clientId });
+      const poll = (deviceCode: string) =>
+        cli(auth, "/device/token", { grant_type: DEVICE_GRANT, device_code: deviceCode, client_id: CLI_CLIENT_ID });
+
+      /** Stand in for time passing: an older last poll, or a code past its expiry. */
+      async function age(userCode: string, update: { lastPolledAt?: Date; expiresAt?: Date }) {
+        const { adapter } = await auth.$context;
+        await adapter.update({ model: "deviceCode", where: [{ field: "userCode", value: userCode }], update });
+      }
+
+      /** What /device does: the signed-in user opens the link, then approves or denies. */
+      async function review(userCode: string, action: "approve" | "deny") {
+        const { cookie } = await call(auth, "/sign-in/email", { body: { email, password } });
+        const opened = await call(auth, `/device?user_code=${userCode}`, { cookie });
+        assert.equal(opened.status, 200, JSON.stringify(opened.json));
+        return call(auth, `/device/${action}`, { body: { userCode }, cookie });
+      }
+
+      test("the CLI gets a token once the user approves, and whoami names the user", async () => {
+        const code = await requestCode();
+        assert.equal(code.status, 200, JSON.stringify(code.json));
+        const { device_code, user_code } = code.json;
+        assert.equal(code.json.verification_uri, `${BASE}/device`);
+        assert.equal(code.json.verification_uri_complete, `${BASE}/device?user_code=${user_code}`);
+        assert.equal(code.json.interval, 5);
+
+        const pending = await poll(device_code);
+        assert.equal(pending.status, 400);
+        assert.equal(pending.json.error, "authorization_pending");
+
+        const approved = await review(user_code, "approve");
+        assert.equal(approved.status, 200, JSON.stringify(approved.json));
+
+        await age(user_code, { lastPolledAt: new Date(Date.now() - 60_000) });
+        const token = await poll(device_code);
+        assert.equal(token.status, 200, JSON.stringify(token.json));
+        assert.equal(token.json.token_type, "Bearer");
+        assert.ok(token.json.expires_in > 0);
+        assert.deepEqual(await whoami(auth, bearer(token.json.access_token)), { name: "Ada", email });
+      });
+
+      test("a code gives out one token: using it again is refused", async () => {
+        const code = await requestCode();
+        await review(code.json.user_code, "approve");
+        const first = await poll(code.json.device_code);
+        assert.equal(first.status, 200, JSON.stringify(first.json));
+        const again = await poll(code.json.device_code);
+        assert.equal(again.status, 400);
+        assert.equal(again.json.error, "invalid_grant");
+      });
+
+      test("a denied request tells the CLI access_denied", async () => {
+        const code = await requestCode();
+        const denied = await review(code.json.user_code, "deny");
+        assert.equal(denied.status, 200, JSON.stringify(denied.json));
+        const result = await poll(code.json.device_code);
+        assert.equal(result.status, 400);
+        assert.equal(result.json.error, "access_denied");
+      });
+
+      test("an expired code is refused in the browser and in the CLI", async () => {
+        const code = await requestCode();
+        await age(code.json.user_code, { expiresAt: new Date(Date.now() - 1000) });
+        const { cookie } = await call(auth, "/sign-in/email", { body: { email, password } });
+        const opened = await call(auth, `/device?user_code=${code.json.user_code}`, { cookie });
+        assert.equal(opened.status, 400);
+        assert.equal(opened.json.error, "expired_token");
+        assert.deepEqual(await openDeviceRequest(auth, code.json.user_code, new Headers({ cookie })), { state: "expired" });
+        const result = await poll(code.json.device_code);
+        assert.equal(result.status, 400);
+        assert.equal(result.json.error, "expired_token");
+      });
+
+      test("the /device page shows a request only to the user who opened it first", async () => {
+        const { user_code } = (await requestCode()).json;
+        const ada = new Headers({ cookie: (await call(auth, "/sign-in/email", { body: { email, password } })).cookie });
+        assert.deepEqual(await openDeviceRequest(auth, user_code, ada), { state: "pending", userCode: user_code });
+
+        const eve = await call(auth, "/sign-up/email", { body: { name: "Eve", email: `eve-${Date.now()}@example.com`, password } });
+        const asEve = await openDeviceRequest(auth, user_code, new Headers({ cookie: eve.cookie }));
+        assert.deepEqual(asEve, { state: "invalid" }, "someone else sees it as an unknown code");
+
+        await call(auth, "/device/approve", { body: { userCode: user_code }, cookie: ada.get("cookie")! });
+        assert.deepEqual(await openDeviceRequest(auth, user_code, ada), { state: "approved" });
+        assert.deepEqual(await openDeviceRequest(auth, "NOTACODE", ada), { state: "invalid" });
+      });
+
+      test("polling faster than the interval is told to slow down", async () => {
+        const code = await requestCode();
+        await poll(code.json.device_code);
+        const tooSoon = await poll(code.json.device_code);
+        assert.equal(tooSoon.status, 400);
+        assert.equal(tooSoon.json.error, "slow_down");
+      });
+
+      test("only the Ember CLI can ask for a code", async () => {
+        const res = await requestCode("someone-else");
+        assert.equal(res.status, 400);
+        assert.equal(res.json.error, "invalid_client");
+      });
+
+      test("signing out with the token revokes it (ember auth logout)", async () => {
+        const code = await requestCode();
+        await review(code.json.user_code, "approve");
+        const token = await poll(code.json.device_code);
+        const out = await cli(auth, "/sign-out", {}, { authorization: `Bearer ${token.json.access_token}` });
+        assert.equal(out.status, 200, JSON.stringify(out.json));
+        assert.equal(await whoami(auth, bearer(token.json.access_token)), null);
+      });
+
+      test("whoami refuses a missing or made-up token", async () => {
+        assert.equal(await whoami(auth, new Headers()), null);
+        assert.equal(await whoami(auth, bearer("not-a-real-token")), null);
+      });
+    });
   });
 }
 
@@ -163,6 +298,11 @@ if (postgresUrl) {
 } else {
   test("Postgres suite skipped (set TEST_POSTGRES_URL to run it)", { skip: true }, () => {});
 }
+
+test("/device shows the code in two groups of four, as the CLI prints it", () => {
+  assert.equal(formatUserCode("abcdefgh"), "ABCD-EFGH");
+  assert.equal(formatUserCode("ABCD-EFGH"), "ABCD-EFGH");
+});
 
 test("DATABASE_URL picks the database", () => {
   assert.equal(databaseKind("file:./data/ember.db"), "sqlite");

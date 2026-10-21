@@ -12,7 +12,7 @@ import { Steps } from "../steps.tsx";
 
 const MIN_PASSWORD_LENGTH = 8; // matches lib/auth.ts
 
-export function SignupForm() {
+export function SignupForm({ next, loginHref }: { next: string; loginHref: string }) {
   const router = useRouter();
   const [error, setError] = useState<{ text: string; exists: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,8 +37,8 @@ export function SignupForm() {
       });
       return;
     }
-    // Signing up also signs in. Next: pick the sources.
-    router.replace("/onboarding");
+    // Signing up also signs in. Next: pick the sources (or back to where the user was going).
+    router.replace(next);
     router.refresh();
   }
 
@@ -88,7 +88,7 @@ export function SignupForm() {
             <span>
               {error.text}{" "}
               {error.exists && (
-                <Link className="link" href="/login">
+                <Link className="link" href={loginHref}>
                   Log in instead
                 </Link>
               )}
@@ -102,7 +102,7 @@ export function SignupForm() {
       </form>
       <p className={styles.switch}>
         Already have an account?{" "}
-        <Link className="link" href="/login">
+        <Link className="link" href={loginHref}>
           Log in
         </Link>
       </p>
