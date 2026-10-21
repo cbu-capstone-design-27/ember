@@ -1,10 +1,13 @@
 ---
-# TEMPORARY (EMBER-49), with k8s/apps/llm-tunnel: remove both once the Spark's chat model has an
-# endpoint the cluster can reach without a tunnel.
-# Writes k8s/apps/llm-tunnel/ssh.sops.yaml, Secret llm-tunnel-ssh, encrypted with the public key in
-# .sops.yaml, from vault_llm_tunnel_ssh_key: the private key save-water@172.99.171.11 accepts for the
-# 127.0.0.1:8001 and 127.0.0.1:8000 forwards only (k8s/README.md, llm-tunnel). The value is never printed. Commit the file
-# it writes. Use make llm-tunnel-secret.
+# TEMPORARY (EMBER-49), with k8s/apps/llm-tunnel: remove both once the Spark's models have
+# endpoints the cluster can reach without a tunnel.
+# Writes two Secrets, encrypted with the public key in .sops.yaml (k8s/README.md, llm-tunnel):
+# - k8s/apps/llm-tunnel/ssh.sops.yaml, Secret llm-tunnel-ssh, from vault_llm_tunnel_ssh_key: the
+#   private key save-water@172.99.171.11 accepts for the 127.0.0.1:8001 and :8000 forwards only.
+# - k8s/apps/llm-tunnel/model-keys.sops.yaml, Secret spark-model-keys, from vault_spark_llm_api_key
+#   and vault_spark_embedding_api_key: the vLLM API keys (LLM_API_KEY, EMBEDDING_API_KEY in the
+#   Spark's ~/ember/.env), which pods send through the tunnel.
+# Values are never printed. Commit the files it writes. Use make llm-tunnel-secret.
 - name: llm-tunnel
   hosts: localhost
   gather_facts: false
@@ -21,6 +24,16 @@
         namespace: ember
       stringData:
         id_ed25519: "{{ ssh_key }}"
+    keys_file: infra/k8s/apps/llm-tunnel/model-keys.sops.yaml
+    keys_secret:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: spark-model-keys
+        namespace: ember
+      stringData:
+        LLM_API_KEY: "{{ vault_spark_llm_api_key | default('') }}"
+        EMBEDDING_API_KEY: "{{ vault_spark_embedding_api_key | default('') }}"
   tasks:
     - name: Secret
       tags: [secret]
@@ -67,6 +80,47 @@
             mode: "0644"
           when: encrypted is not skipped
 
+        - name: Require the model API keys in the vault
+          ansible.builtin.assert:
+            that:
+              - vault_spark_llm_api_key | default('') | length >= 32
+              - vault_spark_embedding_api_key | default('') | length >= 32
+            fail_msg: >-
+              Add vault_spark_llm_api_key and vault_spark_embedding_api_key (LLM_API_KEY and
+              EMBEDDING_API_KEY from ~/ember/.env on the Spark) with
+              .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
+        - name: Read the model keys the file holds now
+          ansible.builtin.command:
+            argv: [sops, --decrypt, --output-type, json, "{{ keys_file }}"]
+            chdir: "{{ repo_dir }}"
+          environment:
+            SOPS_AGE_KEY: "{{ vault_sops_age_key | default('') }}"
+          register: current_keys
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Encrypt the model keys
+          ansible.builtin.command:
+            argv: [sops, --encrypt, --filename-override, "{{ keys_file }}",
+                   --input-type, json, --output-type, yaml, /dev/stdin]
+            chdir: "{{ repo_dir }}"
+            stdin: "{{ keys_secret | to_json }}"
+          register: encrypted_keys
+          when: current_keys.rc != 0 or (current_keys.stdout | from_json).stringData != keys_secret.stringData
+          changed_when: false
+          no_log: true
+
+        - name: Write them to {{ keys_file }}
+          ansible.builtin.copy:
+            content: "{{ encrypted_keys.stdout }}\n"
+            dest: "{{ repo_dir }}/{{ keys_file }}"
+            mode: "0644"
+          when: encrypted_keys is not skipped
+
         # The public half goes on the Spark, restricted to this one forward
         - name: Derive the public key
           ansible.builtin.shell: ssh-keygen -y -f /dev/stdin <<< "$KEY"
@@ -82,5 +136,6 @@
           ansible.builtin.debug:
             msg:
               - "{{ secret_file ~ (' is written. Commit and merge it, then: kubectl --context homelab -n ember rollout restart deploy/llm-tunnel' if encrypted is not skipped else ' already holds the vault value') }}"
+              - "{{ keys_file ~ (' is written. Commit and merge it; pods that read it need a restart' if encrypted_keys is not skipped else ' already holds the vault values') }}"
               - "On the Spark, save-water's ~/.ssh/authorized_keys needs this line:"
               - 'restrict,port-forwarding,permitopen="127.0.0.1:8001",permitopen="127.0.0.1:8000",command="/bin/false" {{ public_key.stdout }}'
