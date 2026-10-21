@@ -143,24 +143,30 @@ To set or rotate the key: generate a private key in the App's settings (`ember-i
 
 ### llm-tunnel
 
-> **Temporary fix (EMBER-49).** This tunnel exists only because the Spark's chat model has no address the cluster can reach. Remove it, meaning `apps/llm-tunnel/`, `playbooks/llm-tunnel.yml`, `make llm-tunnel-secret`, `vault_llm_tunnel_ssh_key` and the key's line on the Spark, and put the chat model's API key back, once the model is served somewhere the cluster reaches directly: a Spark that can join the tailnet, an endpoint behind its own authentication, or a model on the cluster.
+> **Temporary fix (EMBER-49).** This tunnel exists only because the Spark's models have no address the cluster can reach. Remove it, meaning `apps/llm-tunnel/`, `playbooks/llm-tunnel.yml`, `make llm-tunnel-secret`, `vault_llm_tunnel_ssh_key` and the key's line on the Spark, once the models are served somewhere the cluster reaches directly: a Spark that can join the tailnet, an endpoint behind its own authentication, or models on the cluster.
 
-An SSH tunnel to the chat model (Qwen3-30B-A3B) on the DGX Spark. The model listens only on the Spark's loopback, `127.0.0.1:8001` (ADR 0008): the Spark is shared with other people's containers, can't join Tailscale, and keeps one public port, 8000, for embeddings. Its SSH port is open, so Deployment `llm-tunnel` logs in as `save-water@172.99.171.11` and forwards port 8001 to that loopback. Pods reach the model at `http://llm-tunnel.ember:8001/v1` (`LLM_BASE_URL`).
+An SSH tunnel to the two models on the DGX Spark. Both listen only on the Spark's loopback: the chat model (Qwen3-30B-A3B) on `127.0.0.1:8001` (ADR 0008) and embeddings (Qwen3-Embedding-0.6B) on `127.0.0.1:8000`. The Spark is shared with other people's containers and can't join Tailscale. Its SSH port is open, so Deployment `llm-tunnel` logs in as `save-water@172.99.171.11` and forwards both ports to that loopback.
+
+| Model | Pods use | Spark side |
+|---|---|---|
+| Chat | `LLM_BASE_URL=http://llm-tunnel.ember:8001/v1` | container `ember-llm`, `127.0.0.1:8001` |
+| Embeddings | `EMBEDDING_BASE_URL=http://llm-tunnel.ember:8000/v1` | container `ember-embedding`, `127.0.0.1:8000` |
 
 ```
- extract / load ──▶ Service llm-tunnel:8001 ──▶ pod: ssh -N -L 0.0.0.0:8001:127.0.0.1:8001 ══ SSH :22 ══▶ Spark 127.0.0.1:8001
+ pipeline pods ──▶ Service llm-tunnel:8001 / :8000 ──▶ pod: ssh -N -L 8001 -L 8000 ══ SSH :22 ══▶ Spark 127.0.0.1:8001 / :8000
 ```
 
-- **No API key, for now.** While the tunnel is in place the chat model runs without `VLLM_API_KEY`, so the pipeline sends none. The tunnel's key can reach only this port, but anything already on the Spark can call `127.0.0.1:8001` too, including other people's containers that use host networking. The team accepted that for the temporary setup. The model's replacement endpoint should require a key again.
-- **Supervision.** There's no autossh. `ssh` sends a keepalive every 15 s and exits after 3 unanswered ones, or at once if the forward can't be set up (`ExitOnForwardFailure`). Kubernetes then restarts the container. The pod is ready only once `ssh` has logged in and opened 8001, so the Service never routes to a tunnel that isn't up.
-- **Key.** A dedicated ED25519 key, Secret `llm-tunnel-ssh` (`apps/llm-tunnel/ssh.sops.yaml`), written by `make llm-tunnel-secret` from `vault_llm_tunnel_ssh_key`. On the Spark, `save-water`'s `authorized_keys` restricts it to this one forward: `restrict,port-forwarding,permitopen="127.0.0.1:8001",command="/bin/false" ssh-ed25519 … ember-llm-tunnel`. A stolen copy can't open a shell or reach anything else on a shared machine. `make llm-tunnel-secret` prints the line.
+- **Embeddings aren't public any more.** Until 2026-10-21 embeddings were published on the Spark's public address (port 8000), and for a while they ran with no key, open to the internet. They're on loopback now (`EMBEDDING_BIND_ADDR=127.0.0.1` in `~/ember/.env` on the Spark, run by its `infra/docker-compose.yml`, profile `embedding`). Anything that called `http://172.99.171.11:8000` has to go through the tunnel instead.
+- **API keys.** Each model still checks its own key (`EMBEDDING_API_KEY` and `LLM_API_KEY` in the Spark's `.env`, passed to vLLM as `VLLM_API_KEY`), so pods send `Authorization: Bearer <key>`. The keys are to be rotated, and then reach the pipeline as their own SOPS Secret. The tunnel's SSH key can reach only these two ports, but anything already on the Spark can call them too, so the keys stay on.
+- **Supervision.** There's no autossh. `ssh` sends a keepalive every 15 s and exits after 3 unanswered ones, or at once if either forward can't be set up (`ExitOnForwardFailure`). Kubernetes then restarts the container. The pod is ready only once `ssh` has logged in and opened its ports, so the Service never routes to a tunnel that isn't up.
+- **Key.** A dedicated ED25519 key, Secret `llm-tunnel-ssh` (`apps/llm-tunnel/ssh.sops.yaml`), written by `make llm-tunnel-secret` from `vault_llm_tunnel_ssh_key`. On the Spark, `save-water`'s `authorized_keys` restricts it to these two forwards: `restrict,port-forwarding,permitopen="127.0.0.1:8001",permitopen="127.0.0.1:8000",command="/bin/false" ssh-ed25519 … ember-llm-tunnel`. A stolen copy can't open a shell or reach anything else on a shared machine. `make llm-tunnel-secret` prints the line.
 - **Host key.** `apps/llm-tunnel/known_hosts` pins the Spark's ED25519 host key (`SHA256:erUVb1xzektcqoOqjZ6jF0IEN9QYH04XZvlft/tanOs`), with `StrictHostKeyChecking=yes`. If the Spark is reinstalled and its key changes, the tunnel refuses to connect until `known_hosts` is updated with `ssh-keyscan -t ed25519 172.99.171.11`, checked against the Spark's `/etc/ssh/ssh_host_ed25519_key.pub`.
 - **Network.** Pods leave through each node's own internet connection, not the tailnet: 209.160.254.205 and .206 today. The Spark accepts SSH connections from both today. If it ever filters by source address, those addresses have to be allowed, and they change when the cluster moves.
 
 ```bash
 kubectl --context homelab -n ember logs deploy/llm-tunnel        # empty when healthy; ssh logs only errors
-kubectl --context homelab -n ember run llm-check --rm -it --restart=Never --image=curlimages/curl -- \
-  curl -s -o /dev/null -w '%{http_code}\n' http://llm-tunnel.ember:8001/v1/models   # 200: the tunnel works
+kubectl --context homelab -n ember run llm-check --rm -it --restart=Never --image=curlimages/curl -- sh -c \
+  'for p in 8001 8000; do curl -s -o /dev/null -w "$p %{http_code}\n" http://llm-tunnel.ember:$p/health; done'   # 200 for both
 ```
 
 To rotate the key, generate a new one (`ssh-keygen -t ed25519 -N "" -C ember-llm-tunnel`), put the private half in the vault as `vault_llm_tunnel_ssh_key`, run `make llm-tunnel-secret`, and add the line it prints on the Spark. Commit and merge, restart the Deployment, then remove the old line from the Spark.

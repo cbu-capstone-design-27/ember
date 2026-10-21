@@ -1,5 +1,6 @@
-# TEMPORARY (EMBER-49), with deployment.yaml. The chat model, through the tunnel:
-# LLM_BASE_URL=http://llm-tunnel.ember:8001/v1. No API key while the tunnel is in place (k8s/README.md).
+# TEMPORARY (EMBER-49), with deployment.yaml. The Spark's models, through the tunnel:
+# LLM_BASE_URL=http://llm-tunnel.ember:8001/v1 and EMBEDDING_BASE_URL=http://llm-tunnel.ember:8000/v1.
+# Each model still checks its own API key (k8s/README.md, llm-tunnel).
 apiVersion: v1
 kind: Service
 metadata:
@@ -12,3 +13,6 @@ spec:
     - name: llm
       port: 8001
       targetPort: llm
+    - name: embedding
+      port: 8000
+      targetPort: embedding

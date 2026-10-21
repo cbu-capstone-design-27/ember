@@ -3,7 +3,7 @@
 # endpoint the cluster can reach without a tunnel.
 # Writes k8s/apps/llm-tunnel/ssh.sops.yaml, Secret llm-tunnel-ssh, encrypted with the public key in
 # .sops.yaml, from vault_llm_tunnel_ssh_key: the private key save-water@172.99.171.11 accepts for the
-# 127.0.0.1:8001 forward only (k8s/README.md, llm-tunnel). The value is never printed. Commit the file
+# 127.0.0.1:8001 and 127.0.0.1:8000 forwards only (k8s/README.md, llm-tunnel). The value is never printed. Commit the file
 # it writes. Use make llm-tunnel-secret.
 - name: llm-tunnel
   hosts: localhost
@@ -83,4 +83,4 @@
             msg:
               - "{{ secret_file ~ (' is written. Commit and merge it, then: kubectl --context homelab -n ember rollout restart deploy/llm-tunnel' if encrypted is not skipped else ' already holds the vault value') }}"
               - "On the Spark, save-water's ~/.ssh/authorized_keys needs this line:"
-              - 'restrict,port-forwarding,permitopen="127.0.0.1:8001",command="/bin/false" {{ public_key.stdout }}'
+              - 'restrict,port-forwarding,permitopen="127.0.0.1:8001",permitopen="127.0.0.1:8000",command="/bin/false" {{ public_key.stdout }}'
