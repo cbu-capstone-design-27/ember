@@ -1,0 +1,62 @@
+---
+# Maps a source account (GitHub: the App installation id) to a tenant in Postgres on the cluster,
+# then hands the deliveries intake already stored for it, with tenant null, to the enrich workers.
+# Interim, until `ember-admin map` (docs/ingestion/architecture.md). The SQL is map-tenant.sql, run
+# with psql inside the primary's pod, so no credential leaves the cluster. Running it again changes
+# nothing. Use make map-tenant SOURCE=github ACCOUNT=<installation id> TENANT=<tenant>.
+- name: Tenants
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubectl: "kubectl --context {{ cluster_context }}"
+    k8s_dir: "{{ playbook_dir }}/../../k8s"
+    pg_ns: ember
+    pg_cluster: "{{ lookup('ansible.builtin.file', k8s_dir ~ '/apps/postgres/cluster.yaml') | from_yaml }}"
+    pg_name: "{{ pg_cluster.metadata.name }}"
+    pg_db: "{{ pg_cluster.spec.bootstrap.initdb.database }}"
+    # The adapters intake has or will have (docs/ingestion/architecture.md, Sources)
+    sources: [github, jira, slack, gitlab, teams]
+  tasks:
+    - name: Map
+      tags: [map]
+      block:
+        # tenant becomes part of the Neo4j subgraph name, so it follows the ontology's subgraph_id rules
+        - name: Require a source, an account and a tenant
+          ansible.builtin.assert:
+            that:
+              - source | default('') in sources
+              - account | default('') is match('^[A-Za-z0-9][A-Za-z0-9._:-]*$')
+              - tenant | default('') is match('^[a-z0-9][a-z0-9-]*$')
+            fail_msg: >-
+              Use make map-tenant SOURCE=<{{ sources | join('|') }}> ACCOUNT=<account id> TENANT=<tenant>.
+              ACCOUNT is the source's account_id on raw_events (GitHub: the installation id); TENANT is
+              lowercase letters, digits and hyphens, starting with a letter or digit.
+              Got SOURCE={{ source | default('') }} ACCOUNT={{ account | default('') }} TENANT={{ tenant | default('') }}
+            quiet: true
+
+        - name: Read the primary's pod
+          ansible.builtin.command: "{{ kubectl }} -n {{ pg_ns }} get cluster {{ pg_name }} -o jsonpath={.status.currentPrimary}"
+          register: primary
+          changed_when: false
+
+        - name: Map the account and hand its stored deliveries to enrich
+          ansible.builtin.command:
+            argv: >-
+              {{ kubectl.split() + ['-n', pg_ns, 'exec', '-i', primary.stdout, '-c', 'postgres', '--',
+                 'psql', '-X', '-q', '-d', pg_db,
+                 '-v', 'source=' ~ source, '-v', 'account=' ~ account, '-v', 'tenant=' ~ tenant] }}
+            stdin: "{{ lookup('ansible.builtin.file', 'map-tenant.sql') }}"
+          register: mapped
+          changed_when: "mapped.stdout is search('^mapped: .*, [1-9][0-9]* stored', multiline=true)"
+
+        - name: Require the account to be mapped to {{ tenant }}
+          ansible.builtin.assert:
+            that: "mapped.stdout is search('^mapped: ', multiline=true)"
+            fail_msg: "{{ mapped.stdout }}"
+            quiet: true
+
+        - name: Say what happened
+          ansible.builtin.debug:
+            msg:
+              - "{{ mapped.stdout }}"
+              - "Watch them enrich: kubectl --context {{ cluster_context }} -n {{ pg_ns }} logs -f deploy/enrich-{{ source }}"

@@ -27,6 +27,7 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Also checks each enrich worker logged that it is listening. Deploys nothing |
 | `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret in the vault ([The webhook secret](#the-webhook-secret)). Commit the result |
 | `make enrich-github-secret` | Writes `apps/enrich-github/github-app.sops.yaml`, encrypted, from the GitHub App's private key in the vault ([enrich-github](#enrich-github)). Commit the result |
+| `make map-tenant SOURCE=… ACCOUNT=… TENANT=…` | Maps a source account to a tenant and hands the deliveries already stored for it to the enrich workers ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
 | `make grafana-secret` | Writes the collector's and the Grafana Operator's Secrets, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud tokens](#the-grafana-cloud-tokens)). Commit the result |
 | `make grafana-health` | Checks Grafana Cloud end to end: the operator synced the stack and the Ember dashboard, and the stack has metrics from every node, intake, Postgres and Flux, pod logs, Kubernetes events and both synthetic checks. Deploys nothing |
 | `make flux-preview BRANCH=<branch>` | Deploys a pushed branch instead of `develop`, to try a change before merging it. Tell the team, since it replaces what everyone else sees |
@@ -128,7 +129,7 @@ Between steps 4 and 5 GitHub's deliveries are refused with 401. GitHub doesn't r
 
 - **Image.** `deployment.yaml` pins a `develop-<run>-<sha>` tag of `ghcr.io/cbu-capstone-design-27/ember/github-ingestion`, as intake does.
 - **Credentials.** `DATABASE_URL` comes from Secret `postgres-app`. `GITHUB_APP_ID` is set in the Deployment (it is not a secret). The App's private key is Secret `enrich-github-app`, mounted as a file at `/etc/github-app/private-key.pem`. Intake never sees the key, and this worker never sees the webhook secret (`docs/ingestion/architecture.md`, Credentials).
-- **Tenants.** Intake stores a delivery with `tenant` null until its installation id is in `installations`, and the worker leaves those rows alone. Until `ember-admin map` exists, map an installation with SQL: `insert into installations (source, account_id, tenant) values ('github', '<installation id>', '<tenant>')`, then `update raw_events set tenant = '<tenant>' where source = 'github' and account_id = '<installation id>' and tenant is null`.
+- **Tenants.** Intake stores a delivery with `tenant` null until its installation id is in `installations`, and the worker leaves those rows alone. Until `ember-admin map` exists, map one with `make map-tenant SOURCE=github ACCOUNT=<installation id> TENANT=<tenant>` ([Mapping a tenant](#mapping-a-tenant)).
 - **Stopping.** On SIGTERM it stops claiming and finishes the rows in flight, for up to 60 s (`terminationGracePeriodSeconds`). A row cut off by the kill is rolled back and claimed again by the next pod.
 
 ```bash
@@ -138,6 +139,28 @@ kubectl --context homelab -n ember logs deploy/enrich-github
 It logs `enrich:github listening on raw_events` once connected, and one line per row with how many `source_records` it wrote, never the payload.
 
 To set or rotate the key: generate a private key in the App's settings (`ember-ingest`, Private keys), put the whole `.pem` in the vault as `vault_github_app_private_key` (a YAML block scalar, `|`), run `make enrich-github-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-github`. Delete the old key on GitHub once the new pod is listening.
+
+### Mapping a tenant
+
+Intake stores a delivery with `tenant` null when its account isn't in `installations`. For GitHub, the account is the App installation id. The enrich workers skip those rows, because every record belongs to a tenant's subgraph. Until `ember-admin map` exists (`docs/ingestion/architecture.md`), `make map-tenant` (from `infra/ansible`, `playbooks/tenants.yml`) does it. It runs `playbooks/map-tenant.sql` with psql in the Postgres primary's pod, so no credential leaves the cluster.
+
+To find the accounts that are waiting:
+
+```bash
+kubectl --context homelab -n ember exec postgres-1 -c postgres -- psql -d ember -c \
+  "select source, account_id, count(*) from raw_events where tenant is null group by 1, 2"
+```
+
+Then map one:
+
+```bash
+make map-tenant SOURCE=github ACCOUNT=164866568 TENANT=<tenant>
+```
+
+It adds the `installations` row, so intake stores the account's new deliveries with the tenant. Then it sets the tenant on the rows already stored with none, and sends a `NOTIFY` so the worker starts on them at once. It prints how many rows it handed over. `TENANT` follows the ontology's `subgraph_id` rules (lowercase letters, digits and hyphens), since it becomes part of the Neo4j subgraph name.
+
+- **Re-running is safe.** It changes nothing and reports 0. A delivery intake was storing at the moment of mapping can still land without a tenant; running it again picks that up.
+- **No remapping.** If the account is already mapped to a different tenant, it refuses and changes nothing, since moving an account would split its records across two subgraphs. Rows with no `account_id` (GitHub `ping`s, webhooks set directly on a repo) can't be mapped.
 
 ### Restarts
 
