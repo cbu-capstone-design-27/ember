@@ -462,6 +462,37 @@ class EnrichDatabaseTest(unittest.TestCase):
         self.assertIsNone(self.raw(unmapped).enriched_at)
         self.assertEqual(self.records(), [])
 
+    def test_a_parent_enriched_after_its_reply_keeps_its_own_record(self):
+        fake = FakeSlackApi()
+
+        async def enrich_all():
+            worker = self.worker(fake)
+            task = await self.started(worker)
+            await self.until(lambda: self.pending() == 0)
+            await self.stopped(worker, task)
+
+        # The reply comes first (the parent's row was failing, or arrived late) and fetches a copy
+        self.insert(callback(message("1700000200.000100", user="U0BEN", thread_ts=PARENT["ts"])), event_id="Ev-reply")
+        run_async(enrich_all())
+        parent_id = f"{CHANNEL}/{PARENT['ts']}"
+        [copy] = [r for r in self.records("message") if r.object_id == parent_id]
+        self.assertIsNone(copy.record["payload"])
+
+        parent_body = callback({**PARENT, "channel": CHANNEL, "event_ts": PARENT["ts"]}, event_id="Ev-parent")
+        parent_row = self.insert(parent_body)
+        run_async(enrich_all())
+        [own] = [r for r in self.records("message") if r.object_id == parent_id]  # still one row for that version
+        self.assertEqual((own.version, own.raw_event_id), (PARENT["ts"], parent_row))
+        self.assertEqual(own.record["payload"], parent_body)
+        self.assertEqual((own.record["user"]["id"], own.record["channel"]["id"]), ("U0ADA", CHANNEL))
+
+        # Running both again changes nothing
+        with self.engine.begin() as conn:
+            conn.execute(text("update raw_events set enriched_at = null"))
+        run_async(enrich_all())
+        [again] = [r for r in self.records("message") if r.object_id == parent_id]
+        self.assertEqual((again.raw_event_id, again.record), (parent_row, own.record))
+
     def newest_channel(self) -> dict:
         with Session(self.engine) as session:
             return session.scalars(

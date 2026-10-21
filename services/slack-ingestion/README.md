@@ -214,7 +214,7 @@ To receive real events later, point a tunnel at port `8082` and set the app's Re
   - A change applies in Slack's order onto the channel as stored at or before its time (fetched once if none is stored), one change per channel at a time. A late or retried change gets the newer changes replayed on top, and if that differs from the newest record, one more record carries it forward (version `<newest version>+<this version>`). A newer change to the same field still wins.
   - `member_joined_channel` and `member_left_channel` write a `membership` record, `<channel>/<user>`, version `<event_time>:<event_id>`, with `member` true or false. A join fetches the person if not stored. When the person is our bot, the worker logs the `pull_test.py --channel` backfill to run; starting it automatically is reconcile's job.
 - **Everything else is skipped.** Reactions, `app_uninstalled`, `tokens_revoked` and `app_rate_limited` are marked enriched and logged as skipped. Reactions wait for the ontology to have a place for them; the uninstall events need `installations` and reconcile.
-- **No duplicates.** Records are inserted with `on conflict (source, tenant, object_id, version) do nothing`, so running a row twice adds nothing.
+- **No duplicates.** A record whose `(source, tenant, object_id, version)` is already stored is left alone, so running a row twice adds nothing. The one exception: a message's own delivery replaces the copy of that version a reply fetched as its `thread_parent` (no `payload`, `user` or `channel`), so a parent enriched after its reply still gets its full record. A fetched parent is stamped at its `edited.ts` when it was edited, else its `ts`.
 
 ### How it runs
 

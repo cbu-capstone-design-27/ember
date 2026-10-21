@@ -325,6 +325,13 @@ class EnrichDeliveryTest(unittest.TestCase):
         self.assertEqual(reply.record["thread_parent"]["text"], PARENT["text"])
         self.assertEqual(fake.calls[-1], ("conversations.replies", {"channel": CHANNEL, "ts": PARENT["ts"], "limit": "1"}))
 
+    def test_a_fetched_parent_edited_before_the_fetch_is_stamped_at_its_edit(self):
+        edited = {**PARENT, "text": "Decision: use Postgres.", "edited": {"user": "U0ADA", "ts": "1700000150.000200"}}
+        fake = FakeSlackApi(threads={(CHANNEL, PARENT["ts"]): [edited]})
+        records, _ = self.run_enrich(callback(message("1700000200.000100", thread_ts=PARENT["ts"])), fake=fake)
+        parent = by_kind(records)["message"][0]
+        self.assertEqual((parent.version, parent.occurred_at), ("1700000150.000200", slack_time("1700000150.000200")))
+
     def test_reply_to_a_stored_parent_does_not_fetch_it(self):
         stored = enrich.message_record(None, PARENT, deleted=False)
         cache = DictCache({("message", f"{CHANNEL}/{PARENT['ts']}"): stored})

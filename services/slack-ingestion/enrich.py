@@ -441,7 +441,8 @@ class Context:
         edited = _dict(parent.get("edited")) or {}
         version = _str(edited.get("ts")) or thread_ts
         record = message_record(None, parent, deleted=False)
-        self.fetched.append(NewRecord("message", object_id, version, slack_time(thread_ts) or when, record))
+        # Stamped when its content dates from: the edit, if it was edited before this fetch
+        self.fetched.append(NewRecord("message", object_id, version, slack_time(version) or when, record))
         return parent
 
     async def _lookup(self, method: str, params: dict, field: str):
@@ -706,6 +707,16 @@ class StoredRecords:
         await self._session.execute(text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": key})
 
 
+# A version that is already stored is left alone, so reprocessing changes nothing. One exception:
+# a message's own delivery replaces the copy of the same version that a reply fetched for its
+# thread_parent (payload, user and channel all null), which would otherwise hide it.
+REPLACES_FETCHED_COPY = text(
+    "source_records.kind = 'message'"
+    " and source_records.record -> 'payload' = 'null'::jsonb"
+    " and excluded.record -> 'payload' <> 'null'::jsonb"
+)
+
+
 def _error_text(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"[:ERROR_TEXT_LIMIT]
 
@@ -893,19 +904,26 @@ class Worker:
                         envelope.get("body"), cache=StoredRecords(session, tenant), call=self._caller(tenant)
                     )
                     for rec in records:
+                        insert = pg_insert(SourceRecord).values(
+                            source=SOURCE,
+                            tenant=tenant,
+                            kind=rec.kind,
+                            object_id=rec.object_id,
+                            version=rec.version,
+                            occurred_at=rec.occurred_at,
+                            record=rec.record,
+                            raw_event_id=row_id,
+                        )
                         await session.execute(
-                            pg_insert(SourceRecord)
-                            .values(
-                                source=SOURCE,
-                                tenant=tenant,
-                                kind=rec.kind,
-                                object_id=rec.object_id,
-                                version=rec.version,
-                                occurred_at=rec.occurred_at,
-                                record=rec.record,
-                                raw_event_id=row_id,
+                            insert.on_conflict_do_update(
+                                index_elements=["source", "tenant", "object_id", "version"],
+                                set_={
+                                    "record": insert.excluded.record,
+                                    "occurred_at": insert.excluded.occurred_at,
+                                    "raw_event_id": insert.excluded.raw_event_id,
+                                },
+                                where=REPLACES_FETCHED_COPY,
                             )
-                            .on_conflict_do_nothing(index_elements=["source", "tenant", "object_id", "version"])
                         )
             except Permanent as exc:
                 self._give_up(row_id, exc)

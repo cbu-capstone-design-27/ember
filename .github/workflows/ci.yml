@@ -191,7 +191,7 @@ jobs:
           PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
         run: |
           set -euo pipefail
-          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          # A venv per service, so each one's pinned requirements stay apart
           python3 -m venv "$RUNNER_TEMP/slack-enrich-venv"
           "$RUNNER_TEMP/slack-enrich-venv/bin/pip" install -q -r services/slack-ingestion/requirements.txt
           "$RUNNER_TEMP/slack-enrich-venv/bin/python3" services/slack-ingestion/test_enrich.py
