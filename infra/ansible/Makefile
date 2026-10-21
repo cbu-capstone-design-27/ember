@@ -22,7 +22,7 @@ DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-j
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
 	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate headlamp-token \
-	intake-secret enrich-github-secret grafana-secret grafana-health
+	intake-secret enrich-github-secret map-tenant grafana-secret grafana-health
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -166,6 +166,9 @@ postgres-migrate: ## Apply k8s/apps/postgres/migrations with the migrate Job's d
 	@DATABASE_URL="$${DATABASE_URL:-$$(make -s postgres-url)}" && export DATABASE_URL && \
 	  docker run --rm -e DATABASE_URL -v "$$(cd ../k8s/apps/postgres/migrations && pwd):/migrations:ro" \
 	    $(DBMATE_IMAGE) --no-dump-schema --migrations-dir=/migrations migrate
+
+map-tenant: ## Map SOURCE's account ACCOUNT to TENANT and hand its stored deliveries to enrich. Safe to re-run
+	ansible-playbook playbooks/tenants.yml --tags map -e source="$(SOURCE)" -e account="$(ACCOUNT)" -e tenant="$(TENANT)"
 
 headlamp-token: ## Print a 24-hour sign-in token for Headlamp (read-only) at https://headlamp.<tailnet>
 	@kubectl --context $(CONTEXT) -n headlamp create token headlamp-viewer --duration 24h

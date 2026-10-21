@@ -170,7 +170,7 @@ DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=
   python3 services/github-ingestion/enrich.py
 ```
 
-Only `pull_request` `opened`/`reopened`/`synchronize` and pushes with a full `commits` array call GitHub. Those need `GITHUB_APP_ID` and the App key from [Credentials](#credentials). Rows with `tenant` null wait until the installation is mapped.
+Only `pull_request` `opened`/`reopened`/`synchronize` and pushes with a full `commits` array call GitHub. Those need `GITHUB_APP_ID` and the App key from [Credentials](#credentials). Rows with `tenant` null wait until the installation is mapped (on the cluster, `make map-tenant`, [`infra/k8s/README.md`, Mapping a tenant](../../infra/k8s/README.md#mapping-a-tenant)).
 
 The `Dockerfile` builds image `github-ingestion` with `enrich.py` as its command and `openssl` for the App JWT. On the cluster it runs as Deployment `enrich-github` ([`infra/k8s/README.md`, enrich-github](../../infra/k8s/README.md#enrich-github)).
 
