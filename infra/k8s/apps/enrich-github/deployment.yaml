@@ -34,7 +34,7 @@ spec:
       containers:
         - name: enrich
           # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
-          image: ghcr.io/cbu-capstone-design-27/ember/github-ingestion:develop-147-74edbea
+          image: ghcr.io/cbu-capstone-design-27/ember/github-ingestion:develop-150-b918508
           env:
             # The pod stays in CreateContainerConfigError until postgres-app exists
             - name: DATABASE_URL
