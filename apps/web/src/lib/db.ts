@@ -26,7 +26,14 @@ export interface PostgresDatabase {
   dialect: PostgresDialect;
   type: "postgres";
   schemaName: string;
+  // Better Auth turns transactions on by itself only when handed a bare pool;
+  // without this, sign-up could store a user without its password.
+  transaction: true;
   pool: pg.Pool;
+}
+
+export function isPostgresDatabase(db: unknown): db is PostgresDatabase {
+  return !!db && typeof db === "object" && "pool" in db && db.pool instanceof pg.Pool;
 }
 
 export function databaseKind(url: string): DatabaseKind {
@@ -51,11 +58,21 @@ export function createDatabase(url: string): DatabaseSync | PostgresDatabase {
     return new DatabaseSync(path);
   }
   const pool = new pg.Pool({ connectionString: url });
-  return { dialect: new PostgresDialect({ pool }), type: "postgres", schemaName: POSTGRES_SCHEMA, pool };
+  // An idle connection that drops (Postgres restarts, the tailnet link blips)
+  // is an 'error' event on the pool; with no listener Node would crash. The
+  // pool replaces the connection on the next query.
+  pool.on("error", (error) => console.warn(`[db] idle Postgres connection closed: ${error.message}`));
+  return {
+    dialect: new PostgresDialect({ pool }),
+    type: "postgres",
+    schemaName: POSTGRES_SCHEMA,
+    transaction: true,
+    pool,
+  };
 }
 
 /** Close what createDatabase opened. */
 export async function closeDatabase(db: unknown) {
   if (db instanceof DatabaseSync) db.close();
-  else if (db && typeof db === "object" && "pool" in db && db.pool instanceof pg.Pool) await db.pool.end();
+  else if (isPostgresDatabase(db)) await db.pool.end();
 }

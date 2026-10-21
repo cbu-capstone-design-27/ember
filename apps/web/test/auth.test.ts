@@ -9,9 +9,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
-import pg from "pg";
 import { authOptions, CLI_CLIENT_ID, createAuth, migrate, whoami, type Auth } from "../src/lib/auth.ts";
-import { closeDatabase, databaseKind, POSTGRES_SCHEMA, type PostgresDatabase } from "../src/lib/db.ts";
+import { closeDatabase, createDatabase, databaseKind, isPostgresDatabase, POSTGRES_SCHEMA } from "../src/lib/db.ts";
 import { formatUserCode, openDeviceRequest } from "../src/lib/device.ts";
 
 const BASE = "http://localhost:3000";
@@ -55,10 +54,6 @@ function bearer(token: string) {
   return new Headers({ authorization: `Bearer ${token}` });
 }
 
-function isPostgres(db: unknown): db is PostgresDatabase {
-  return !!db && typeof db === "object" && "pool" in db && db.pool instanceof pg.Pool;
-}
-
 function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<void> | void) {
   describe(`auth on ${label}`, () => {
     let auth: Auth;
@@ -82,12 +77,30 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
     // EMBER-80: on Postgres the web app shares the database with ingestion, whose tables are in public
     test("on Postgres the tables are in their own schema", async (t) => {
       const db = migrationOptions?.database;
-      if (!isPostgres(db)) return t.skip("SQLite has no schemas");
+      if (!isPostgresDatabase(db)) return t.skip("SQLite has no schemas");
       const { rows } = await db.pool.query<{ table_name: string }>(
         "select table_name from information_schema.tables where table_schema = $1",
         [POSTGRES_SCHEMA],
       );
       assert.deepEqual(rows.map((r) => r.table_name).sort(), ["account", "deviceCode", "session", "user", "verification"]);
+    });
+
+    // Sign-up writes the user, then its password account; a failure between them must leave neither
+    test("a failed transaction leaves nothing behind", async () => {
+      const { adapter } = await auth.$context;
+      const rolledBack = `rolled-back-${Date.now()}@example.com`;
+      await assert.rejects(
+        adapter.transaction(async (trx) => {
+          const now = new Date();
+          await trx.create({
+            model: "user",
+            data: { name: "Rolled back", email: rolledBack, emailVerified: false, createdAt: now, updatedAt: now },
+          });
+          throw new Error("failed after the user was written");
+        }),
+        /failed after the user was written/,
+      );
+      assert.equal(await adapter.findOne({ model: "user", where: [{ field: "email", value: rolledBack }] }), null);
     });
 
     test("sign up creates the account and signs in", async () => {
@@ -167,7 +180,7 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
     test("passwords are not stored in plain text", async () => {
       const db = auth.options.database as unknown;
       let stored: string;
-      if (isPostgres(db)) {
+      if (isPostgresDatabase(db)) {
         const r = await db.pool.query(
           `select password from ${POSTGRES_SCHEMA}.account where "providerId" = 'credential' limit 1`,
         );
@@ -314,6 +327,14 @@ if (postgresUrl) {
 test("/device shows the code in two groups of four, as the CLI prints it", () => {
   assert.equal(formatUserCode("abcdefgh"), "ABCD-EFGH");
   assert.equal(formatUserCode("ABCD-EFGH"), "ABCD-EFGH");
+});
+
+test("a Postgres connection that drops while idle doesn't crash the app", async () => {
+  const db = createDatabase("postgres://u:p@127.0.0.1:1/db"); // the pool connects lazily, so nothing is reached
+  assert.ok(isPostgresDatabase(db));
+  assert.equal(db.transaction, true);
+  assert.doesNotThrow(() => db.pool.emit("error", new Error("terminating connection due to administrator command")));
+  await closeDatabase(db);
 });
 
 test("DATABASE_URL picks the database", () => {
