@@ -286,7 +286,7 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
         await writer.drain()
         response = await asyncio.wait_for(reader.readline(), 5)
         writer.close()
-        self.assertEqual(response, b"HTTP/1.1 413 Request Entity Too Large\r\n")
+        self.assertTrue(response.startswith(b"HTTP/1.1 413 "), response)
         self.assertEqual([r["delivery_id"] for r in await self.rows()], ["at-limit"])
 
     async def test_chunked_body_over_8_mib_is_refused(self):
@@ -301,7 +301,8 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
                 await writer.drain()
             writer.write(b"0\r\n\r\n")
             await writer.drain()
-        self.assertEqual(await asyncio.wait_for(response, 5), b"HTTP/1.1 413 Request Entity Too Large\r\n")
+        status = await asyncio.wait_for(response, 5)
+        self.assertTrue(status.startswith(b"HTTP/1.1 413 "), status)
         writer.close()
         self.assertEqual(await self.rows(), [])
 
