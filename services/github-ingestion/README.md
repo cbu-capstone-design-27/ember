@@ -24,7 +24,7 @@ Permissions below are what `pull_test.py` needs on the installation. Event subsc
 | --- | --- |
 | `GITHUB_APP_ID` | App id. Example: `5075660` (`ember-ingest`). Not a secret. `pull_test.py` and `enrich.py` read it. |
 | `GITHUB_APP_PRIVATE_KEY_PATH` | Path to the App `.pem`. Preferred. Never commit the file. |
-| `GITHUB_APP_PRIVATE_KEY` | PEM contents, including the BEGIN/END lines. Used by `pull_test.py` only when the path is empty. |
+| `GITHUB_APP_PRIVATE_KEY` | PEM contents, including the BEGIN/END lines. Used by `pull_test.py` and `enrich.py` only when the path is empty; they write it to a temp file to sign with. |
 | `GITHUB_TEST_REPO` | `owner/name` for `pull_test.py` only. Example test target: `ryan-stoffel/photon`. Not a filter on the webhook path. |
 
 ### Permissions (read)
@@ -171,6 +171,8 @@ DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=
 ```
 
 Only `pull_request` `opened`/`reopened`/`synchronize` and pushes with a full `commits` array call GitHub. Those need `GITHUB_APP_ID` and the App key from [Credentials](#credentials). Rows with `tenant` null wait until the installation is mapped.
+
+The `Dockerfile` builds image `github-ingestion` with `enrich.py` as its command and `openssl` for the App JWT. On the cluster it runs as Deployment `enrich-github` ([`infra/k8s/README.md`, enrich-github](../../infra/k8s/README.md#enrich-github)).
 
 `test_enrich.py` runs the worker against a real Postgres with GitHub stubbed. It needs psql and dbmate, like `infra/k8s/apps/postgres/test_migrations.py`:
 

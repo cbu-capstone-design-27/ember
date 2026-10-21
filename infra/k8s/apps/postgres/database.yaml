@@ -1,0 +1,19 @@
+# Database ember (EMBER-77), adopted from bootstrap.initdb in cluster.yaml, so the operator manages
+# its extensions. vector (pgvector, in the CloudNativePG image) is not a trusted extension: only a
+# superuser can create it, and role ember, which runs the migrations, is not one. The operator is,
+# so it creates the extension here, and the migration's `create extension if not exists vector`
+# finds it and skips the privilege check. Superuser access stays off. retain is the default: deleting
+# this object leaves the database alone.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: ember
+spec:
+  cluster:
+    name: postgres
+  name: ember
+  owner: ember
+  databaseReclaimPolicy: retain
+  extensions:
+    - name: vector
+      ensure: present

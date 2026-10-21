@@ -103,6 +103,9 @@ TIER_PER_MINUTE = {
     "conversations.list": 20.0,  # Tier 2
     "conversations.history": 50.0,  # Tier 3
     "conversations.replies": 50.0,  # Tier 3
+    # Lookups the enrich worker makes (EMBER-67, docs/ingestion/slack-webhooks.md)
+    "users.info": 100.0,  # Tier 4
+    "conversations.info": 50.0,  # Tier 3
 }
 # Commercially distributed apps not approved for the Marketplace.
 NON_MARKETPLACE_PER_MINUTE = {"conversations.history": 1.0, "conversations.replies": 1.0}
@@ -118,6 +121,10 @@ CHANNEL_SKIP_ERRORS = {"not_in_channel", "channel_not_found"}
 
 class PullError(Exception):
     pass
+
+
+class Throttled(PullError):
+    """Slack kept throttling one call after it waited its whole THROTTLE_BUDGET."""
 
 
 class SlackApiError(PullError):
@@ -419,7 +426,7 @@ class SlackClient:
             if response.status == 429 or ratelimited_body:
                 wait = self._throttle_wait(response, 1.0 if response.status == 429 else RATELIMITED_DEFAULT_WAIT)
                 if throttled + wait > self._throttle_budget:
-                    raise PullError(
+                    raise Throttled(
                         f"{api_method} still throttled after waiting {throttled:.0f}s; "
                         "Slack may be limiting this app harder than its tier (see SLACK_RATE_MODE)"
                     )

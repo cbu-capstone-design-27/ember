@@ -232,6 +232,37 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(enriched_at.timestamp(), files_called_at + github.slow - 0.1, "enriched_at predates the fetch")
         self.assertEqual(await self.db.fetchval("select count(*) from source_records"), 1)
 
+    async def test_burst_skips_ci_events_in_bulk_and_fetches_each_head_once(self):
+        ci = [(f"{event}:completed", {"action": "completed", event: {"id": n}, "repository": REPOSITORY,
+                                      "installation": INSTALLATION})
+              for n, event in enumerate(["workflow_job", "check_run"] * 150)]
+        await self.db.executemany(
+            "insert into raw_events (source, delivery_id, account_id, tenant, event_name, origin, envelope)"
+            " values ('github', $1, '77', 'acme', $2, 'webhook', $3::jsonb)",
+            [(f"ci-{n}", name, json.dumps({"type": "github", "body": body})) for n, (name, body) in enumerate(ci)])
+        pulls = []
+        for n in range(6):
+            body = pull_request_opened() | {"action": "synchronize"}
+            body["pull_request"] = body["pull_request"] | {
+                "head": {"ref": "fix-redirect", "sha": ("e" if n < 3 else "f") * 40},
+                "updated_at": f"2026-09-24T10:0{n}:00Z"}
+            pulls.append(await self.insert("pull_request:synchronize", body))
+        issue = await self.insert("issues:opened", issue_opened())
+
+        github = FakeGitHub()
+        await self.process(github, *range(1, 301), *pulls, issue)
+
+        self.assertEqual(sum(path.endswith("/files") for path in github.paths()), 2)
+        rows = await self.records()
+        self.assertEqual(sorted((r["kind"], r["version"]) for r in rows),
+                         [("issue", "2026-09-23T22:15:00Z")]
+                         + [("pull_request", f"2026-09-24T10:0{n}:00Z") for n in range(6)])
+        self.assertTrue(all(json.loads(r["record"])["fetched"] == {"files": FakeGitHub.FILES}
+                            for r in rows if r["kind"] == "pull_request"))
+        # Rows one statement updates share its transaction's xmin. Per-row transactions would give 300
+        self.assertEqual(await self.db.fetchval(
+            "select count(distinct xmin::text) from raw_events where id = any($1::bigint[])", list(range(1, 301))), 1)
+
     async def test_retry_after_is_stored_and_the_next_call_waits_for_it(self):
         github = FakeGitHub(throttle=True)
         await self.process(github, await self.insert("pull_request:opened", pull_request_opened()))
