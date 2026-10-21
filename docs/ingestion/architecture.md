@@ -285,6 +285,9 @@ $$;
 -- retention, daily: done events go 30 days after completion; unfinished ones stay until the source is removed
 delete from raw_events where completed_at < now() - interval '30 days';
 
+-- EMBER-77: pgvector, for source_records.embedding. Not a trusted extension: creating it needs a superuser
+create extension if not exists vector;
+
 create table source_records (
   id           bigint generated always as identity primary key,
   source       text not null,
@@ -296,8 +299,23 @@ create table source_records (
   record       jsonb not null,         -- payload object + fetched extras
   raw_event_id bigint references raw_events (id) on delete set null,   -- outlives its raw event
   created_at   timestamptz not null default now(),
+  embedding    vector(1024),           -- EMBER-77, ADR 0001's model; null until the embed worker runs
+  embed_text   text,                   -- exactly what was embedded, so a model switch re-embeds without re-parsing
+  embedded_at  timestamptz,            -- set by the embed worker in the same transaction as embedding
   unique (source, tenant, object_id, version)
 );
+create index source_records_unembedded on source_records (id) where embedded_at is null;
+create index source_records_embedding on source_records using hnsw (embedding vector_cosine_ops);
+
+-- interim (EMBER-77, own migration): every insert notifies channel source_records to wake the embed worker
+create function source_records_notify() returns trigger language plpgsql as $$
+begin
+  perform pg_notify('source_records', new.source);
+  return null;
+end
+$$;
+create trigger source_records_notify after insert on source_records
+  for each row execute function source_records_notify();
 
 create table episodes (
   id                bigint generated always as identity primary key,

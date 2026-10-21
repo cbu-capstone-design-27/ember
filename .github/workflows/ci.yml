@@ -114,7 +114,8 @@ jobs:
           kubectl kustomize infra/k8s/apps > /dev/null
           kubectl kustomize infra/k8s/monitoring > /dev/null
       # EMBER-61: the migrations apply, roll back, and build the schema docs/ingestion/architecture.md
-      # defines, on the Postgres version the cluster runs (apps/postgres/cluster.yaml)
+      # defines, on the Postgres version the cluster runs (apps/postgres/cluster.yaml). pgvector's image
+      # is that Postgres plus the vector extension, which the cluster image also ships (EMBER-77)
       - name: Postgres migrations match the ingestion doc
         env:
           PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
@@ -123,7 +124,7 @@ jobs:
           DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
         run: |
           set -euo pipefail
-          docker run -d --name pg -e POSTGRES_PASSWORD=ci-local -p 127.0.0.1:55432:5432 postgres:18.6
+          docker run -d --name pg -e POSTGRES_PASSWORD=ci-local -p 127.0.0.1:55432:5432 pgvector/pgvector:0.8.7-pg18-trixie
           curl -fsSLo "$RUNNER_TEMP/dbmate" "https://github.com/amacneil/dbmate/releases/download/$DBMATE_VERSION/dbmate-linux-amd64"
           echo "$DBMATE_SHA256  $RUNNER_TEMP/dbmate" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/dbmate"
@@ -177,6 +178,16 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/github-enrich-venv"
           "$RUNNER_TEMP/github-enrich-venv/bin/pip" install -q -r services/github-ingestion/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/github-enrich-venv/bin/python3" services/github-ingestion/test_enrich.py
+      # EMBER-77: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      - name: Embed worker against Postgres
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/embed-venv"
+          "$RUNNER_TEMP/embed-venv/bin/pip" install -q -r services/embed/requirements.txt
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/embed-venv/bin/python3" services/embed/test_embed.py
       - name: Slack ingestion webhook contract
         run: python3 services/slack-ingestion/test_webhook.py
       - name: Slack ingestion local pull contract

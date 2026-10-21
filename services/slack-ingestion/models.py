@@ -79,6 +79,11 @@ class SourceRecord(Base):
         BigInteger, ForeignKey("raw_events.id", ondelete="SET NULL")
     )
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=text("now()"))
+    # EMBER-77: written by services/embed, never read or written by enrich. The column is pgvector's
+    # vector(1024), which asyncpg has no codec for, so it is mapped as text and deferred so it never loads.
+    embedding: Mapped[str | None] = mapped_column(Text, deferred=True)
+    embed_text: Mapped[str | None] = mapped_column(Text)
+    embedded_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
 
     __table_args__ = (UniqueConstraint("source", "tenant", "object_id", "version"),)
 
