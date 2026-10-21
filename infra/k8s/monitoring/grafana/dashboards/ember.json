@@ -946,6 +946,73 @@
     },
     {
       "type": "timeseries",
+      "title": "GitHub webhooks by event type",
+      "description": "Deliveries GitHub sent, by X-GitHub-Event, from nginx's access log. Only requests with GitHub's user agent (GitHub-Hookshot) count, so the synthetic checks' unsigned pings don't. Includes deliveries intake refused or never got (Webhook responses at nginx), and a redelivery counts again. Each bar is one interval of at least 5 min; the legend's Total covers the whole time range.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "interval": "5m",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum by (event) (count_over_time({namespace=\"ember\", container=\"nginx\"} |= \" event=\" |= \"\\\"GitHub-Hookshot/\" | regexp `event=(?P<event>\\S+)` [$__auto]))",
+          "legendFormat": "{{event}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ],
+          "sortBy": "Total",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 26,
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
       "title": "Rows waiting for enrich",
       "description": "raw_events rows with a tenant that their source's enrich worker hasn't processed. Grows until enrich runs on the cluster (EMBER-83).",
       "datasource": {
@@ -1010,7 +1077,7 @@
       "id": 17,
       "gridPos": {
         "x": 0,
-        "y": 31,
+        "y": 39,
         "w": 8,
         "h": 8
       }
@@ -1070,7 +1137,7 @@
       "id": 18,
       "gridPos": {
         "x": 8,
-        "y": 31,
+        "y": 39,
         "w": 8,
         "h": 8
       }
@@ -1143,7 +1210,7 @@
       "id": 19,
       "gridPos": {
         "x": 16,
-        "y": 31,
+        "y": 39,
         "w": 8,
         "h": 8
       }
@@ -1179,7 +1246,7 @@
       "id": 20,
       "gridPos": {
         "x": 0,
-        "y": 39,
+        "y": 47,
         "w": 24,
         "h": 10
       }
@@ -1192,7 +1259,7 @@
       "id": 21,
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 57,
         "w": 24,
         "h": 1
       }
@@ -1258,7 +1325,7 @@
       "id": 22,
       "gridPos": {
         "x": 0,
-        "y": 50,
+        "y": 58,
         "w": 4,
         "h": 7
       }
@@ -1324,7 +1391,7 @@
       "id": 23,
       "gridPos": {
         "x": 4,
-        "y": 50,
+        "y": 58,
         "w": 4,
         "h": 7
       }
@@ -1379,7 +1446,7 @@
       "id": 24,
       "gridPos": {
         "x": 8,
-        "y": 50,
+        "y": 58,
         "w": 16,
         "h": 7
       }
@@ -1415,7 +1482,7 @@
       "id": 25,
       "gridPos": {
         "x": 0,
-        "y": 57,
+        "y": 65,
         "w": 24,
         "h": 10
       }

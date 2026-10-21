@@ -76,6 +76,8 @@ jobs:
     needs: changes
     steps:
       - uses: actions/checkout@v4
+      # The Python the service images run (python:3.12-slim). The runner's own python3 follows
+      # ubuntu-latest, which moved to 26.04 and Python 3.14 in October 2026.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -144,7 +146,7 @@ jobs:
           PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
         run: |
           set -euo pipefail
-          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          # A venv per service, so each one's pinned requirements stay apart
           python3 -m venv "$RUNNER_TEMP/intake-venv"
           "$RUNNER_TEMP/intake-venv/bin/pip" install -q -r services/intake/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/intake-venv/bin/python3" services/intake/test_intake.py
@@ -171,7 +173,7 @@ jobs:
           PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
         run: |
           set -euo pipefail
-          # The runner's system Python refuses pip install (PEP 668)
+          # A venv per service, so each one's pinned requirements stay apart
           python3 -m venv "$RUNNER_TEMP/github-enrich-venv"
           "$RUNNER_TEMP/github-enrich-venv/bin/pip" install -q -r services/github-ingestion/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/github-enrich-venv/bin/python3" services/github-ingestion/test_enrich.py
@@ -197,7 +199,7 @@ jobs:
           PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
         run: |
           set -euo pipefail
-          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          # A venv per service, so each one's pinned requirements stay apart
           python3 -m venv "$RUNNER_TEMP/enrich-venv"
           "$RUNNER_TEMP/enrich-venv/bin/pip" install -q -r services/jira-ingestion/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/enrich-venv/bin/python3" services/jira-ingestion/test_enrich.py
@@ -218,7 +220,7 @@ jobs:
           PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
         run: |
           set -euo pipefail
-          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          # A venv per service, so each one's pinned requirements stay apart
           python3 -m venv "$RUNNER_TEMP/gitlab-enrich-venv"
           "$RUNNER_TEMP/gitlab-enrich-venv/bin/pip" install -q -r services/gitlab-ingestion/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/gitlab-enrich-venv/bin/python3" services/gitlab-ingestion/test_enrich.py
