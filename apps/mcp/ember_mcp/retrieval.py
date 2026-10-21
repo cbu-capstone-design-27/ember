@@ -97,13 +97,14 @@ async def connect() -> asyncpg.Connection:
 
 
 def embed_query(question: str) -> list[float]:
-    """The question's vector, embedded with ADR 0001's query template. Blocking, standard library only."""
+    """The question's vector, embedded with ADR 0001's query template. EMBEDDING_API_KEY is sent as a
+    bearer token only when set. Blocking, standard library only."""
     url, key = os.environ.get("EMBEDDING_URL"), os.environ.get("EMBEDDING_API_KEY")
-    if not url or not key:
-        raise EmbeddingError("EMBEDDING_URL and EMBEDDING_API_KEY must be set. Point them at Ember's embedding service.")
+    if not url:
+        raise EmbeddingError("EMBEDDING_URL is not set. Point it at Ember's embedding service.")
     body = json.dumps({"model": os.environ.get("EMBEDDING_MODEL") or DEFAULT_MODEL,
                        "input": [f"Instruct: {TASK}\nQuery: {question}"]}).encode()
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json"} | ({"Authorization": f"Bearer {key}"} if key else {})
     for attempt in range(ATTEMPTS):
         request = urllib.request.Request(url.rstrip("/") + "/v1/embeddings", data=body, headers=headers, method="POST")
         try:

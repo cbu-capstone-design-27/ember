@@ -1,7 +1,7 @@
 """embed (EMBER-77): embeds every source_records row, one row = one chunk, for RAG (EMBER-78).
 
     DATABASE_URL=postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable \
-    EMBEDDING_URL=http://<spark>:8000 EMBEDDING_API_KEY=... python3 embed.py
+    EMBEDDING_URL=http://<spark>:8000 [EMBEDDING_API_KEY=...] python3 embed.py
 
 It claims rows like the enrich workers (docs/ingestion/architecture.md, "Interim: claiming without
 the job queue"): LISTEN on SOURCE_RECORDS_CHANNEL (default source_records), and claim once at start,
@@ -151,9 +151,10 @@ class IdentityMismatch(Exception):
 
 
 class EmbeddingClient:
-    """Synchronous, standard library only; the worker calls it in a thread."""
+    """Synchronous, standard library only; the worker calls it in a thread. With no api_key, no
+    Authorization header is sent."""
 
-    def __init__(self, url: str, api_key: str, model: str = DEFAULT_MODEL, *, base_delay: float = 1.0) -> None:
+    def __init__(self, url: str, api_key: str | None, model: str = DEFAULT_MODEL, *, base_delay: float = 1.0) -> None:
         self.endpoint = url.rstrip("/") + "/v1/embeddings"
         self.api_key = api_key
         self.model = model
@@ -161,7 +162,7 @@ class EmbeddingClient:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         body = json.dumps({"model": self.model, "input": texts}).encode()
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"} | ({"Authorization": f"Bearer {self.api_key}"} if self.api_key else {})
         for attempt in range(MAX_ATTEMPTS):
             request = urllib.request.Request(self.endpoint, data=body, headers=headers, method="POST")
             try:
@@ -317,13 +318,13 @@ class Worker:
 
 
 def main() -> int:
-    env = {name: os.environ.get(name, "").strip() for name in ("DATABASE_URL", "EMBEDDING_URL", "EMBEDDING_API_KEY")}
+    env = {name: os.environ.get(name, "").strip() for name in ("DATABASE_URL", "EMBEDDING_URL")}
     missing = [name for name, value in env.items() if not value]
     if missing:
         print(f"Set {', '.join(missing)} (see .env.example)", file=sys.stderr)
         return 2
     client = EmbeddingClient(
-        env["EMBEDDING_URL"], env["EMBEDDING_API_KEY"], os.environ.get("EMBEDDING_MODEL", "").strip() or DEFAULT_MODEL
+        env["EMBEDDING_URL"], os.environ.get("EMBEDDING_API_KEY", "").strip() or None, os.environ.get("EMBEDDING_MODEL", "").strip() or DEFAULT_MODEL
     )
     try:
         asyncio.run(Worker(env["DATABASE_URL"], client, batch=int(os.environ.get("EMBED_BATCH", BATCH))).run())
