@@ -10,7 +10,7 @@ All retrieval sits behind one function, `search(question, k, sources) -> list[Hi
 
 ## Run
 
-Python 3.12. `DATABASE_URL`, `EMBEDDING_URL` (base URL, without `/v1`), `EMBEDDING_API_KEY` and optionally `EMBEDDING_MODEL` (default `qwen3-embedding-0.6b`) come from the environment only. Every transaction the server opens is read-only (`default_transaction_read_only`). A missing variable, an unreachable database or an unreachable embedding service comes back as a tool error, and the server keeps running.
+Python 3.12. `DATABASE_URL`, `EMBEDDING_URL` (base URL, without `/v1`), and optionally `EMBEDDING_API_KEY` (sent as `Authorization: Bearer` only when set) and `EMBEDDING_MODEL` (default `qwen3-embedding-0.6b`) come from the environment only. Every transaction the server opens is read-only (`default_transaction_read_only`). A missing variable, an unreachable database or an unreachable embedding service comes back as a tool error, and the server keeps running.
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r apps/mcp/requirements.txt

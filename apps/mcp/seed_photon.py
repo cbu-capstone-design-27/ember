@@ -1,7 +1,7 @@
 """Seed source_records with the Photon synthetic Jira and Slack data, embedded, for trying the MCP server locally.
 
     DATABASE_URL=postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable \
-    EMBEDDING_URL=http://<spark>:8000 EMBEDDING_API_KEY=... \
+    EMBEDDING_URL=http://<spark>:8000 [EMBEDDING_API_KEY=...] \
         python3 apps/mcp/seed_photon.py
 
 Rows take the shapes the enrich workers store (`{"payload": ...}`), under tenant "photon". Then the
@@ -64,7 +64,7 @@ async def main() -> None:
         [(*row[:5], json.dumps({"payload": row[5]})) for row in rows()])
     await db.close()
 
-    client = embed.EmbeddingClient(os.environ["EMBEDDING_URL"], os.environ["EMBEDDING_API_KEY"],
+    client = embed.EmbeddingClient(os.environ["EMBEDDING_URL"], os.environ.get("EMBEDDING_API_KEY") or None,
                                    os.environ.get("EMBEDDING_MODEL") or embed.DEFAULT_MODEL)
     worker = embed.Worker(os.environ["DATABASE_URL"], client)
     try:

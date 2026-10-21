@@ -27,7 +27,7 @@ EMBEDDING_URL=http://<spark>:8000 EMBEDDING_API_KEY=... \
 | --- | --- | --- |
 | `DATABASE_URL` | required | Secret `postgres-app`, key `uri`, on the cluster |
 | `EMBEDDING_URL` | required | Base URL, without `/v1` |
-| `EMBEDDING_API_KEY` | required | The service's key |
+| `EMBEDDING_API_KEY` | none | The service's key, sent as `Authorization: Bearer`. Leave unset for an endpoint without auth |
 | `EMBEDDING_MODEL` | `qwen3-embedding-0.6b` | The served name |
 | `EMBED_BATCH` | 32 | Rows per request |
 | `SOURCE_RECORDS_CHANNEL` | `source_records` | NOTIFY channel |

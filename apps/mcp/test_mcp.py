@@ -72,18 +72,21 @@ def stub_vector(text: str, dimension: int = 1024) -> list[float]:
 
 
 class StubEmbeddings:
-    """POST /v1/embeddings with stub_vector. Records each request's input; `dimension` sets the vector length."""
+    """POST /v1/embeddings with stub_vector. Records each request's input and Authorization header;
+    `dimension` sets the vector length."""
 
     def __init__(self) -> None:
         self.dimension = 1024
         self.requests: list[list[str]] = []
+        self.auth: list[str | None] = []
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                assert self.path == "/v1/embeddings" and self.headers["Authorization"] == "Bearer test-key"
+                assert self.path == "/v1/embeddings"
                 stub.requests.append(body["input"])
+                stub.auth.append(self.headers.get("Authorization"))
                 data = [{"index": i, "embedding": stub_vector(text, stub.dimension)} for i, text in enumerate(body["input"])]
                 payload = json.dumps({"data": data, "model": body["model"]}).encode()
                 self.send_response(200)
@@ -156,6 +159,7 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.stub.dimension = 1024
         self.stub.requests.clear()
+        self.stub.auth.clear()
         db = await asyncpg.connect(database_url())
         await db.execute("truncate source_records, episodes restart identity")
         await db.executemany(
@@ -210,6 +214,7 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.stub.requests, [[
             "Instruct: Given a question about a software project, retrieve relevant passages that answer it\n"
             "Query: " + QUESTION]])
+        self.assertEqual(self.stub.auth, ["Bearer test-key"])
         self.stub.dimension = 1023
         async with Client(server.mcp) as client:
             result = await client.call_tool("search", {"question": QUESTION})
@@ -232,6 +237,15 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(question):
                 hits = await retrieval.search(question, k=3)
                 self.assertIn(object_id, [h["object_id"] for h in hits])
+
+    async def test_without_an_api_key_no_authorization_header_is_sent(self):
+        key = os.environ.pop("EMBEDDING_API_KEY")
+        try:
+            [hit] = await retrieval.search(QUESTION, k=1)
+        finally:
+            os.environ["EMBEDDING_API_KEY"] = key
+        self.assertEqual(hit["object_id"], "10004")
+        self.assertEqual(self.stub.auth, [None])
 
     async def test_stdio_server_lists_and_calls_its_tools(self):
         params = StdioServerParameters(command=sys.executable, args=["-m", "ember_mcp"], cwd=HERE, env={
