@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: enrich-github-app
+    namespace: ember
+stringData:
+    private-key.pem: ENC[AES256_GCM,data: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,iv:/cwWYzBlHBV2pMuviFsAIDdnJl4OpF8POP+UlORIUeU=,tag:ed4t6M6vsMDiu+dLn9xqPg==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB6aUtNUXZBcENySWJSb1dF
+            bTF0WENDL2RwVUN6Q055QmovRDQ0K2VVVFE0ClNGRVdPRk9MTEl1WFVsMjZYa2ps
+            eG1PSHQ4eEhpbHRZajdKNVR1Z1NjdkEKLS0tIHZrTGI2a1NZU29uOHJlMXcvalFj
+            cUN2aUtEWE1YTjlWRUljZGZscGw3bG8KMfEURp2VjFVVg1ndc8Vor7kzs4EFnmHt
+            tuIkV1/+W901ltiFx4g/wfv0xeKTSeO6N/tirycAeTPpN2VGyo2MWg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-21T21:21:19Z"
+    mac: ENC[AES256_GCM,data:jufV+fY4kmGzwxOxpw2kAegDt39IGMX8se5A5BxPWarQRUNm4iSp1NezjmOkZ3Hh4h75eXQ8oi9KK7QQBF5rzFAGgw4NFmwYDO17MmMAtVeBcxCeI9TlBG/Amr2h8fF4+vLpYoL6ND5FjvqCpoMAty5HS6Kek/np4wGoZU3wjtY=,iv:4qbx6wO0x/YzKkZPdmEPR7IpeVG7nw8XkHrxsE1Ztnk=,tag:k8b5orPMokaafKa3mPiJKQ==,type:str]
+    version: 3.13.3

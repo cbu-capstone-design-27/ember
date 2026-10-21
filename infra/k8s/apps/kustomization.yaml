@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - nginx
   - intake
+  - enrich-github
   - neo4j
   - postgres
   - headlamp
