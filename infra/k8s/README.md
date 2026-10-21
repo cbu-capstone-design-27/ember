@@ -27,6 +27,7 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Also checks each enrich worker logged that it is listening. Deploys nothing |
 | `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret in the vault ([The webhook secret](#the-webhook-secret)). Commit the result |
 | `make enrich-github-secret` | Writes `apps/enrich-github/github-app.sops.yaml`, encrypted, from the GitHub App's private key in the vault ([enrich-github](#enrich-github)). Commit the result |
+| `make llm-tunnel-secret` | Temporary (EMBER-49). Writes `apps/llm-tunnel/ssh.sops.yaml`, encrypted, from the tunnel key in the vault, and prints the `authorized_keys` line for the Spark ([llm-tunnel](#llm-tunnel)). Commit the result |
 | `make map-tenant SOURCE=… ACCOUNT=… TENANT=…` | Maps a source account to a tenant and hands the deliveries already stored for it to the enrich workers ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
 | `make grafana-secret` | Writes the collector's and the Grafana Operator's Secrets, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud tokens](#the-grafana-cloud-tokens)). Commit the result |
 | `make grafana-health` | Checks Grafana Cloud end to end: the operator synced the stack and the Ember dashboard, and the stack has metrics from every node, intake, Postgres and Flux, pod logs, Kubernetes events and both synthetic checks. Deploys nothing |
@@ -139,6 +140,29 @@ kubectl --context homelab -n ember logs deploy/enrich-github
 It logs `enrich:github listening on raw_events` once connected, and one line per row with how many `source_records` it wrote, never the payload.
 
 To set or rotate the key: generate a private key in the App's settings (`ember-ingest`, Private keys), put the whole `.pem` in the vault as `vault_github_app_private_key` (a YAML block scalar, `|`), run `make enrich-github-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-github`. Delete the old key on GitHub once the new pod is listening.
+
+### llm-tunnel
+
+> **Temporary fix (EMBER-49).** This tunnel exists only because the Spark's chat model has no address the cluster can reach. Remove it, meaning `apps/llm-tunnel/`, `playbooks/llm-tunnel.yml`, `make llm-tunnel-secret`, `vault_llm_tunnel_ssh_key` and the key's line on the Spark, once the model is served somewhere the cluster reaches directly: a Spark that can join the tailnet, an endpoint behind its own authentication, or a model on the cluster.
+
+An SSH tunnel to the chat model (Qwen3-30B-A3B) on the DGX Spark. The model listens only on the Spark's loopback, `127.0.0.1:8001` (ADR 0008): the Spark is shared with other people's containers, can't join Tailscale, and keeps one public port, 8000, for embeddings. Its SSH port is open, so Deployment `llm-tunnel` logs in as `save-water@172.99.171.11` and forwards port 8001 to that loopback. Pods reach the model at `http://llm-tunnel.ember:8001/v1` (`LLM_BASE_URL`) and still send the model's own API key.
+
+```
+ extract / load ──▶ Service llm-tunnel:8001 ──▶ pod: ssh -N -L 0.0.0.0:8001:127.0.0.1:8001 ══ SSH :22 ══▶ Spark 127.0.0.1:8001
+```
+
+- **Supervision.** There's no autossh. `ssh` sends a keepalive every 15 s and exits after 3 unanswered ones, or at once if the forward can't be set up (`ExitOnForwardFailure`). Kubernetes then restarts the container. The pod is ready only once `ssh` has logged in and opened 8001, so the Service never routes to a tunnel that isn't up.
+- **Key.** A dedicated ED25519 key, Secret `llm-tunnel-ssh` (`apps/llm-tunnel/ssh.sops.yaml`), written by `make llm-tunnel-secret` from `vault_llm_tunnel_ssh_key`. On the Spark, `save-water`'s `authorized_keys` restricts it to this one forward: `restrict,port-forwarding,permitopen="127.0.0.1:8001",command="/bin/false" ssh-ed25519 … ember-llm-tunnel`. A stolen copy can't open a shell or reach anything else on a shared machine. `make llm-tunnel-secret` prints the line.
+- **Host key.** `apps/llm-tunnel/known_hosts` pins the Spark's ED25519 host key (`SHA256:erUVb1xzektcqoOqjZ6jF0IEN9QYH04XZvlft/tanOs`), with `StrictHostKeyChecking=yes`. If the Spark is reinstalled and its key changes, the tunnel refuses to connect until `known_hosts` is updated with `ssh-keyscan -t ed25519 172.99.171.11`, checked against the Spark's `/etc/ssh/ssh_host_ed25519_key.pub`.
+- **Network.** Pods leave through each node's own internet connection, not the tailnet: 209.160.254.205 and .206 today. The Spark accepts SSH connections from both today. If it ever filters by source address, those addresses have to be allowed, and they change when the cluster moves.
+
+```bash
+kubectl --context homelab -n ember logs deploy/llm-tunnel        # empty when healthy; ssh logs only errors
+kubectl --context homelab -n ember run llm-check --rm -it --restart=Never --image=curlimages/curl -- \
+  curl -s -o /dev/null -w '%{http_code}\n' http://llm-tunnel.ember:8001/v1/models   # 401 without the API key: the tunnel works
+```
+
+To rotate the key, generate a new one (`ssh-keygen -t ed25519 -N "" -C ember-llm-tunnel`), put the private half in the vault as `vault_llm_tunnel_ssh_key`, run `make llm-tunnel-secret`, and add the line it prints on the Spark. Commit and merge, restart the Deployment, then remove the old line from the Spark.
 
 ### Mapping a tenant
 

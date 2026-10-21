@@ -1,0 +1,114 @@
+# TEMPORARY (EMBER-49): an SSH tunnel to the chat model on the DGX Spark, until the model has an
+# endpoint the cluster can reach without one (k8s/README.md, llm-tunnel). Remove this directory then.
+#
+# The model listens only on the Spark's loopback, 127.0.0.1:8001 (ADR 0008): the Spark is shared,
+# can't join Tailscale and keeps one public port. Its SSH port is open, so this pod logs in as
+# save-water and forwards port 8001 to that loopback. Pods use http://llm-tunnel.ember:8001/v1.
+# ssh exits when the connection dies (ServerAliveInterval) or the forward fails, and Kubernetes
+# restarts it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-tunnel
+  namespace: ember
+  labels:
+    app: llm-tunnel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-tunnel
+  template:
+    metadata:
+      labels:
+        app: llm-tunnel
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        # Lets nobody read the key in the Secret volume (mode 0440)
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ssh
+          # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
+          image: ghcr.io/cbu-capstone-design-27/ember/llm-tunnel:develop-RUN-SHA
+          args:
+            - -N
+            # No config file, and no prompts: a key that doesn't work fails at once
+            - -F
+            - /dev/null
+            - -o
+            - BatchMode=yes
+            - -i
+            - /etc/llm-tunnel/key/id_ed25519
+            # Only the Spark's pinned host key (known_hosts in this directory) is accepted
+            - -o
+            - UserKnownHostsFile=/etc/llm-tunnel/known-hosts/known_hosts
+            - -o
+            - StrictHostKeyChecking=yes
+            - -o
+            - ConnectTimeout=10
+            - -o
+            - ServerAliveInterval=15
+            - -o
+            - ServerAliveCountMax=3
+            - -o
+            - ExitOnForwardFailure=yes
+            # 0.0.0.0 inside the pod, so the Service reaches it
+            - -L
+            - 0.0.0.0:8001:127.0.0.1:8001
+            - save-water@172.99.171.11
+          env:
+            # nobody's home doesn't exist; ssh may look there, and the root filesystem is read-only
+            - name: HOME
+              value: /tmp
+          ports:
+            - name: llm
+              containerPort: 8001
+          # ssh opens 8001 only after it has logged in and set up the forward
+          readinessProbe:
+            tcpSocket:
+              port: llm
+            periodSeconds: 5
+          volumeMounts:
+            - name: key
+              mountPath: /etc/llm-tunnel/key
+              readOnly: true
+            - name: known-hosts
+              mountPath: /etc/llm-tunnel/known-hosts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        # Secret llm-tunnel-ssh (ssh.sops.yaml): the key save-water accepts for this forward only
+        - name: key
+          secret:
+            secretName: llm-tunnel-ssh
+            defaultMode: 0440
+            items:
+              - key: id_ed25519
+                path: id_ed25519
+        - name: known-hosts
+          configMap:
+            name: llm-tunnel-known-hosts
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Mi
