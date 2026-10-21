@@ -358,8 +358,152 @@ class EnrichDeliveryTest(unittest.TestCase):
                 self.run_enrich(callback(message("1700000200.000100")), fake=FakeSlackApi(errors={"users.info": error}))
 
     def test_skipped_events_become_no_records(self):
-        records, fake = self.run_enrich({"type": "app_rate_limited", "team_id": TEAM, "minute_rate_limited": 1})
-        self.assertEqual((records, fake.calls), ([], []))
+        reaction = callback({"type": "reaction_added", "user": "U0ADA", "reaction": "eyes",
+                             "item": {"type": "message", "channel": CHANNEL, "ts": "1"}, "event_ts": "1700000600.000100"})
+        for body in (
+            {"type": "app_rate_limited", "team_id": TEAM, "minute_rate_limited": 1},
+            reaction,
+            callback({"type": "app_uninstalled"}),
+            callback({"type": "tokens_revoked", "tokens": {"bot": ["U0BOT"]}}),
+        ):
+            with self.subTest(body=body):
+                records, fake = self.run_enrich(body)
+                self.assertEqual((records, fake.calls), ([], []))
+
+
+BOT = "U0BOT"
+
+
+def bot_callback(event: dict, **kwargs) -> dict:
+    """callback() with the authorizations Slack adds: our bot's user id."""
+    return {**callback(event, **kwargs), "authorizations": [{"team_id": TEAM, "user_id": BOT, "is_bot": True}]}
+
+
+class OtherEventsTest(unittest.TestCase):
+    """People, channels and membership (slack-webhooks.md, Everything else)."""
+
+    def run_enrich(self, body, fake=None, cache=None):
+        fake = fake or FakeSlackApi()
+        records = run_async(enrich_delivery(body, cache=cache or DictCache(), call=caller(fake)))
+        return records, fake
+
+    def test_user_change_is_the_user_as_of_updated(self):
+        changed = {**USERS["U0ADA"], "real_name": "Ada L.", "updated": 1700000300}
+        records, fake = self.run_enrich(callback({"type": "user_change", "user": changed, "event_ts": "1700000300.000100"}))
+        [user] = records
+        self.assertEqual((user.kind, user.object_id, user.version, user.record), ("user", "U0ADA", "1700000300", changed))
+        self.assertEqual(user.occurred_at, slack_time(1700000300))
+        self.assertEqual(fake.calls, [])
+
+    def test_user_change_has_the_same_version_as_a_fetched_user(self):
+        # users.info and user_change with the same "updated" fold into one source_records row
+        context = enrich.Context(DictCache(), caller(FakeSlackApi()))
+        run_async(context.user("U0ADA", slack_time(1)))
+        records, _ = self.run_enrich(callback({"type": "user_change", "user": USERS["U0ADA"]}))
+        self.assertEqual((records[0].object_id, records[0].version), (context.fetched[0].object_id, context.fetched[0].version))
+
+    def test_team_join_fetches_the_profile_only_when_missing(self):
+        records, fake = self.run_enrich(callback({"type": "team_join", "user": USERS["U0BEN"]}))
+        self.assertEqual((records[0].object_id, records[0].record, fake.calls), ("U0BEN", USERS["U0BEN"], []))
+        records, fake = self.run_enrich(callback({"type": "team_join", "user": {"id": "U0BEN"}}))
+        self.assertEqual(records[0].record["profile"]["email"], "ben@widget.test")
+        self.assertEqual(records[0].version, "1700000001")
+        self.assertEqual(fake.count("users.info"), 1)
+
+    def test_team_join_keeps_the_payload_when_the_lookup_finds_nothing(self):
+        records, _ = self.run_enrich(callback({"type": "team_join", "user": {"id": "U0NEW"}}, event_time=1700000400),
+                                     fake=FakeSlackApi(users={}))
+        self.assertEqual((records[0].record, records[0].version), ({"id": "U0NEW"}, "1700000400"))
+
+    def test_channel_created_fetches_privacy_topic_and_purpose(self):
+        sent = {"id": CHANNEL, "name": "decisions", "created": 1690000000, "creator": "U0ADA"}
+        records, fake = self.run_enrich(callback({"type": "channel_created", "channel": sent}, event_time=1700000300))
+        [channel] = records
+        self.assertEqual((channel.kind, channel.object_id, channel.version), ("channel", CHANNEL, "1700000300"))
+        self.assertEqual(channel.occurred_at, slack_time(1700000300))
+        self.assertEqual(channel.record, {**sent, **CHANNELS[CHANNEL]})
+        self.assertEqual(fake.count("conversations.info"), 1)
+
+    def test_channel_created_keeps_the_payload_when_the_lookup_finds_nothing(self):
+        sent = {"id": "C0NEW", "name": "new", "created": 1700000300, "creator": "U0ADA"}
+        records, _ = self.run_enrich(callback({"type": "channel_created", "channel": sent}))
+        self.assertEqual(records[0].record, sent)
+
+    def test_rename_and_archive_merge_onto_the_stored_channel(self):
+        cache = DictCache({("channel", CHANNEL): CHANNELS[CHANNEL]})
+        rename = callback({"type": "channel_rename", "channel": {"id": CHANNEL, "name": "adr", "created": 1690000000}},
+                          event_time=1700000300)
+        records, fake = self.run_enrich(rename, cache=cache)
+        self.assertEqual(records[0].record, {**CHANNELS[CHANNEL], "name": "adr"})
+        self.assertEqual(records[0].version, "1700000300")
+        for kind, archived in (("channel_archive", True), ("group_archive", True), ("channel_unarchive", False), ("group_unarchive", False)):
+            with self.subTest(kind=kind):
+                records, fake = self.run_enrich(callback({"type": kind, "channel": CHANNEL, "user": "U0ADA"}), cache=cache)
+                self.assertEqual(records[0].record, {**CHANNELS[CHANNEL], "is_archived": archived})
+                self.assertEqual(fake.calls, [])
+
+    def test_a_change_to_an_unstored_channel_fetches_it_first(self):
+        records, fake = self.run_enrich(callback({"type": "group_rename", "channel": {"id": CHANNEL, "name": "adr"}}))
+        self.assertEqual([r.kind for r in records], ["channel"])  # one record, not a fetched copy as well
+        self.assertEqual(records[0].record, {**CHANNELS[CHANNEL], "name": "adr"})
+        self.assertEqual(fake.count("conversations.info"), 1)
+
+    def test_channel_deleted_is_a_tombstone_and_fetches_nothing(self):
+        records, fake = self.run_enrich(callback({"type": "channel_deleted", "channel": CHANNEL}),
+                                        cache=DictCache({("channel", CHANNEL): CHANNELS[CHANNEL]}))
+        self.assertEqual(records[0].record, {**CHANNELS[CHANNEL], "is_deleted": True})
+        records, fake = self.run_enrich(callback({"type": "channel_deleted", "channel": "C0GONE"}))
+        self.assertEqual(records[0].record, {"id": "C0GONE", "is_deleted": True})
+        self.assertEqual(fake.calls, [])
+
+    def test_member_joined_fetches_the_person_once(self):
+        joined = callback({"type": "member_joined_channel", "user": "U0BEN", "channel": CHANNEL,
+                           "channel_type": "C", "team": TEAM, "inviter": "U0ADA"}, event_time=1700000300)
+        records, fake = self.run_enrich(joined)
+        user, membership = records
+        self.assertEqual((user.kind, user.object_id), ("user", "U0BEN"))
+        self.assertEqual((membership.kind, membership.object_id, membership.version),
+                         ("membership", f"{CHANNEL}/U0BEN", "1700000300"))
+        self.assertEqual(membership.record, {"payload": joined, "user": USERS["U0BEN"], "channel": CHANNEL,
+                                             "member": True, "inviter": "U0ADA"})
+        records, fake = self.run_enrich(joined, cache=DictCache({("user", "U0BEN"): USERS["U0BEN"]}))
+        self.assertEqual(([r.kind for r in records], fake.calls), (["membership"], []))
+
+    def test_member_left_is_a_tombstone_and_fetches_nothing(self):
+        left = callback({"type": "member_left_channel", "user": "U0BEN", "channel": CHANNEL, "channel_type": "C"})
+        records, fake = self.run_enrich(left)
+        [membership] = records
+        self.assertEqual((membership.record["member"], membership.record["user"], membership.record["inviter"]), (False, None, None))
+        self.assertEqual(fake.calls, [])
+
+    def test_the_bot_joining_or_leaving_is_logged(self):
+        for kind, words in (("member_joined_channel", "pull_test.py --channel"), ("member_left_channel", "records are kept")):
+            with self.subTest(kind=kind), self.assertLogs("slack-enrich", "INFO") as logs:
+                records, _ = self.run_enrich(bot_callback({"type": kind, "user": BOT, "channel": CHANNEL}),
+                                             fake=FakeSlackApi(users={BOT: {"id": BOT, "updated": 1}}))
+                self.assertEqual(records[-1].object_id, f"{CHANNEL}/{BOT}")
+                self.assertTrue(any(words in line for line in logs.output), logs.output)
+
+    def test_events_missing_what_they_need_are_permanent(self):
+        for event in (
+            {"type": "user_change", "user": {"name": "no id"}},
+            {"type": "team_join"},
+            {"type": "channel_rename", "channel": {"name": "no id"}},
+            {"type": "channel_archive"},
+            {"type": "member_joined_channel", "channel": CHANNEL},
+            {"type": "member_left_channel", "user": "U0ADA"},
+        ):
+            with self.subTest(event=event), self.assertRaises(Permanent):
+                self.run_enrich(callback(event))
+        body = callback({"type": "channel_deleted", "channel": CHANNEL})
+        del body["event_time"]
+        with self.assertRaises(Permanent):
+            self.run_enrich(body)
+
+    def test_auth_errors_on_a_lookup_are_permanent(self):
+        with self.assertRaises(Permanent):
+            self.run_enrich(callback({"type": "channel_created", "channel": {"id": CHANNEL}}),
+                            fake=FakeSlackApi(errors={"conversations.info": "invalid_auth"}))
 
 
 class ConfigAndSeedTest(unittest.TestCase):
@@ -388,10 +532,27 @@ class ConfigAndSeedTest(unittest.TestCase):
             {"source": "slack", "delivery_id": "Ev9", "account_id": TEAM, "tenant": "dev",
              "event_name": "message:message_changed", "origin": "webhook"},
         )
+        self.assertEqual(row["occurred_at"], slack_time("1"))  # message_changed: event.ts, when it was edited
         limited = enrich.raw_event_row({"type": "slack", "body": {"type": "app_rate_limited", "team_id": TEAM, "minute_rate_limited": 1700000000}}, "dev")
         self.assertEqual((limited["delivery_id"], limited["event_name"]), (f"rate_limited:{TEAM}:1700000000", "app_rate_limited"))
+        self.assertEqual(limited["occurred_at"], slack_time(1700000000))
         for envelope in ({"type": "github", "body": edit}, {"type": "slack", "body": message("1")}, {"type": "slack", "body": "x"}):
             self.assertIsNone(enrich.raw_event_row(envelope, "dev"))
+
+    def test_occurred_at_follows_the_slack_ordering_rule(self):
+        # slack-webhooks.md, Ordering value: event.event_ts, then event.ts, then the wrapper's event_time
+        cases = (
+            (callback(message("1700000200.000100")), "1700000200.000100"),
+            (callback({"type": "message", "subtype": "message_deleted", "channel": CHANNEL, "ts": "1700000500.000400",
+                       "deleted_ts": "1700000200.000100"}), "1700000500.000400"),
+            (callback({"type": "channel_rename", "channel": {"id": CHANNEL, "name": "adr"}}, event_time=1700000300), 1700000300),
+        )
+        for body, expected in cases:
+            with self.subTest(event=body["event"]["type"]):
+                self.assertEqual(enrich.ordering_value(body), slack_time(expected))
+        no_time = callback({"type": "channel_deleted", "channel": CHANNEL})
+        del no_time["event_time"]
+        self.assertNotIn("occurred_at", enrich.raw_event_row({"type": "slack", "body": no_time}, "dev"))  # the column's default
 
     def test_read_envelopes_takes_json_lists_and_jsonl(self):
         one = {"type": "slack", "body": callback(message("1"))}

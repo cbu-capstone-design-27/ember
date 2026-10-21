@@ -2,7 +2,7 @@
 
 - Jira: EMBER-70 (floor), epic EMBER-7 (Slack Ingestion)
 - Status: proposed, for team review. Payload shapes were checked against Slack's reference (docs.slack.dev) on 2026-10-13. Links are in [Sources](#sources).
-- This is the spec for the `enrich:slack` worker (EMBER-67), built in `services/slack-ingestion/enrich.py` for message events and the user and channel cache. [`architecture.md`](architecture.md) covers the pipeline as a whole. [`slack.md`](slack.md) covers the Slack connector: auth, scopes, rate limits, and agent removal.
+- This is the spec for the `enrich:slack` worker (EMBER-67), built in `services/slack-ingestion/enrich.py` for message events, people, channels and membership. Reactions, `app_uninstalled` and `tokens_revoked` are not built yet (see [Everything else](#everything-else)). [`architecture.md`](architecture.md) covers the pipeline as a whole. [`slack.md`](slack.md) covers the Slack connector: auth, scopes, rate limits, and agent removal.
 - Related: EMBER-62 (intake), EMBER-63 (source ordering column), EMBER-36 (Slack connector)
 
 Slack sends the data itself (`architecture.md`, [Webhooks per source](architecture.md#webhooks-per-source-data-or-signal)). Intake stores each delivery in `raw_events` as it arrived. `enrich:slack` adds only what the payload lacks, then writes `source_records`.
@@ -81,6 +81,8 @@ Both subscriptions deliver `event.type == "message"`: public and private channel
 
 ### Everything else
 
+`enrich:slack` builds the user, channel and membership rows below. A channel event that carries only the change (rename, archive, unarchive, delete) is merged onto the newest stored channel, so the record stays a whole channel; a delete sets `is_deleted: true`. Reactions, `app_uninstalled` and `tokens_revoked` are skipped for now: reactions have no ontology type yet, and the uninstall events need `installations` and reconcile.
+
 | Event | Payload carries | Enrich fetches | `source_records` row |
 |---|---|---|---|
 | `reaction_added`, `reaction_removed` | `user`, `reaction` (emoji name), `item_user`, `item` = `{type: "message", channel, ts}`, `event_ts` | The reacted message only if it isn't stored (`conversations.replies` for a reply, `conversations.history` for a top-level message) | `reaction`, `<channel>/<item.ts>/<reaction>/<user>`, version `event_ts`. `reaction_removed` writes a tombstone |
@@ -116,7 +118,7 @@ Slack's arrival order isn't its own order:
 - Deliveries for one channel can overlap.
 - Reconcile rows arrive hours later.
 
-Workers need the time Slack says the thing happened. EMBER-63 adds a column for it. Its name and type are EMBER-63's call. **For Slack, the value is the first of these that is present:**
+Workers need the time Slack says the thing happened. EMBER-63 stores it in `raw_events.occurred_at` ([`architecture.md`](architecture.md#source-ordering-value-ember-63)), set by whoever writes the row. **For Slack, the value is the first of these that is present:**
 
 1. `event.event_ts`
 2. `event.ts`
@@ -131,7 +133,7 @@ Workers need the time Slack says the thing happened. EMBER-63 adds a column for 
 | Reconcile messages | `edited.ts` if edited, else `ts` | Microseconds |
 | Reconcile people and channels | `updated` | Seconds (users), milliseconds (channels) |
 
-- **Type.** A Slack `ts` is epoch seconds with six decimal places, so it converts to a Postgres `timestamptz` exactly, with no rounding. `timestamptz` is the suggestion for EMBER-63. The same value fills `source_records.occurred_at` (and so `episodes.occurred_at`).
+- **Type.** A Slack `ts` is epoch seconds with six decimal places, so it converts to a Postgres `timestamptz` exactly, with no rounding. The same value fills `source_records.occurred_at` (and so `episodes.occurred_at`).
 - **Scope.** `ts` is unique and ordered **within one channel**. Across channels and event types the value is only approximately ordered, and whole-second `event_time` values can tie. Ties break on `raw_events.id`.
 - **How workers use it.** A record changes an object only if its ordering value is newer than what's stored for that object. So a late edit can't bring back a deleted message, and a late `channel_rename` can't undo a newer one.
 
@@ -154,11 +156,10 @@ Catch-up is the Slack reconcile (today's `services/slack-ingestion/pull_test.py`
 
 ## Open questions
 
-1. **EMBER-63 (Jacob):** the column's name and type. This doc suggests `timestamptz`, filled as described in [Ordering value](#ordering-value-ember-63).
-2. **Turn on "Delayed Events"?** Slack would keep retrying failed deliveries hourly for 24 hours. That covers longer outages without a reconcile, but late events depend even more on the ordering value.
-3. **Missed deletes:** is it worth a periodic check that compares recently stored messages with history, to catch deletes whose webhook was lost?
-4. **`thread_broadcast`:** treat it as a channel-level statement or only as a thread member (carried over from `slack.md`)?
-5. **`message_replied`:** use it to refresh the parent's reply count, or ignore it because each reply arrives on its own?
+1. **Turn on "Delayed Events"?** Slack would keep retrying failed deliveries hourly for 24 hours. That covers longer outages without a reconcile, but late events depend even more on the ordering value.
+2. **Missed deletes:** is it worth a periodic check that compares recently stored messages with history, to catch deletes whose webhook was lost?
+3. **`thread_broadcast`:** treat it as a channel-level statement or only as a thread member (carried over from `slack.md`)?
+4. **`message_replied`:** use it to refresh the parent's reply count, or ignore it because each reply arrives on its own?
 
 ## Sources
 

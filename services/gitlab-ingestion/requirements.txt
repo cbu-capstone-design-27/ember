@@ -1,0 +1,4 @@
+# enrich.py (EMBER-68). The receiver and pull.py use the standard library only.
+# The asyncio extra pulls in greenlet, which async engines need.
+SQLAlchemy[asyncio]==2.0.54
+asyncpg==0.32.0

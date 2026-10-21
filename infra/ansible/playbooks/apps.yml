@@ -1,7 +1,7 @@
 ---
 # Checks k8s/apps on the cluster end to end: nginx, the reverse proxy behind the public
-# https://ember.<tailnet_domain> (a Tailscale Funnel Ingress), and the GitHub webhook listener it
-# routes /webhook/github to. Flux deploys them (playbooks/flux.yml); this playbook deploys nothing.
+# https://ember.<tailnet_domain> (a Tailscale Funnel Ingress), and intake, the webhook listener it
+# routes /webhook/ to. Flux deploys them (playbooks/flux.yml); this playbook deploys nothing.
 # Run from the controller against the "homelab" kubeconfig context. Use make apps-health.
 - name: Apps
   hosts: localhost
@@ -66,9 +66,10 @@
           retries: 12
           delay: 10
 
-        # nginx keeps the Service's address for 60s, so after the Service is recreated it can
-        # answer 502 for up to a minute. The delivery id marks these pings in the listener's log.
-        - name: Post a ping to the webhook
+        # An unsigned ping, which intake must refuse with 401 and store nothing. nginx keeps the
+        # Service's address for 60s, so after the Service is recreated it can answer 502 for up to a
+        # minute. Intake counts these as result="unauthorized" in its metrics.
+        - name: Post an unsigned ping to the webhook
           ansible.builtin.uri:
             url: "{{ webhook_url }}"
             method: POST
@@ -78,20 +79,20 @@
             headers:
               X-GitHub-Event: ping
               X-GitHub-Delivery: apps-health
-            status_code: 200
+            status_code: 401
             return_content: true
           register: ping
           until: ping is succeeded
           retries: 12
           delay: 10
 
-        # The routing proof: only the listener answers with this field, nginx on its own cannot
-        - name: Require the listener's answer
+        # The routing proof: only intake answers with this body, nginx on its own cannot
+        - name: Require intake's answer
           ansible.builtin.assert:
-            that: (ping.json | default({})).listener | default('') == 'placeholder'
+            that: (ping.json | default({})).error | default('') == 'invalid signature'
             fail_msg: >-
-              POST {{ webhook_url }} returned 200 but not the listener's {"listener": "placeholder"},
-              so the request did not reach Service github-webhook.
+              POST {{ webhook_url }} returned 401 but not intake's {"error": "invalid signature"},
+              so the request did not reach Service intake.
               It answered: {{ ping.content | default('') }}
             quiet: true
 
@@ -127,16 +128,17 @@
             fail_msg: "Public DNS gave the tailnet address {{ public_ips[0] }} for {{ ember_host }}"
             quiet: true
 
-        # --resolve pins the name to the public address; --fail turns a 4xx or 5xx into an error
-        - name: Post a ping through Funnel
+        # --resolve pins the name to the public address. The status code is the last line of the output
+        - name: Post an unsigned ping through Funnel
           ansible.builtin.command:
             argv:
               - curl
               - --silent
               - --show-error
-              - --fail
               - --max-time
               - "30"
+              - --write-out
+              - "\n%{http_code}"
               - --resolve
               - "{{ ember_host }}:443:{{ public_ips[0] }}"
               - --header
@@ -149,21 +151,24 @@
               - '{"zen": "ember apps-health"}'
               - "{{ webhook_url }}"
           register: via_funnel
-          until: via_funnel.rc == 0
+          until: via_funnel.rc == 0 and via_funnel.stdout_lines[-1] == '401'
           retries: 6
           delay: 10
           changed_when: false
+          failed_when: false
 
-        # The first condition keeps from_json away from a body that is not JSON
-        - name: Require the listener's answer through Funnel
+        # The conditions before from_json keep it away from a body that is not JSON
+        - name: Require intake's answer through Funnel
           ansible.builtin.assert:
             that:
-              - via_funnel.stdout is match('\s*\{')
-              - (via_funnel.stdout | from_json).listener | default('') == 'placeholder'
+              - via_funnel.rc == 0
+              - via_funnel.stdout_lines[-1] == '401'
+              - via_funnel.stdout_lines[0] is match('\s*\{')
+              - (via_funnel.stdout_lines[0] | from_json).error | default('') == 'invalid signature'
             fail_msg: >-
-              POST {{ webhook_url }} through Funnel ({{ public_ips[0] }}) did not return the listener's
-              {"listener": "placeholder"}, so the public request did not reach Service github-webhook.
-              It answered: {{ via_funnel.stdout }}
+              POST {{ webhook_url }} through Funnel ({{ public_ips[0] }}) did not return intake's 401
+              {"error": "invalid signature"}, so the public request did not reach Service intake.
+              It answered: {{ via_funnel.stdout | default(via_funnel.stderr | default('')) }}
             quiet: true
 
         - name: Request a path nginx does not route

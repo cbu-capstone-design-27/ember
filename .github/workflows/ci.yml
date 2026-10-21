@@ -5,10 +5,10 @@
 #     upstream jobs are skipped) and fails only if a job it depends on failed
 #     or was cancelled. Mark `ci-ok` as required in branch protection; never
 #     mark the individual jobs.
-#   - `changes` is a stub for per-area path filtering. Today it reports every
-#     area as changed. When real build/test jobs land, replace the stub with a
-#     path filter and gate each job on the matching output so unrelated areas
-#     are skipped (skipped jobs still let `ci-ok` pass).
+#   - `changes` reports which areas a run touches. Only `web` has a real path
+#     filter so far; the other areas still report changed every time. Gate a
+#     job on its area's output so unrelated changes skip it (skipped jobs
+#     still let `ci-ok` pass).
 
 name: ci
 
@@ -29,28 +29,44 @@ jobs:
   changes:
     name: detect changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read        # checkout, which the filter needs on push
+      pull-requests: read   # on a PR, the filter lists its files through the API
     outputs:
-      web: ${{ steps.filter.outputs.web }}
+      web: ${{ steps.paths.outputs.web }}
       cli: ${{ steps.filter.outputs.cli }}
       mcp: ${{ steps.filter.outputs.mcp }}
       pipeline: ${{ steps.filter.outputs.pipeline }}
       packages: ${{ steps.filter.outputs.packages }}
       infra: ${{ steps.filter.outputs.infra }}
     steps:
-      # TODO(EMBER-28 follow-up): replace with a real path filter, e.g.
-      #   uses: dorny/paths-filter@<pinned-sha>
-      #   with:
-      #     filters: |
-      #       web:      ['apps/web/**', 'packages/**']
-      #       cli:      ['apps/cli/**', 'packages/**']
-      #       mcp:      ['apps/mcp/**', 'packages/**']
-      #       pipeline: ['services/pipeline/**', 'packages/**']
-      #       packages: ['packages/**']
-      #       infra:    ['infra/**', '.github/**']
-      - name: Stub path filter (everything marked changed)
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push'
+      # EMBER-42: the web job and the web image run only when web changed. A PR is
+      # compared with its base branch, a push to main or develop with that branch's
+      # previous commit (`base` is ignored on PRs). This file counts as a web change,
+      # so editing the web job or the image build still runs them. apps/web uses
+      # nothing from packages/, so packages/ doesn't count.
+      - name: Path filter
+        id: paths
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          base: ${{ github.ref_name }}
+          filters: |
+            web:
+              - 'apps/web/**'
+              - '.github/workflows/ci.yml'
+      # TODO(EMBER-28 follow-up): move each area into the path filter above as its
+      # jobs land, e.g.
+      #   cli:      ['apps/cli/**', 'packages/**']
+      #   mcp:      ['apps/mcp/**', 'packages/**']
+      #   pipeline: ['services/pipeline/**', 'packages/**']
+      #   packages: ['packages/**']
+      #   infra:    ['infra/**', '.github/**']
+      - name: Stub path filter for the other areas (marked changed)
         id: filter
         run: |
-          for area in web cli mcp pipeline packages infra; do
+          for area in cli mcp pipeline packages infra; do
             echo "$area=true" >> "$GITHUB_OUTPUT"
           done
 
@@ -91,6 +107,7 @@ jobs:
           kubectl kustomize infra/k8s/clusters/homelab/flux-system > /dev/null
           kubectl kustomize infra/k8s/infrastructure > /dev/null
           kubectl kustomize infra/k8s/apps > /dev/null
+          kubectl kustomize infra/k8s/monitoring > /dev/null
       # EMBER-61: the migrations apply, roll back, and build the schema docs/ingestion/architecture.md
       # defines, on the Postgres version the cluster runs (apps/postgres/cluster.yaml)
       - name: Postgres migrations match the ingestion doc
@@ -109,25 +126,52 @@ jobs:
           # The image's first start runs initdb with TCP off, so wait for TCP rather than the socket
           timeout 60 sh -c 'until docker exec pg pg_isready -q -h 127.0.0.1; do sleep 1; done'
           PATH="$RUNNER_TEMP:$PATH" python3 infra/k8s/apps/postgres/test_migrations.py
-      - name: Placeholder webhook listener compiles
-        run: python3 -m py_compile infra/k8s/apps/github-webhook/listener.py
       - name: nginx reverse-proxy config loads
         run: |
           set -euo pipefail
           out=$(docker run --rm -e NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
             -v "$PWD/infra/k8s/apps/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
             nginx:1.28-alpine nginx -T)
-          grep -F 'location = /webhook/github' <<<"$out"
+          grep -F 'location /webhook/ {' <<<"$out"
       - name: Ingestion envelope contract
         run: python3 packages/ingestion-envelope/test_contract.py
-      - name: GitHub ingestion webhook contract
-        run: python3 services/github-ingestion/test_webhook.py
+      # EMBER-62: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      - name: Intake against Postgres
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/intake-venv"
+          "$RUNNER_TEMP/intake-venv/bin/pip" install -q -r services/intake/requirements.txt
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/intake-venv/bin/python3" services/intake/test_intake.py
+      # The image the cluster runs: as nobody, refusing to start without its secret, healthy against the pg container
+      - name: Intake container
+        run: |
+          set -euo pipefail
+          docker build -f services/intake/Dockerfile -t ember-intake:ci .
+          test "$(docker inspect -f '{{.Config.User}}' ember-intake:ci)" = nobody
+          # It must exit 2 on its own, not crash or serve; timeout stops a regression that serves forever
+          rc=0; out=$(timeout 30 docker run --rm -e DATABASE_URL=postgresql://x@127.0.0.1/x ember-intake:ci 2>&1) || rc=$?
+          test "$rc" -eq 2 || { echo "::error::expected exit 2 without GITHUB_WEBHOOK_SECRET, got $rc: $out"; exit 1; }
+          grep -F "GITHUB_WEBHOOK_SECRET is required" <<<"$out"
+          cid=$(docker run -d --network host -e LISTEN_PORT=18080 -e GITHUB_WEBHOOK_SECRET=ci-local \
+            -e DATABASE_URL='postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable' ember-intake:ci)
+          trap 'docker logs "$cid"; docker rm -f "$cid" > /dev/null' EXIT
+          curl -fsS --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:18080/health
+          echo
       - name: GitHub ingestion local pull contract
         run: python3 services/github-ingestion/test_pull.py
-      - name: GitHub ingestion webhook smoke
+      # EMBER-65: uses the pg container and dbmate the migrations step started and downloaded
+      - name: GitHub enrich worker against Postgres
         env:
-          GITHUB_WEBHOOK_SECRET: ci-local-smoke
-        run: python3 services/github-ingestion/smoke_webhook.py
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # The runner's system Python refuses pip install (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/github-enrich-venv"
+          "$RUNNER_TEMP/github-enrich-venv/bin/pip" install -q -r services/github-ingestion/requirements.txt
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/github-enrich-venv/bin/python3" services/github-ingestion/test_enrich.py
       - name: Slack ingestion webhook contract
         run: python3 services/slack-ingestion/test_webhook.py
       - name: Slack ingestion local pull contract
@@ -136,6 +180,17 @@ jobs:
         env:
           SLACK_SIGNING_SECRET: ci-local-smoke
         run: python3 services/slack-ingestion/smoke_webhook.py
+      # EMBER-67: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      - name: Slack enrich worker
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/slack-enrich-venv"
+          "$RUNNER_TEMP/slack-enrich-venv/bin/pip" install -q -r services/slack-ingestion/requirements.txt
+          "$RUNNER_TEMP/slack-enrich-venv/bin/python3" services/slack-ingestion/test_enrich.py
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/slack-enrich-venv/bin/python3" services/slack-ingestion/test_enrich_db.py
       - name: Jira ingestion webhook contract
         run: python3 services/jira-ingestion/test_webhook.py
       - name: Jira ingestion local pull contract
@@ -144,6 +199,16 @@ jobs:
         env:
           JIRA_WEBHOOK_SECRET: ci-local-smoke
         run: python3 services/jira-ingestion/smoke_webhook.py
+      # EMBER-66: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      - name: Jira enrich worker
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/enrich-venv"
+          "$RUNNER_TEMP/enrich-venv/bin/pip" install -q -r services/jira-ingestion/requirements.txt
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/enrich-venv/bin/python3" services/jira-ingestion/test_enrich.py
       - name: Photon synthetic Slack and Jira fixtures
         run: python3 services/pipeline/fixtures/photon/test_fixtures.py
       - name: GitLab ingestion webhook contract
@@ -155,6 +220,16 @@ jobs:
           # whsec_ + base64("ci-local-smoke-key"). Throwaway, not a real token.
           GITLAB_WEBHOOK_SIGNING_TOKEN: whsec_Y2ktbG9jYWwtc21va2Uta2V5
         run: python3 services/gitlab-ingestion/smoke_webhook.py
+      # EMBER-68: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      - name: GitLab enrich worker
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/gitlab-enrich-venv"
+          "$RUNNER_TEMP/gitlab-enrich-venv/bin/pip" install -q -r services/gitlab-ingestion/requirements.txt
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/gitlab-enrich-venv/bin/python3" services/gitlab-ingestion/test_enrich.py
       - name: GitLab ingestion container
         run: |
           set -euo pipefail
@@ -180,31 +255,6 @@ jobs:
         run: python -m pip install "pydantic>=2,<3"
       - name: Graph ontology contract
         run: python services/pipeline/ontology/test_ontology.py
-
-  # EMBER-67. The Slack enrich worker: unit tests, then its Postgres tests against a database built
-  # from the migrations, on the Postgres version the cluster runs (apps/postgres/cluster.yaml).
-  slack-enrich:
-    name: slack enrich
-    runs-on: ubuntu-latest
-    needs: changes
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install dependencies
-        run: python -m pip install -r services/slack-ingestion/requirements.txt
-      - name: Unit tests
-        run: python services/slack-ingestion/test_enrich.py
-      - name: Start Postgres
-        run: |
-          set -euo pipefail
-          docker run -d --name pg -e POSTGRES_PASSWORD=ci-local -p 127.0.0.1:55432:5432 postgres:18.6
-          timeout 60 sh -c 'until docker exec pg pg_isready -q -h 127.0.0.1; do sleep 1; done'
-      - name: Postgres tests
-        env:
-          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
-        run: python services/slack-ingestion/test_enrich_db.py
 
   # EMBER-51. The web app: type check, production build, and the sign-up /
   # log-in / log-out tests on SQLite and on a real Postgres (DATABASE_URL swap).
@@ -249,16 +299,20 @@ jobs:
 
   # EMBER-42. Every services/<name>/Dockerfile and apps/<name>/Dockerfile is an
   # image target named <name>. Adding a Dockerfile is all it takes to enroll a
-  # service; see docs/container-images.md.
+  # service; see docs/container-images.md. The web image is left out when
+  # `changes` says web didn't change.
   image-targets:
     name: image targets
     runs-on: ubuntu-latest
+    needs: changes
     outputs:
       matrix: ${{ steps.find.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       - name: Find Dockerfiles
         id: find
+        env:
+          WEB_CHANGED: ${{ needs.changes.outputs.web }}
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
           import glob, json, os
@@ -267,7 +321,9 @@ jobs:
           dupes = sorted({n for n in names if names.count(n) > 1})
           if dupes:
               raise SystemExit(f"image name collision between services/ and apps/: {dupes}")
-          print("matrix=" + json.dumps([{"name": n, "dir": d} for n, d in zip(names, dirs)]))
+          targets = [{"name": n, "dir": d} for n, d in zip(names, dirs)
+                     if d != "apps/web" or os.environ["WEB_CHANGED"] == "true"]
+          print("matrix=" + json.dumps(targets))
           EOF
           cat "$GITHUB_OUTPUT"
 
@@ -345,7 +401,6 @@ jobs:
       - changes
       - sanity
       - pipeline
-      - slack-enrich
       - web
       - image-targets
       - images

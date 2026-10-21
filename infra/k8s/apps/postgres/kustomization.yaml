@@ -1,5 +1,6 @@
 # Postgres, the ingestion store (docs/ingestion/architecture.md): one CloudNativePG instance, the
-# Service that publishes it on every node's IP, and the Job that applies migrations/.
+# Service that publishes it on every node's IP, the Job that applies migrations/, and the exporter's
+# custom queries.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: ember
@@ -7,10 +8,14 @@ resources:
   - cluster.yaml
   - service-lb.yaml
   - migrate-job.yaml
+  - monitoring.yaml
 # The migrate Job mounts these. The name gets a content hash, so adding a migration replaces the Job.
 # List every new migration here; test_migrations.py fails on one that is missing.
 configMapGenerator:
   - name: postgres-migrations
     files:
       - migrations/20261013000000_ingestion_schema.sql
-      - migrations/20261014044520_raw_events_enrich_status.sql
+      - migrations/20261013120000_raw_events_enriched_at.sql
+      - migrations/20261013120100_raw_events_notify.sql
+      - migrations/20261014202756_raw_events_occurred_at.sql
+      - migrations/20261015120000_raw_events_metrics_grant.sql

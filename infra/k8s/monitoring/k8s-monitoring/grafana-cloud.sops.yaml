@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: grafana-cloud
+    namespace: monitoring
+stringData:
+    prometheus-url: ENC[AES256_GCM,data:AOuW55CDx0XAYMEDaUpA5xUHzL0mPVNxoBmVFDOfY8lom7kGA8fAzou4qQtWOTTjT8lYtcPvafaks8qekG4inJPIHQ==,iv:YyNjVm0h/b6e2+r4y4lhnNFfwj3jgkcQhW+4XREJVZ4=,tag:sY95+1eheo9RJkCZymZ8ZQ==,type:str]
+    prometheus-username: ENC[AES256_GCM,data:Jt0vrXycuw==,iv:wOKzzUnW2JnJwoJSX10m8ONV++nsvCE7QIB7S1Ybbok=,tag:VFZPE5sXjFhHXy4FApk3iw==,type:str]
+    loki-url: ENC[AES256_GCM,data:FAcTAYfnIkcT88zO3SQ1AIllWC2DOyEcWwPuzZL/p7eqL189No1RbS5bRt1fL6DX4ZE=,iv:NxpqTzhfJRoVohKzn4qvXkk3TewAuN6Hp5srJyJLGeU=,tag:mrTX9JjQ7VQNTm28AXFY9Q==,type:str]
+    loki-username: ENC[AES256_GCM,data:hq+TDFa6Ew==,iv:irw2keuxqo4uMXVr5YzSwxxNmgghtv5tQGO9fPAaTQo=,tag:LQuc4z00EqWRZI/Za9Upsg==,type:str]
+    access-token: ENC[AES256_GCM,data:pqNLhY2fNDRGzw337HRKJeL1QiRR5BqF3QoQY1gLSBSQ/XOrN0Wh0/KPDxaHR30RgjQ+dARquYt/3kt1oOrxLjbjD4i/RKjv1xY4fSeYGotjlMUHygsKcl7KG8iLS1+eKD014kk+pwPnPZj3rS1EmKcZ973ijay6fhMOr+oEmH9JsD/7/iCWdjkOUbRnKMCw45K5AV7xQ5yCT9dgSkbZkF4F82PtqoJMgF7aaw==,iv:1ZlN8l0QRJ0T54XXPcYLNaJTO7rfWK/w4MiaIx1w/H4=,tag:VIXGQcYK6PYG9P6TNRqL5w==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBUQUFJS0ltbXdvQi9tRkF3
+            YkdySTdSZ0o5Z0lOVjlac2NDaGx1WGRnYjJNCm0zVVVRWUhCZmNnSENLVzd1ekZl
+            NmZQQXBrNU9iZzlKR3RDVEwyRUdheWsKLS0tIEk4cm0rcVVXRGd3bDhyOE5jMHRX
+            M1lURDVaMFQxbXkyU0V3a3hBZ0VJRVUKLY4usrwIDFarNGP1rF5a/0pFc72vCruG
+            38iye0E/KxP7YAmZGP0SIuX4PTXbDYECgP8o4ajEmgDJaOBqFGgn1A==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-15T18:22:29Z"
+    mac: ENC[AES256_GCM,data:YaaNotOIkMSZwpk7NpLutYASDutYM8a2BvhGbhnzE2Ep4qkzeGem9TDxWumA+TxK4V0KgErTgv1DdY5x59kz/zgKI/CKTfhfQWcJiJt4G2YnXYDlDI+wFUD49VAm/fadcY/y8IKTL9GT/SHl3deDrFjPge7yXzEDXAqqAbjop3s=,iv:SwhYdtrZt3RkoOUvCMuYFTPxqu5sGjOlWo4r8sCSFR8=,tag:4QW3FSdV4Kq8fNd/YSQL2A==,type:str]
+    version: 3.13.3

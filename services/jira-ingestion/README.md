@@ -4,6 +4,8 @@ Jira admin-webhook connector. Each delivery is emitted as EMBER-39 intake: `{"ty
 
 Jira: EMBER-31. Parent epic: EMBER-6. Floor scaffold. The worker is site- and project-agnostic. It does not clean or sort the payload. Embeddings stay out (EMBER-3). No live tunnel and no webhook registration in this change.
 
+Rate limits for an API token and for a Jira Cloud app, and how the backfill waits them out: [`docs/ingestion/jira.md`](../../docs/ingestion/jira.md) (EMBER-44).
+
 Which projects feed Ember is a later webapp concern, not this service. A JQL filter, if you add one, lives on the Jira webhook. This process does not read it.
 
 ## Status
@@ -43,7 +45,7 @@ An admin webhook receiver, same shape as the GitHub App receiver: verify, wrap, 
 Registration later, once a public URL exists:
 
 1. Jira Administration → System → Webhooks → Create a webhook. The same record can be created with `POST /rest/webhooks/1.0/webhook`.
-2. URL: `https://<public-host>/webhook/jira`. Jira only delivers admin webhooks to an allow-listed port (`443`, `8080`, `8443`, and the rest of the list in the Atlassian doc). The local listener defaults to `8081` so it can sit beside `github-ingestion` on `8080`. A tunnel should terminate TLS on `443` and forward to `8081`. This PR does not start a tunnel.
+2. URL: `https://<public-host>/webhook/jira`. Jira only delivers admin webhooks to an allow-listed port (`443`, `8080`, `8443`, and the rest of the list in the Atlassian doc). The local listener defaults to `8081` so it can sit beside `intake` on `8080`. A tunnel should terminate TLS on `443` and forward to `8081`. This PR does not start a tunnel.
 3. Leave "Exclude body" off so the issue object is in the POST.
 4. Events so a live delivery can carry the same entities the backfill stores. The receiver accepts any JSON object and does not filter on `webhookEvent`.
 
@@ -152,7 +154,9 @@ Then, one envelope each:
 
 The issue object still contains Jira's own comment and worklog previews. Those previews are not removed. The complete comment and worklog lists are additional envelopes. A comment or worklog total of 0 skips that list GET.
 
-Search pages stay one-after-another. Detail GETs run 32 at a time, across issues and across comments, changelog pages, worklogs, and the other resources. Later pages are requested together, then written back in `startAt` order. Tune with `--concurrency N` or `JIRA_PULL_CONCURRENCY` (1–64). If Jira returns `Retry-After`, the script waits that long and retries. A `429` / `502` / `503` without `Retry-After` waits 1s, then 2s, then 4s, and so on.
+Search pages stay one-after-another. Detail GETs run 32 at a time, across issues and across comments, changelog pages, worklogs, and the other resources. Later pages are requested together, then written back in `startAt` order. Tune with `--concurrency N` or `JIRA_PULL_CONCURRENCY` (1–64).
+
+Every worker shares one gate (EMBER-44). It pauses when `X-RateLimit-Remaining` or a `RateLimit` policy's `r` is at or under 50, or under a tenth of a smaller bucket, until the reset. A 429 waits out `Retry-After` or `X-RateLimit-Reset` (ISO-8601), up to an hour, because a quota 429 can ask for most of that hour. A 429 with no server delay, a 5xx, or a dropped connection backs off 1s, 2s, 4s, … with jitter, each sleep at most 120 seconds. Five tries on a 5xx, then the pull stops. A 403 is still a permission error, not a throttle. This command uses an API token, so it is on Jira's burst limits; the hourly points quotas apply to OAuth, Forge, and Connect apps. Details: [`docs/ingestion/jira.md`](../../docs/ingestion/jira.md).
 
 A `403` or `404` on watchers, votes, or one issue's changelog is skipped for that issue. A changelog body with neither `values` nor `histories` is skipped the same way. Every other GET failure stops the pull.
 
@@ -184,6 +188,29 @@ Any throwaway string is fine. The script starts the receiver and POSTs signed de
 Success ends with `smoke ok: 5 envelopes` on stderr.
 
 To receive a real admin delivery later, point a tunnel at `JIRA_INGESTION_PORT` (default `8081`) and set the webhook URL to `https://<tunnel-host>/webhook/jira` with the same secret. Examples: `cloudflared tunnel --url http://127.0.0.1:8081` or `ngrok http 8081`. The tunnel is not part of this smoke and CI does not start one. Jira will not POST to port `8081` directly. Terminate TLS on port `443`.
+
+## Enrich worker
+
+`enrich.py` is `enrich:jira` (EMBER-66). It turns Jira rows in `raw_events` into `source_records` and sets `raw_events.enriched_at`, fetching from the REST API only what [`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md) says the payload lacks. It wakes on any notification on `RAW_EVENTS_CHANNEL` (default `raw_events`), ignoring the payload, catches up at start, polls every 30 s, and runs `CONCURRENCY` rows at once (default 4). Ctrl+C finishes the rows in flight, then exits.
+
+Run it against the local Postgres (Python 3.10+):
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres up -d postgres
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres run --rm postgres-migrate
+
+python3 -m venv .venv && .venv/bin/pip install -r services/jira-ingestion/requirements.txt
+export DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable'
+export JIRA_BASE_URL JIRA_EMAIL JIRA_API_TOKEN   # from .env; only comment, worklog and link events call Jira
+.venv/bin/python services/jira-ingestion/enrich.py
+```
+
+Only rows with a `tenant` are claimed. Calls go to `JIRA_BASE_URL` alone, so a row from another site fails and is retried on the next poll. Its test needs a Postgres it can create a database on, and dbmate:
+
+```sh
+PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
+    .venv/bin/python services/jira-ingestion/test_enrich.py
+```
 
 ## Test
 

@@ -47,16 +47,18 @@ class RawEvent(Base):
     received_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=text("now()"))
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
     envelope: Mapped[dict] = mapped_column(JSONB)
-    # Set by the enrich worker: null means still to do (EMBER-67)
+    # Set by the enrich worker: null means still to do (EMBER-75)
     enriched_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
-    enrich_attempts: Mapped[int] = mapped_column(Integer, server_default=text("0"))
-    enrich_error: Mapped[str | None] = mapped_column(Text)
-    # EMBER-63: the source ordering column goes here once docs/ingestion/architecture.md defines it.
+    # The source's time (EMBER-63), set by whoever writes the row: intake, or seed standing in for it
+    occurred_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=text("now()"))
 
     __table_args__ = (
         UniqueConstraint("source", "delivery_id"),
         CheckConstraint("origin in ('webhook', 'reconcile', 'backfill')"),
-        Index("raw_events_enrich_pending", "source", "id", postgresql_where=text("enriched_at is null")),
+        Index("raw_events_unenriched", "source", "id", postgresql_where=text("enriched_at is null")),
+        Index(
+            "raw_events_unenriched_occurred_at", "source", "occurred_at", "id", postgresql_where=text("enriched_at is null")
+        ),
     )
 
 

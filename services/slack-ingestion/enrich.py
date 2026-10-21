@@ -7,9 +7,10 @@ docs/ingestion/architecture.md (Storage).
 
 How it runs:
 - Idle, it waits on LISTEN raw_events. The database sends NOTIFY raw_events '<source>' on every
-  insert (the trigger EMBER-62 adds). A poll every ENRICH_POLL_SECONDS catches anything missed.
-- ENRICH_CONCURRENCY asyncio runners each claim one pending row (enriched_at is null, FOR UPDATE
-  SKIP LOCKED), enrich it, write its records and set enriched_at, in the row's own transaction.
+  insert (EMBER-75's trigger, which EMBER-62 may replace). A poll every ENRICH_POLL_SECONDS catches anything missed.
+- CONCURRENCY asyncio runners each claim one pending row (enriched_at is null, FOR UPDATE
+  SKIP LOCKED, oldest occurred_at first, ties on id), enrich it, write its records and set
+  enriched_at, in the row's own transaction.
   A crash releases the row, and it runs again.
 - At start the runners claim straight away, so rows inserted while it was stopped are picked up.
 - Ctrl+C (SIGINT) or SIGTERM: stop claiming, finish the jobs in flight, exit. A second Ctrl+C
@@ -18,7 +19,13 @@ How it runs:
 Scope: message events (new messages, replies, broadcasts, message_replied, edits, deletes, system
 messages). The user and channel a message names are cached as records of kind user and channel,
 fetched with users.info / conversations.info only when no record exists yet. A reply's parent
-comes from conversations.replies when it isn't stored. Other events are marked enriched and skipped.
+comes from conversations.replies when it isn't stored.
+
+People, channels and membership (slack-webhooks.md, Everything else) also become records:
+user_change and team_join write the user; channel_created, *_rename, *_archive, *_unarchive and
+channel_deleted write the channel, merged onto the newest stored copy so a payload's few fields
+don't replace the full channel; member_joined_channel and member_left_channel write a membership.
+Reactions, app_uninstalled, tokens_revoked and anything else are marked enriched and skipped.
 
 Every Slack call goes through pull_test.SlackClient (EMBER-52's pacing, throttle and backoff), with
 its gates kept in table rate_limits (pg_gates.py).
@@ -26,8 +33,10 @@ its gates kept in table rate_limits (pg_gates.py).
     python3 enrich.py                              # run the worker
     python3 enrich.py seed FILE --tenant TENANT    # store deliveries as raw_events rows
 
-seed stands in for intake until EMBER-62: it stores Events API deliveries (a JSON fixture, or
-JSONL such as receiver.py's stdout with FILE = -) and sends the NOTIFY itself.
+seed stores Events API deliveries as intake will once it has a Slack adapter (EMBER-62) (a JSON
+fixture, or JSONL such as receiver.py's stdout with FILE = -), with occurred_at by the ordering rule.
+The insert trigger wakes the worker; seed also NOTIFYs RAW_EVENTS_CHANNEL, so a worker on a
+non-default channel wakes too.
 """
 
 from __future__ import annotations
@@ -77,7 +86,8 @@ DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
 DEFAULT_CHANNEL = "raw_events"
 DEFAULT_POLL_SECONDS = 30.0
-DEFAULT_MAX_ATTEMPTS = 8
+# Transient failures before a row is given up on (architecture.md, Stage interfaces: 8 attempts)
+MAX_ATTEMPTS = 8
 ERROR_TEXT_LIMIT = 500
 
 # A lookup that finds nothing leaves that context empty. The record is still written.
@@ -89,7 +99,7 @@ LOOKUP_MISSES = {
     "message_not_found",
     "not_in_channel",
 }
-# Errors no retry can fix. The row is left for a person, with enrich_error saying why.
+# Errors no retry can fix. The row is given up on at once.
 PERMANENT_ERRORS = AUTH_ERRORS | {"missing_scope"}
 
 # The ontology's tenant rule (services/pipeline/ontology/sources.py, subgraph_id)
@@ -101,7 +111,7 @@ class ConfigError(Exception):
 
 
 class Permanent(Exception):
-    """Retrying cannot enrich this row. It is left with enrich_attempts at the maximum."""
+    """Retrying cannot enrich this row. It is given up on at once."""
 
 
 # ---- Configuration ----------------------------------------------------------------------------
@@ -139,9 +149,9 @@ def env_number(name: str, default, low, high, kind=int):
 
 
 def env_channel() -> str:
-    channel = os.environ.get("ENRICH_CHANNEL", "").strip() or DEFAULT_CHANNEL
+    channel = os.environ.get("RAW_EVENTS_CHANNEL", "").strip() or DEFAULT_CHANNEL
     if not re.fullmatch(r"[a-z_][a-z0-9_]*", channel):
-        raise ConfigError("ENRICH_CHANNEL must be a lowercase identifier such as raw_events")
+        raise ConfigError("RAW_EVENTS_CHANNEL must be a lowercase identifier such as raw_events")
     return channel
 
 
@@ -313,28 +323,43 @@ class Context:
     async def user(self, user_id: str | None, when: datetime) -> dict | None:
         if user_id is None:
             return None  # a bot message or a delete Slack sent bare
-        stored = await self._cache.latest("user", user_id)
+        stored = await self.stored("user", user_id)
         if stored is not None:
             return stored
-        user = await self._lookup("users.info", {"user": user_id}, "user")
-        if not isinstance(user, dict):
+        user = await self.fetch_user(user_id)
+        if user is None:
             return None
         updated = user.get("updated")
         self.fetched.append(NewRecord("user", user_id, str(updated or 0), slack_time(updated) or when, user))
         return user
 
     async def channel(self, channel_id: str, when: datetime) -> dict | None:
-        stored = await self._cache.latest("channel", channel_id)
+        stored = await self.stored("channel", channel_id)
         if stored is not None:
             return stored
-        channel = await self._lookup("conversations.info", {"channel": channel_id}, "channel")
-        if not isinstance(channel, dict):
+        channel = await self.fetch_channel(channel_id)
+        if channel is None:
             return None
         updated, created = channel.get("updated"), channel.get("created")
         version = str(updated or created or 0)
         occurred = millis_time(updated) or slack_time(created) or when
         self.fetched.append(NewRecord("channel", channel_id, version, occurred, channel))
         return channel
+
+    async def stored(self, kind: str, object_id: str) -> dict | None:
+        """The newest stored record, with no API call."""
+        stored = await self._cache.latest(kind, object_id)
+        return stored if isinstance(stored, dict) else None
+
+    async def fetch_user(self, user_id: str) -> dict | None:
+        """users.info, without storing the result (the caller writes its own record)."""
+        user = await self._lookup("users.info", {"user": user_id}, "user")
+        return user if isinstance(user, dict) else None
+
+    async def fetch_channel(self, channel_id: str) -> dict | None:
+        """conversations.info, without storing the result (the caller writes its own record)."""
+        channel = await self._lookup("conversations.info", {"channel": channel_id}, "channel")
+        return channel if isinstance(channel, dict) else None
 
     async def parent(self, channel_id: str, thread_ts: str, when: datetime) -> dict | None:
         object_id = f"{channel_id}/{thread_ts}"
@@ -369,14 +394,22 @@ class Context:
 
 
 async def enrich_delivery(body, *, cache: Cache, call: Call) -> list[NewRecord]:
-    """The records one delivery becomes: what was fetched for it, then the message itself.
+    """The records one delivery becomes: what was fetched for it, then the event's own record.
 
-    An empty list means the delivery is not a message event and is skipped.
+    An empty list means the delivery is not an event enrich records, and is skipped.
     """
+    context = Context(cache, call)
+    event = _dict(body.get("event")) if isinstance(body, dict) and body.get("type") == "event_callback" else None
+    handler = OTHER_EVENTS.get(event.get("type")) if event else None
+    if handler is not None:
+        return await handler(body, event, context)
+    return await enrich_message(body, context)
+
+
+async def enrich_message(body, context: Context) -> list[NewRecord]:
     delivery = describe(body)
     if delivery is None:
         return []
-    context = Context(cache, call)
     when = delivery.occurred_at
     channel = await context.channel(delivery.channel, when)
     user = await context.user(delivery.user, when)
@@ -392,6 +425,128 @@ async def enrich_delivery(body, *, cache: Cache, call: Call) -> list[NewRecord]:
         thread_parent=parent,
     )
     return [*context.fetched, NewRecord("message", delivery.object_id, delivery.version, when, record)]
+
+
+# ---- People, channels and membership (slack-webhooks.md, Everything else) ----------------------
+
+
+def event_moment(body: dict, event: dict) -> tuple[str, datetime]:
+    """(version, occurred_at) for an event that is not a message: event_time, else event_ts.
+
+    Most of these events carry no event_ts; every Events API delivery carries event_time.
+    """
+    event_time = body.get("event_time")
+    if isinstance(event_time, int) and not isinstance(event_time, bool):
+        version = str(event_time)
+    else:
+        version = _str(event.get("event_ts"))
+    occurred = slack_time(event.get("event_ts")) or slack_time(event_time)
+    if version is None or occurred is None:
+        raise Permanent(f"{event.get('type')} without event_time or event_ts")
+    return version, occurred
+
+
+def _channel_id(event: dict) -> str:
+    """channel_created and *_rename send a channel object; the others send its id."""
+    channel = event.get("channel")
+    channel_id = _str(channel.get("id")) if isinstance(channel, dict) else _str(channel)
+    if channel_id is None:
+        raise Permanent(f"{event.get('type')} without a channel id")
+    return channel_id
+
+
+def _bot_user(body: dict) -> str | None:
+    """Our bot's user id, from the delivery's authorizations."""
+    authorizations = body.get("authorizations")
+    first = authorizations[0] if isinstance(authorizations, list) and authorizations else None
+    return _str(first.get("user_id")) if isinstance(first, dict) else None
+
+
+async def enrich_user(body: dict, event: dict, context: Context) -> list[NewRecord]:
+    """user_change and team_join: the user as of user.updated. team_join may send no profile."""
+    user = _dict(event.get("user"))
+    user_id = _str(user.get("id")) if user else None
+    if user_id is None:
+        raise Permanent(f"{event.get('type')} without user.id")
+    if "profile" not in user:
+        user = await context.fetch_user(user_id) or user
+    event_version, occurred = event_moment(body, event)
+    updated = user.get("updated")
+    version = str(updated) if updated else event_version
+    return [NewRecord("user", user_id, version, slack_time(updated) or occurred, user)]
+
+
+# event type -> (fields set on the newest stored channel, fetch it when nothing is stored)
+CHANNEL_CHANGES = {
+    "channel_rename": ({}, True),
+    "group_rename": ({}, True),
+    "channel_archive": ({"is_archived": True}, True),
+    "group_archive": ({"is_archived": True}, True),
+    "channel_unarchive": ({"is_archived": False}, True),
+    "group_unarchive": ({"is_archived": False}, True),
+    "channel_deleted": ({"is_deleted": True}, False),  # a tombstone; conversations.info finds nothing
+}
+
+
+async def enrich_channel(body: dict, event: dict, context: Context) -> list[NewRecord]:
+    """A channel event: the channel as it is after the change, version event_time.
+
+    channel_created fetches conversations.info for privacy, topic and purpose. The other events
+    carry only the change, so it is merged onto the newest stored channel (else the fetched one)
+    to keep the record a whole channel.
+    """
+    kind = event.get("type")
+    channel_id = _channel_id(event)
+    version, occurred = event_moment(body, event)
+    sent = _dict(event.get("channel")) or {}
+    if kind == "channel_created":
+        channel = {**sent, **(await context.fetch_channel(channel_id) or {})}
+    else:
+        changes, fetch = CHANNEL_CHANGES[kind]
+        base = await context.stored("channel", channel_id)
+        if base is None and fetch:
+            base = await context.fetch_channel(channel_id)
+        channel = {**(base or {"id": channel_id}), **sent, **changes}
+    return [NewRecord("channel", channel_id, version, occurred, channel)]
+
+
+async def enrich_membership(body: dict, event: dict, context: Context) -> list[NewRecord]:
+    """member_joined_channel / member_left_channel: one membership per channel and person.
+
+    A join fetches the person if not stored, as a message does. A leave is a tombstone and fetches
+    nothing. When the person is our bot, the channel's history is a backfill away; starting or
+    stopping that is reconcile's job, which isn't built yet, so it is only logged.
+    """
+    joined = event.get("type") == "member_joined_channel"
+    channel_id = _channel_id(event)
+    user_id = _str(event.get("user"))
+    if user_id is None:
+        raise Permanent(f"{event.get('type')} without a user")
+    version, occurred = event_moment(body, event)
+    user = await context.user(user_id, occurred) if joined else await context.stored("user", user_id)
+    if user_id == _bot_user(body):
+        if joined:
+            LOG.info("the bot joined %s; read its history with pull_test.py --channel %s", channel_id, channel_id)
+        else:
+            LOG.info("the bot left %s; its stored records are kept", channel_id)
+    record = {
+        "payload": body,
+        "user": user,
+        "channel": channel_id,
+        "member": joined,
+        "inviter": _str(event.get("inviter")),
+    }
+    return [*context.fetched, NewRecord("membership", f"{channel_id}/{user_id}", version, occurred, record)]
+
+
+OTHER_EVENTS = {
+    "user_change": enrich_user,
+    "team_join": enrich_user,
+    "channel_created": enrich_channel,
+    **{kind: enrich_channel for kind in CHANNEL_CHANGES},
+    "member_joined_channel": enrich_membership,
+    "member_left_channel": enrich_membership,
+}
 
 
 # ---- The worker -------------------------------------------------------------------------------
@@ -436,7 +591,7 @@ class Worker:
         concurrency: int = DEFAULT_CONCURRENCY,
         channel: str = DEFAULT_CHANNEL,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
-        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        max_attempts: int = MAX_ATTEMPTS,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._alchemy_url, self._libpq_url = database_urls(database_url)
@@ -451,9 +606,14 @@ class Worker:
         self._sleep = sleep
         self._clients: dict[str, SlackClient] = {}
         self._clients_lock = threading.Lock()
-        # Rows that just failed, and when they may be tried again (monotonic time). Without this a
-        # runner would claim the same row again at once and use up its attempts in milliseconds.
+        # Failures are kept in memory, as enrich:github does, until the job queue's retry and dead
+        # letter replace this (architecture.md, Job queue). A restart forgets them and tries again.
+        # _cooldown: rows that just failed, and when they may be tried again (monotonic time), so a
+        # runner doesn't claim the same row again at once. _attempts: transient failures per row.
+        # _given_up: rows that failed permanently or MAX_ATTEMPTS times; skipped until a restart.
         self._cooldown: dict[int, float] = {}
+        self._attempts: dict[int, int] = {}
+        self._given_up: set[int] = set()
         self._kicks = [asyncio.Event() for _ in range(concurrency)]
         self.stopping = asyncio.Event()
         self.listening = asyncio.Event()  # set while LISTEN is active
@@ -517,9 +677,10 @@ class Worker:
                     self.listening.set()
                     self._kick_all()  # rows that arrived while nothing was listening
                     delay = 1.0
-                    async for note in conn.notifies():
-                        if note.payload in (SOURCE, ""):
-                            self._kick_all()
+                    # Any notification wakes the runners, whose claim filters by source. The payload
+                    # isn't part of the contract (architecture.md, Interim: claiming without the job queue).
+                    async for _note in conn.notifies():
+                        self._kick_all()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -532,19 +693,27 @@ class Worker:
         now = time.monotonic()
         for row_id in [r for r, until in self._cooldown.items() if until <= now]:
             del self._cooldown[row_id]
-        stmt = select(RawEvent.id, RawEvent.tenant, RawEvent.event_name, RawEvent.envelope, RawEvent.enrich_attempts).where(
+        stmt = select(RawEvent.id, RawEvent.tenant, RawEvent.event_name, RawEvent.envelope).where(
             RawEvent.source == SOURCE,
             RawEvent.tenant.is_not(None),  # unmapped accounts wait for ember-admin map
             RawEvent.enriched_at.is_(None),
-            RawEvent.enrich_attempts < self.max_attempts,
         )
-        if self._cooldown:
-            stmt = stmt.where(RawEvent.id.not_in(list(self._cooldown)))
+        skipped = self._cooldown.keys() | self._given_up
+        if skipped:
+            stmt = stmt.where(RawEvent.id.not_in(list(skipped)))
         return (
-            stmt.order_by(RawEvent.id)  # EMBER-63: order by the source ordering column, then id
+            # Slack's own order, not arrival order (architecture.md, Source ordering value); ties on id
+            stmt.order_by(RawEvent.occurred_at, RawEvent.id)
             .limit(1)
             .with_for_update(skip_locked=True)
         )
+
+    def _give_up(self, row_id: int, exc: BaseException) -> None:
+        """Stop claiming the row until a restart. It stays pending in raw_events (enriched_at null)."""
+        self._attempts.pop(row_id, None)
+        self._cooldown.pop(row_id, None)
+        self._given_up.add(row_id)
+        LOG.error("raw_event %s given up on until the worker restarts: %s", row_id, _error_text(exc))
 
     def _backoff(self, row_id: int, attempts: int) -> None:
         """Leave a failed row alone for 2, 4, 8 … seconds, at most one poll interval."""
@@ -558,7 +727,6 @@ class Worker:
                 return False
             row_id, tenant = row["id"], row["tenant"]
             envelope = row["envelope"] if isinstance(row["envelope"], dict) else {}
-            mark = update(RawEvent).where(RawEvent.id == row_id)
             try:
                 async with session.begin_nested():
                     records = await enrich_delivery(
@@ -580,21 +748,23 @@ class Worker:
                             .on_conflict_do_nothing(index_elements=["source", "tenant", "object_id", "version"])
                         )
             except Permanent as exc:
-                await session.execute(mark.values(enrich_attempts=self.max_attempts, enrich_error=_error_text(exc)))
-                LOG.error("raw_event %s left for a person: %s", row_id, exc)
+                self._give_up(row_id, exc)
             except Exception as exc:
-                await session.execute(
-                    mark.values(enrich_attempts=RawEvent.enrich_attempts + 1, enrich_error=_error_text(exc))
-                )
-                self._backoff(row_id, row["enrich_attempts"] + 1)
-                LOG.warning("raw_event %s failed, retried later: %s", row_id, _error_text(exc))
+                attempts = self._attempts.get(row_id, 0) + 1
+                if attempts >= self.max_attempts:
+                    self._give_up(row_id, exc)
+                else:
+                    self._attempts[row_id] = attempts
+                    self._backoff(row_id, attempts)
+                    LOG.warning("raw_event %s failed (%s/%s), retried later: %s", row_id, attempts, self.max_attempts, _error_text(exc))
             else:
-                await session.execute(mark.values(enriched_at=func.now(), enrich_error=None))
+                await session.execute(update(RawEvent).where(RawEvent.id == row_id).values(enriched_at=func.clock_timestamp()))
+                self._attempts.pop(row_id, None)
                 self.done += 1
                 if records:
                     LOG.info("enriched raw_event %s: %s", row_id, ", ".join(f"{r.kind} {r.object_id}" for r in records))
                 else:
-                    LOG.info("skipped raw_event %s (%s): not a message event", row_id, row["event_name"])
+                    LOG.info("skipped raw_event %s (%s): no records for this event type", row_id, row["event_name"])
             return True
 
     def _caller(self, tenant: str) -> Call:
@@ -663,6 +833,18 @@ def event_name(body: dict) -> str:
     return _str(body.get("type")) or "unknown"
 
 
+def ordering_value(body: dict) -> datetime | None:
+    """raw_events.occurred_at for a delivery (slack-webhooks.md, Ordering value), or None for received_at.
+
+    event.event_ts, then event.ts, then the wrapper's event_time; minute_rate_limited for
+    app_rate_limited.
+    """
+    if body.get("type") == "app_rate_limited":
+        return slack_time(body.get("minute_rate_limited"))
+    event = _dict(body.get("event")) or {}
+    return slack_time(event.get("event_ts")) or slack_time(event.get("ts")) or slack_time(body.get("event_time"))
+
+
 def raw_event_row(envelope, tenant: str | None) -> dict | None:
     """The raw_events row intake would store for one Events API envelope, or None if it isn't one."""
     if not isinstance(envelope, dict) or envelope.get("type") != SOURCE:
@@ -678,7 +860,7 @@ def raw_event_row(envelope, tenant: str | None) -> dict | None:
         return None  # a backfill object; reconcile stores those, not intake
     if delivery_id is None:
         return None
-    return {
+    row = {
         "source": SOURCE,
         "delivery_id": delivery_id,
         "account_id": _str(body.get("team_id")),
@@ -687,6 +869,10 @@ def raw_event_row(envelope, tenant: str | None) -> dict | None:
         "origin": "webhook",
         "envelope": envelope,
     }
+    occurred_at = ordering_value(body)
+    if occurred_at is not None:  # otherwise the column's default, the insert time, as for received_at
+        row["occurred_at"] = occurred_at
+    return row
 
 
 def read_envelopes(source: str) -> Iterator[dict]:
@@ -735,7 +921,7 @@ def seed(database_url: str, source: str, tenant: str, *, channel: str = DEFAULT_
                 if new_id is None:
                     duplicate += 1
                     continue
-                # Stands in for EMBER-62's trigger; delivered when this transaction commits
+                # For a non-default RAW_EVENTS_CHANNEL; on raw_events Postgres folds it into the trigger's identical NOTIFY
                 conn.execute(text("select pg_notify(:channel, :payload)"), {"channel": channel, "payload": SOURCE})
                 added += 1
     finally:
@@ -764,10 +950,9 @@ def main(argv: list[str] | None = None) -> int:
             database_url,
             token=bot_token(),
             rate_mode=resolve_rate_mode(None),
-            concurrency=env_number("ENRICH_CONCURRENCY", DEFAULT_CONCURRENCY, 1, MAX_CONCURRENCY),
+            concurrency=env_number("CONCURRENCY", DEFAULT_CONCURRENCY, 1, MAX_CONCURRENCY),
             channel=env_channel(),
             poll_seconds=env_number("ENRICH_POLL_SECONDS", DEFAULT_POLL_SECONDS, 1.0, 3600.0, float),
-            max_attempts=env_number("ENRICH_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS, 1, 100),
         )
         run_async(serve(worker))
     except (ConfigError, PullError) as exc:

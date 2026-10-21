@@ -1,25 +1,26 @@
 """enrich:slack against a real Postgres: EMBER-67's acceptance criteria, one test each where possible.
 
-Needs a Postgres server it may create and drop a database on, e.g. the compose one or CI's:
+Needs dbmate, the libraries in requirements.txt, and a Postgres server it may create and drop a
+database on, e.g. the compose one or CI's:
 
     PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
         python3 services/slack-ingestion/test_enrich_db.py
 
-It builds database ember_test_enrich from infra/k8s/apps/postgres/migrations (each file's
-"-- migrate:up" section, so neither dbmate nor psql is needed). It also adds a trigger that sends
-NOTIFY raw_events '<source>' on insert. That stands in for the trigger EMBER-62 adds; it exists in
-this test database only. Slack is FakeSlackApi from test_enrich.py.
+dbmate builds database ember_test_enrich from infra/k8s/apps/postgres/migrations, as the cluster's
+migrate Job does. The migrations include the trigger that sends NOTIFY raw_events on insert
+(EMBER-75). Slack is FakeSlackApi from test_enrich.py.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import re
 import signal
+import subprocess
 import sys
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -28,7 +29,6 @@ REPO = HERE.parents[1]
 MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
 sys.path.insert(0, str(HERE))
 
-import psycopg  # noqa: E402
 from sqlalchemy import create_engine, func, select, text  # noqa: E402
 from sqlalchemy.dialects.postgresql import insert as pg_insert  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
@@ -37,54 +37,33 @@ import enrich  # noqa: E402
 from enrich import Worker, run_async  # noqa: E402
 from models import Base, RateLimit, RawEvent, SourceRecord  # noqa: E402
 from pg_gates import PgRateGate  # noqa: E402
-from test_enrich import CHANNEL, PARENT, TOKEN, FakeSlackApi, callback, message  # noqa: E402
+from test_enrich import CHANNEL, CHANNELS, PARENT, TOKEN, USERS, FakeSlackApi, callback, message  # noqa: E402
 
 PGTEST_URL = os.environ.get("PGTEST_URL", "")
+DBMATE = os.environ.get("DBMATE", "dbmate")
 TEST_DB = "ember_test_enrich"
 TENANT = "acme"
-
-# Stands in for EMBER-62's trigger (docs/ingestion/architecture.md, How enrich wakes and claims rows)
-NOTIFY_TRIGGER = """
-create function test_notify_raw_event() returns trigger language plpgsql as $$
-begin
-  perform pg_notify('raw_events', new.source);
-  return new;
-end $$;
-create trigger test_notify_raw_event after insert on raw_events
-  for each row execute function test_notify_raw_event();
-"""
 
 
 def database_url(name: str) -> str:
     return urlunsplit(urlsplit(PGTEST_URL)._replace(path="/" + name))
 
 
-def migrate_up_sections() -> list[str]:
-    """Each migration's "-- migrate:up" section, oldest first."""
-    sections = []
-    for path in sorted(MIGRATIONS.glob("*.sql")):
-        content = path.read_text(encoding="utf-8")
-        up = re.split(r"^-- migrate:up.*$", content, maxsplit=1, flags=re.M)[1]
-        sections.append(re.split(r"^-- migrate:down.*$", up, maxsplit=1, flags=re.M)[0])
-    return sections
+def dbmate(*args: str) -> None:
+    command = [DBMATE, "--url", database_url(TEST_DB), "--migrations-dir", str(MIGRATIONS), "--no-dump-schema", *args]
+    subprocess.run(command, check=True, capture_output=True)
 
 
 def setUpModule():
     if not PGTEST_URL:
         raise unittest.SkipTest("set PGTEST_URL to a Postgres server to run these tests")
-    with psycopg.connect(PGTEST_URL, autocommit=True) as admin:
-        admin.execute(f"drop database if exists {TEST_DB} with (force)")
-        admin.execute(f"create database {TEST_DB}")
-    with psycopg.connect(database_url(TEST_DB), autocommit=True) as conn:
-        for section in migrate_up_sections():
-            conn.execute(section)
-        conn.execute(NOTIFY_TRIGGER)
+    dbmate("drop")
+    dbmate("up")
 
 
 def tearDownModule():
     if PGTEST_URL:
-        with psycopg.connect(PGTEST_URL, autocommit=True) as admin:
-            admin.execute(f"drop database if exists {TEST_DB} with (force)")
+        dbmate("drop")
 
 
 class EnrichDatabaseTest(unittest.TestCase):
@@ -165,7 +144,7 @@ class EnrichDatabaseTest(unittest.TestCase):
                 with self.subTest(table=table.name):
                     self.assertEqual([(c.name, c.nullable) for c in table.columns], [(name, nullable == "YES") for name, nullable in rows])
             indexes = conn.execute(text("select indexname from pg_indexes where tablename = 'raw_events'")).scalars().all()
-            self.assertIn("raw_events_enrich_pending", indexes)
+            self.assertIn("raw_events_unenriched", indexes)
 
     # ---- acceptance criteria ----
 
@@ -188,7 +167,6 @@ class EnrichDatabaseTest(unittest.TestCase):
         for row_id in (new, reply, edit, delete):
             row = self.raw(row_id)
             self.assertIsNotNone(row.enriched_at)
-            self.assertEqual((row.enrich_attempts, row.enrich_error), (0, None))
 
         messages = {(r.object_id, r.version): r for r in self.records("message")}
         first = messages[(f"{CHANNEL}/1700000200.000100", "1700000200.000100")]
@@ -206,7 +184,66 @@ class EnrichDatabaseTest(unittest.TestCase):
         # Users and the channel are fetched once and then read from their records
         self.assertEqual(sorted(r.object_id for r in self.records("user")), ["U0ADA", "U0BEN"])
         self.assertEqual([r.object_id for r in self.records("channel")], [CHANNEL])
-        self.assertEqual((fake.count("users.info"), fake.count("conversations.info"), fake.count("conversations.replies")), (2, 1, 1))
+
+    def test_user_channel_and_membership_events_become_records(self):
+        fake = FakeSlackApi()
+        self.insert(callback(message("1700000200.000100"), event_id="Ev1"))  # stores U0ADA and the channel
+        changed = {**USERS["U0ADA"], "real_name": "Ada L.", "updated": 1700000300}
+        self.insert(callback({"type": "user_change", "user": changed, "event_ts": "1700000300.000100"}, event_id="Ev2"))
+        self.insert(callback({"type": "channel_rename", "channel": {"id": CHANNEL, "name": "adr", "created": 1690000000}},
+                             event_id="Ev3", event_time=1700000400))
+        self.insert(callback({"type": "member_joined_channel", "user": "U0BEN", "channel": CHANNEL, "channel_type": "C"},
+                             event_id="Ev4", event_time=1700000500))
+
+        async def enrich_all():
+            worker = self.worker(fake)
+            task = await self.started(worker)
+            await self.until(lambda: self.pending() == 0)
+            await self.stopped(worker, task)
+
+        run_async(enrich_all())
+        users = {(r.object_id, r.version): r.record for r in self.records("user")}
+        self.assertEqual(users[("U0ADA", "1700000300")]["real_name"], "Ada L.")
+        channels = [r.record for r in self.records("channel")]
+        self.assertEqual(channels[-1], {**CHANNELS[CHANNEL], "name": "adr"})  # merged onto the stored channel
+        [membership] = self.records("membership")
+        self.assertEqual((membership.object_id, membership.version), (f"{CHANNEL}/U0BEN", "1700000500"))
+        self.assertEqual((membership.record["member"], membership.record["user"]["id"]), (True, "U0BEN"))
+        self.assertEqual(fake.count("conversations.info"), 1)  # only for the first message
+
+        # Reprocessing every row adds nothing
+        before = len(self.records())
+        with self.engine.begin() as conn:
+            conn.execute(text("update raw_events set enriched_at = null"))
+        run_async(enrich_all())
+        self.assertEqual(len(self.records()), before)
+        # U0ADA for the message and U0BEN for the join, the channel once, and no thread to fetch
+        self.assertEqual((fake.count("users.info"), fake.count("conversations.info"), fake.count("conversations.replies")), (2, 1, 0))
+
+    def test_rows_are_enriched_in_slacks_order_not_arrival_order(self):
+        # A retry or a late delivery arrives after newer events; ties on Slack's time break on id
+        late = self.insert(callback(message("1700000100.000100")), event_id="Ev-late")
+        newest = self.insert(callback(message("1700000300.000100")), event_id="Ev-newest")
+        oldest = self.insert(callback(message("1700000050.000100")), event_id="Ev-oldest")
+        # Two channel events in the same whole second (event_time): a tie, broken on id
+        tie_a = self.insert(callback({"type": "channel_rename", "channel": {"id": CHANNEL, "name": "adr"}},
+                                     event_time=1700000100), event_id="Ev-tie-a")
+        tie_b = self.insert(callback({"type": "channel_archive", "channel": CHANNEL}, event_time=1700000100),
+                            event_id="Ev-tie-b")
+        when = {i: self.raw(i).occurred_at for i in (late, newest, oldest)}
+        self.assertEqual(when[oldest], datetime(2023, 11, 14, 22, 14, 10, 100, tzinfo=timezone.utc))  # event_ts, exactly
+
+        async def scenario():
+            worker = self.worker(FakeSlackApi(), concurrency=1)  # one runner, so claim order is enrich order
+            task = asyncio.create_task(worker.run())
+            await self.until(lambda: self.pending() == 0)
+            await self.stopped(worker, task)
+
+        run_async(scenario())
+        with self.engine.begin() as conn:
+            order = conn.execute(text("select id from raw_events order by enriched_at")).scalars().all()
+        # 1700000050.0001, then the tie at 1700000100 by id, then 1700000100.0001, then 1700000300.0001
+        self.assertEqual(order, [oldest, tie_a, tie_b, late, newest])
 
     def test_a_notify_wakes_the_idle_worker_within_a_second(self):
         fake = FakeSlackApi()
@@ -358,14 +395,14 @@ class EnrichDatabaseTest(unittest.TestCase):
         async def scenario():
             worker = self.worker(fake, poll_seconds=0.2)
             task = await self.started(worker)
-            await self.until(lambda: self.raw(row_id).enrich_attempts == 3)
+            await self.until(lambda: row_id in worker._given_up)
             await asyncio.sleep(0.8)  # several polls
             await self.stopped(worker, task)
 
-        run_async(scenario())
-        row = self.raw(row_id)
-        self.assertIsNone(row.enriched_at)
-        self.assertIn("invalid_auth", row.enrich_error)
+        with self.assertLogs("slack-enrich", "ERROR") as logs:
+            run_async(scenario())
+        self.assertTrue(any("invalid_auth" in line for line in logs.output), logs.output)
+        self.assertIsNone(self.raw(row_id).enriched_at)  # still pending, so a restart tries it again
         self.assertEqual(fake.count("users.info"), 1)
         self.assertEqual(self.records(), [])
 
@@ -376,16 +413,37 @@ class EnrichDatabaseTest(unittest.TestCase):
         async def scenario():
             worker = self.worker(fake, poll_seconds=0.2, max_attempts=3)
             task = await self.started(worker)
-            await self.until(lambda: self.raw(row_id).enrich_attempts == 3)
+            await self.until(lambda: row_id in worker._given_up)
             await asyncio.sleep(0.6)
             await self.stopped(worker, task)
 
         run_async(scenario())
-        row = self.raw(row_id)
-        self.assertIsNone(row.enriched_at)
-        self.assertIn("did not return JSON", row.enrich_error)
+        self.assertIsNone(self.raw(row_id).enriched_at)
         self.assertEqual(fake.count("users.info"), 3)
         self.assertEqual(self.records(), [])  # each failed try rolled back what it wrote
+
+    def test_failures_are_kept_in_memory_so_a_restart_tries_again(self):
+        fake = FakeSlackApi(errors={"users.info": "invalid_auth"})
+        row_id = self.insert(callback(message("1700000200.000100")))
+
+        async def run_until_given_up():
+            worker = self.worker(fake, poll_seconds=0.2)
+            task = await self.started(worker)
+            await self.until(lambda: row_id in worker._given_up)
+            await self.stopped(worker, task)
+
+        with self.assertLogs("slack-enrich", "ERROR"):
+            run_async(run_until_given_up())
+        fake.errors.clear()  # the token is fixed, then the worker restarts
+
+        async def restarted():
+            worker = self.worker(fake, poll_seconds=0.2)
+            task = await self.started(worker)
+            await self.until(lambda: self.raw(row_id).enriched_at is not None)
+            await self.stopped(worker, task)
+
+        run_async(restarted())
+        self.assertEqual([r.kind for r in self.records("message")], ["message"])
 
     def test_rows_without_a_tenant_wait_and_other_events_are_skipped(self):
         unmapped = self.insert(callback(message("1700000200.000100")), tenant=None, event_id="Ev1")
@@ -416,6 +474,7 @@ class EnrichDatabaseTest(unittest.TestCase):
             ("slack", "Ev012EVENT", "T012WORKSPACE", "dev", "message", "webhook"),
         )
         self.assertEqual(row.envelope["type"], "slack")
+        self.assertEqual(row.occurred_at, enrich.ordering_value(row.envelope["body"]))  # the source's time, not the insert
 
 
 if __name__ == "__main__":

@@ -38,16 +38,22 @@ infra/k8s/
       kustomization.yaml
     infrastructure.yaml       # Flux Kustomization -> infra/k8s/infrastructure
     apps.yaml                 # Flux Kustomization -> infra/k8s/apps, dependsOn infrastructure
+    monitoring.yaml           # Flux Kustomization -> infra/k8s/monitoring, dependsOn infrastructure
   infrastructure/
-    namespaces.yaml           # ember, tailscale, headlamp, cnpg-system (prune: disabled)
+    namespaces.yaml           # ember, tailscale, headlamp, cnpg-system, monitoring (prune: disabled)
     tailscale-operator/       # HelmRepository, HelmRelease, values.yaml, operator-oauth.sops.yaml
     cnpg/                     # HelmRepository, HelmRelease, values.yaml (CloudNativePG operator)
+    grafana-operator/         # HelmRepository, HelmRelease, values.yaml (keeps the Grafana Cloud dashboards)
   apps/
     nginx/                    # reverse proxy behind the public Ingress
-    github-webhook/           # placeholder listener (EMBER-56 replaces it)
+    intake/                   # webhook listener for every source (EMBER-62), webhooks.sops.yaml
     neo4j/                    # HelmRepository, HelmRelease, values.yaml, service-lb.yaml
     postgres/                 # CloudNativePG Cluster, service-lb.yaml, migrate-job.yaml, migrations/
     headlamp/                 # HelmRepository, HelmRelease, values.yaml, ingress.yaml, viewer.yaml
+  monitoring/
+    helmrepository.yaml       # Grafana's charts
+    k8s-monitoring/           # HelmRelease, values.yaml, grafana-cloud.sops.yaml (EMBER-91)
+    grafana/                  # Grafana Cloud as a Grafana object, folder and dashboards/ember.json, grafana-operator.sops.yaml
 .sops.yaml                    # (repo root) which files SOPS encrypts, and to which age key
 ```
 
@@ -55,21 +61,25 @@ infra/k8s/
 flowchart LR
   gh["GitHub: develop<br/>infra/k8s"] -->|every 1m| src["GitRepository<br/>flux-system"]
   src --> fs["Kustomization flux-system<br/>clusters/homelab"]
-  fs -->|creates| infra["Kustomization infrastructure<br/>namespaces, Tailscale operator, CloudNativePG"]
-  fs -->|creates| apps["Kustomization apps<br/>nginx, github-webhook, Neo4j, Postgres, Headlamp"]
+  fs -->|creates| infra["Kustomization infrastructure<br/>namespaces, Tailscale operator, CloudNativePG, Grafana Operator"]
+  fs -->|creates| apps["Kustomization apps<br/>nginx, intake, Neo4j, Postgres, Headlamp"]
+  fs -->|creates| mon["Kustomization monitoring<br/>Grafana Cloud collector and dashboard"]
   infra -->|healthy first| apps
+  infra -->|healthy first| mon
   key[("Secret sops-age<br/>from Ansible Vault")] -.decrypts.-> infra
   key -.decrypts.-> apps
+  key -.decrypts.-> mon
 ```
 
 | Flux object | Path | What it does |
 |---|---|---|
 | GitRepository `flux-system` | `https://github.com/cbu-capstone-design-27/ember`, branch `develop` | Fetches only `infra/k8s` every minute. The repo is public, so no credentials |
-| Kustomization `flux-system` | `infra/k8s/clusters/homelab` | Applies Flux itself and the two Kustomizations below. Flux upgrades itself from `gotk-components.yaml` |
-| Kustomization `infrastructure` | `infra/k8s/infrastructure` | Namespaces, the Tailscale operator and the CloudNativePG operator. `wait: true`: Ready only when everything it applied is healthy |
+| Kustomization `flux-system` | `infra/k8s/clusters/homelab` | Applies Flux itself and the three Kustomizations below. Flux upgrades itself from `gotk-components.yaml` |
+| Kustomization `infrastructure` | `infra/k8s/infrastructure` | Namespaces, the Tailscale operator, the CloudNativePG operator and the Grafana Operator. `wait: true`: Ready only when everything it applied is healthy |
 | Kustomization `apps` | `infra/k8s/apps` | Ember workloads. `dependsOn: infrastructure`, so the Tailscale operator exists before any Ingress and CloudNativePG before the Postgres Cluster |
+| Kustomization `monitoring` | `infra/k8s/monitoring` | The collector that sends metrics, logs and events to Grafana Cloud, and the dashboard the Grafana Operator keeps there (`infra/k8s/README.md`, Monitoring). `dependsOn: infrastructure` for its namespace and the operator's CRDs. Separate from `apps` so a broken collector never holds up a deploy |
 
-Both `infrastructure` and `apps` **prune**: an object removed from Git is deleted from the cluster. That also cleans up the old hash-suffixed ConfigMaps that a config edit leaves behind. Namespaces are the exception. They carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so dropping one from `namespaces.yaml` cannot take Neo4j's or Postgres's data with it.
+All three **prune**: an object removed from Git is deleted from the cluster. That also cleans up the old hash-suffixed ConfigMaps that a config edit leaves behind. Namespaces are the exception. They carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so dropping one from `namespaces.yaml` cannot take Neo4j's or Postgres's data with it.
 
 What runs on the cluster:
 
@@ -77,7 +87,7 @@ What runs on the cluster:
 |---|---|---|
 | `flux-system` | source, kustomize, helm, notification controllers | `gotk-components.yaml` |
 | `tailscale` | Tailscale operator + one proxy per Tailscale Ingress | HelmRelease, chart 1.102.4 |
-| `ember` | nginx, github-webhook placeholder | Plain manifests |
+| `ember` | nginx, intake | Plain manifests |
 | `ember` | Neo4j (pinned to hv-worker-1) | HelmRelease, chart 2026.9.0 |
 | `cnpg-system` | CloudNativePG operator | HelmRelease, chart 0.29.1 |
 | `ember` | Postgres (pinned to hv-worker-2), migrate Job | CloudNativePG `Cluster`, plain manifests |
@@ -87,7 +97,7 @@ Public and tailnet addresses:
 
 | URL | Reachable from | Serves |
 |---|---|---|
-| `https://ember.tail470a31.ts.net` | Internet (Funnel) | nginx, which routes `/webhook/github` and `/healthz` |
+| `https://ember.tail470a31.ts.net` | Internet (Funnel) | nginx, which routes `/webhook/` to intake and answers `/healthz` |
 | `https://headlamp.tail470a31.ts.net` | Tailnet only | Headlamp |
 | `bolt://hv-worker-1.tail470a31.ts.net:7687` | Tailnet only | Neo4j |
 | `hv-worker-2.tail470a31.ts.net:5432` | Tailnet only | Postgres (`make postgres-url`) |
@@ -115,7 +125,7 @@ make flux-preview BRANCH=<branch>
 make flux-preview-end        # after the PR merges, or to abandon the preview
 ```
 
-`flux-preview` suspends the `flux-system` Kustomization, points the GitRepository at your branch, applies `clusters/homelab/*.yaml` from your checkout, and reconciles `infrastructure` and `apps`. The cluster is shared, so tell the team: everyone sees your branch until you end the preview.
+`flux-preview` suspends the `flux-system` Kustomization, points the GitRepository at your branch, applies `clusters/homelab/*.yaml` from your checkout, and reconciles `infrastructure`, `apps` and `monitoring`. The cluster is shared, so tell the team: everyone sees your branch until you end the preview.
 
 `flux-preview-end` points Flux back at `develop` and resumes `flux-system`. Anything only your branch had is pruned. Run it **after** your PR merges. Ending a preview of a branch that is not merged rolls its changes back.
 
@@ -143,7 +153,14 @@ The plugin comes from the image `ghcr.io/headlamp-k8s/headlamp-plugin-flux:v0.7.
 
 ## Secrets with SOPS
 
-Secrets live in Git only as SOPS-encrypted `*.sops.yaml` files. Flux decrypts them on the cluster. Today there is one: `infrastructure/tailscale-operator/operator-oauth.sops.yaml`, the Tailscale operator's OAuth client.
+Secrets live in Git only as SOPS-encrypted `*.sops.yaml` files. Flux decrypts them on the cluster. Today there are four:
+
+- `infrastructure/tailscale-operator/operator-oauth.sops.yaml`: the Tailscale operator's OAuth client.
+- `apps/intake/webhooks.sops.yaml`: the GitHub App's webhook secret (`make intake-secret`).
+- `monitoring/k8s-monitoring/grafana-cloud.sops.yaml`: the Grafana Cloud push credentials.
+- `monitoring/grafana/grafana-operator.sops.yaml`: the Grafana Operator's service account token.
+
+`make grafana-secret` writes the last two.
 
 ### How it works
 
@@ -225,6 +242,8 @@ Each chart is a Flux HelmRelease with its HelmRepository and its `values.yaml` b
 | `cnpg/cloudnative-pg` | `infrastructure/cnpg/` | 0.29.1 (operator 1.30.1) | Installs and upgrades its CRDs (`crds: CreateReplace`). Runs the Postgres in `apps/postgres` (`infra/k8s/README.md`, Postgres) |
 | `neo4j/neo4j` | `apps/neo4j/` | 2026.9.0 | Pinned to hv-worker-1 with a 10Gi `local-path-retain` volume; install and upgrade timeout 10m |
 | `headlamp/headlamp` | `apps/headlamp/` | 0.45.0 | See Headlamp above |
+| `grafana/grafana-operator` | `infrastructure/grafana-operator/` | 5.25.0 | Installs and upgrades its CRDs (`crds: CreateReplace`). Watches only namespace `monitoring`, where `monitoring/grafana` points it at Grafana Cloud |
+| `grafana/k8s-monitoring` | `monitoring/k8s-monitoring/` | 4.5.3 | Alloy collectors through the Alloy operator, kube-state-metrics, Node Exporter. Installs and upgrades the Alloy CRD (`crds: CreateReplace`). Credentials from `grafana-cloud.sops.yaml` (`infra/k8s/README.md`, Monitoring) |
 
 How values reach the chart: each directory's `kustomization.yaml` turns `values.yaml` into a ConfigMap whose name ends in a hash of the file. `kustomizeconfig.yaml` lets kustomize rename the HelmRelease's `valuesFrom` to match. An edit to `values.yaml` therefore changes the HelmRelease, and Flux upgrades the release.
 
@@ -253,7 +272,7 @@ Everything on the cluster comes back from Git plus the age key in the vault.
    - applies `gotk-components.yaml` and waits for the CRDs,
    - creates Secret `flux-system/sops-age` from `vault_sops_age_key` (server-side apply, so no plain copy is left in an annotation),
    - applies `gotk-sync.yaml`,
-   - then waits up to 15 minutes for `infrastructure` and `apps` to be Ready.
+   - then waits up to 15 minutes for `infrastructure`, `apps` and `monitoring` to be Ready.
 5. Run `make apps-health`, `make ts-operator-health`, `make neo4j-health` and `make postgres-health`.
 
 ---
@@ -265,7 +284,7 @@ Everything on the cluster comes back from Git plus the age key in the vault.
 | `make flux-up` | First install, or after `make reset`: installs Flux and its age key, then health. Safe to re-run |
 | `make flux-health` | Controllers healthy, every Kustomization Ready, lists what is deployed and which branch is followed |
 | `make sync` | Fetch `develop` and apply it now instead of within the next minute |
-| `make apps-diff` | What this checkout's `infrastructure/` and `apps/` would change on the cluster. Deploys nothing |
+| `make apps-diff` | What this checkout's `infrastructure/`, `apps/` and `monitoring/` would change on the cluster. Deploys nothing |
 | `make flux-preview BRANCH=<branch>` | Deploy a pushed branch instead of `develop` |
 | `make flux-preview-end` | Go back to `develop` |
 | `make flux-components` | Regenerate `gotk-components.yaml` after changing `FLUX_VERSION` in the Makefile. Commit it; Flux upgrades itself |
@@ -275,6 +294,7 @@ Everything on the cluster comes back from Git plus the age key in the vault.
 | `make neo4j-health` | Pod ready on hv-worker-1; a query works in the pod and on every node's IP |
 | `make postgres-health` | Postgres ready on hv-worker-2, migrations applied, the ingestion tables present, Postgres answering on every node's IP |
 | `make postgres-url` | Print the tailnet connection URL for Postgres, password included |
+| `make postgres-migrate` | Apply `k8s/apps/postgres/migrations` with the migrate Job's dbmate, by hand. Uses `DATABASE_URL`, else `make postgres-url`. Needs Docker |
 
 Removed with EMBER-57, because Flux does their job: `apps-up`, `apps-down`, `neo4j-prep`, `neo4j-up`, `neo4j-down`, `ts-operator-up`, `ts-operator-down`.
 
@@ -322,7 +342,7 @@ How it was verified, on a cluster reset to bare k3s:
 
 ### Open follow-ups
 
-- [ ] EMBER-56: GHCR `imagePullSecret` (a `*.sops.yaml` Secret; the packages are private) and replacing the placeholder `github-webhook` with the real `github-ingestion` image
+- [x] EMBER-62: replace the placeholder `github-webhook` with `intake`. No pull secret is needed: the GHCR packages are public (`docs/container-images.md`)
 - [ ] Flux image automation: ImageRepository and ImagePolicy on the `<branch>-<run>-<sha>` tags. Decide whether it pushes to `develop` (needs a branch-protection bypass) or opens PRs from its own branch
 - [ ] Move Neo4j's password from `apps/neo4j/values.yaml` into a SOPS Secret (`passwordFromSecret`), and update `neo4j-health`, which reads the password from `values.yaml`
 - [ ] Remove the now-duplicate `vault_ts_oauth_client_id` and `vault_ts_oauth_client_secret` from the vault
