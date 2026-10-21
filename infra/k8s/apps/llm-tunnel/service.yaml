@@ -1,5 +1,5 @@
 # TEMPORARY (EMBER-49), with deployment.yaml. The chat model, through the tunnel:
-# LLM_BASE_URL=http://llm-tunnel.ember:8001/v1. The model still checks its own API key.
+# LLM_BASE_URL=http://llm-tunnel.ember:8001/v1. No API key while the tunnel is in place (k8s/README.md).
 apiVersion: v1
 kind: Service
 metadata:
