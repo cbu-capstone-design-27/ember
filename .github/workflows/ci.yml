@@ -185,6 +185,17 @@ jobs:
         env:
           SLACK_SIGNING_SECRET: ci-local-smoke
         run: python3 services/slack-ingestion/smoke_webhook.py
+      # EMBER-67: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      - name: Slack enrich worker
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          # A venv per service, so each one's pinned requirements stay apart
+          python3 -m venv "$RUNNER_TEMP/slack-enrich-venv"
+          "$RUNNER_TEMP/slack-enrich-venv/bin/pip" install -q -r services/slack-ingestion/requirements.txt
+          "$RUNNER_TEMP/slack-enrich-venv/bin/python3" services/slack-ingestion/test_enrich.py
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/slack-enrich-venv/bin/python3" services/slack-ingestion/test_enrich_db.py
       - name: Jira ingestion webhook contract
         run: python3 services/jira-ingestion/test_webhook.py
       - name: Jira ingestion local pull contract

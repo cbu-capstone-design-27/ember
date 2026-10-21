@@ -14,6 +14,9 @@
 #   # one-off Slack backfill (exits when done; resumes if re-run; output in volume slack-backfill-data):
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile slack-backfill run --rm --build slack-backfill
+#   # the Slack enrich worker, with the local Postgres below (started and migrated first):
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile postgres --profile slack-enrich up --build slack-enrich
 #   # Ember web app on http://localhost:3000 (SQLite in volume web-data):
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile web up --build web
@@ -96,6 +99,27 @@ services:
       SLACK_RATE_MODE: "${SLACK_RATE_MODE:-}"
     volumes:
       - slack-backfill-data:/data
+
+  # EMBER-67. The Slack enrich worker (services/slack-ingestion/enrich.py): raw_events -> source_records.
+  # Same image as slack-ingestion, on the postgres profile's database, as intake is. Ctrl+C or `stop`
+  # lets the jobs in flight finish.
+  slack-enrich:
+    profiles: ["slack-enrich"]
+    build:
+      context: ..
+      dockerfile: services/slack-ingestion/Dockerfile
+    container_name: ember-slack-enrich
+    command: ["python3", "enrich.py"]
+    stop_grace_period: 60s
+    environment:
+      DATABASE_URL: "postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable"
+      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN:-}"
+      SLACK_RATE_MODE: "${SLACK_RATE_MODE:-}"
+      CONCURRENCY: "${ENRICH_CONCURRENCY:-}"  # the worker reads CONCURRENCY, as enrich:github and enrich:jira do
+      ENRICH_POLL_SECONDS: "${ENRICH_POLL_SECONDS:-}"
+    depends_on:
+      postgres-migrate:
+        condition: service_completed_successfully
 
   # EMBER-33. Runs on the DGX Spark, not in the default `up`. See
   # services/embedding/README.md.

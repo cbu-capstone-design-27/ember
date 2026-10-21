@@ -31,7 +31,7 @@ services/
   intake/            The webhook listener for every source; stores deliveries in Postgres raw_events (EMBER-62)
   github-ingestion/  GitHub REST backfill and enrich:github; webhooks go to intake (EMBER-35, EMBER-65)
   jira-ingestion/    Jira admin webhook receiver; emits {type, body} (EMBER-31)
-  slack-ingestion/   Slack Events API receiver; emits {type, body} (EMBER-36)
+  slack-ingestion/   Slack Events API receiver; emits {type, body} (EMBER-36). Also enrich:slack, raw_events -> source_records (EMBER-67)
   gitlab-ingestion/  GitLab webhook receiver plus backfill/reconciliation; emits {type, body} (EMBER-54)
 packages/            Shared libraries - add one only when there is a second consumer
 infra/               Local infrastructure (docker-compose: Neo4j; optional postgres, intake, jira-ingestion, slack-ingestion, gitlab-ingestion and gitlab-backfill profiles),
