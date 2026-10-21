@@ -242,6 +242,8 @@ Each component also connects to Postgres as its own role, limited to the tables 
 
 Postgres runs on the cluster and holds everything stateful. The envelope keeps the EMBER-39 contract (`{"type", "body"}`); routing metadata sits in columns beside it.
 
+The same `ember` database also holds the web app's sign-in tables, in schema `web` beside these in `public` (EMBER-80). Better Auth creates and migrates them when the web app starts, not dbmate, so they are not in the block below ([`apps/web/README.md`, Database](../../apps/web/README.md#database)).
+
 The SQL below is the source of truth for the schema, and for the SQLAlchemy models in intake and every enrich worker, which map these tables and nothing more. The cluster gets it from the migrations in `infra/k8s/apps/postgres/migrations` (EMBER-61, ADR 0005), and CI fails if those build a different schema from this block. A schema or model change starts here: edit this block, add a migration, then change the models.
 
 ```sql
