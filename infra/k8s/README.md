@@ -223,6 +223,8 @@ env:
 
 Service `postgres-rw` always points at the primary. Every component connects as `ember` for now; ADR 0004's role per component comes later.
 
+`ember` is not a superuser, and superuser access is off (the operator's default), so no Secret holds a superuser password. An extension only a superuser can create, such as `vector` (pgvector, EMBER-77), goes in `apps/postgres/database.yaml`, a CloudNativePG `Database` for `ember` with `extensions: [{name: ..., ensure: present}]`. The operator creates it there, and a migration's `create extension if not exists` then finds it and needs no privilege. Merge that change before the migration that uses it. The image (`imageName` in `cluster.yaml`) must ship the extension: `select * from pg_available_extensions` in the pod lists what it has.
+
 From the tailnet, `make postgres-url` prints `postgresql://ember:<password>@hv-worker-2.tail470a31.ts.net:5432/ember`. As with Neo4j, `apps/postgres/service-lb.yaml` publishes port 5432 on every node's IP through ServiceLB, tailnet sources only, so the other nodes' names work too. Reading the Secret needs the kubeconfig: Headlamp's viewer cannot see Secrets.
 
 #### Migrations
