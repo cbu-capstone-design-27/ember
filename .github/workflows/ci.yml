@@ -254,7 +254,7 @@ jobs:
           set -euo pipefail
           # A venv, because the runner's system Python refuses pip installs (PEP 668)
           python3 -m venv "$RUNNER_TEMP/mcp-venv"
-          "$RUNNER_TEMP/mcp-venv/bin/pip" install -q -r apps/mcp/requirements.txt
+          "$RUNNER_TEMP/mcp-venv/bin/pip" install -q -r apps/mcp/requirements.txt -r services/embed/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/mcp-venv/bin/python3" apps/mcp/test_mcp.py
       - name: GitLab ingestion container
         run: |
