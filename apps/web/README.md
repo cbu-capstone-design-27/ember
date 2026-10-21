@@ -98,8 +98,8 @@ DATABASE_URL=postgres://ember:change-me-locally@postgres:5432/ember \
 
 The cluster's Postgres (`ember` on `hv-worker-2`, EMBER-61) is reachable over the cluster's Tailscale tailnet only. It is wiped and recreated now and then, so keep its URL in `.env`, never in code.
 
-1. Join the cluster's tailnet. `getent hosts hv-worker-2.tail470a31.ts.net` should print an address.
-2. Print the URL, with its password: `make -C infra/ansible -s postgres-url` (needs the cluster kubeconfig; see `infra/ansible`). Put it in the root `.env` as `DATABASE_URL`.
+1. Join the cluster's tailnet, or one the cluster's nodes are shared into. `getent hosts hv-worker-2.tail470a31.ts.net` should print an address.
+2. Print the URL, with its password: `make -C infra/ansible -s postgres-url` (needs the cluster kubeconfig; see `infra/ansible`). Put it in the root `.env` as `DATABASE_URL`. Postgres answers on port 5432 of every node (`infra/k8s/apps/postgres/service-lb.yaml`), so if `hv-worker-2` isn't shared with you, use a node that is, e.g. `hv-worker-1`.
 3. Run the app with that `.env`. `npm run dev` reads only `apps/web/.env*`, so load the root one into the shell first (`node --env-file` doesn't work here: Next passes it on to a worker through `NODE_OPTIONS`, which refuses it):
 
    ```sh
