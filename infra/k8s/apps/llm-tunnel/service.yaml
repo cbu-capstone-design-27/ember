@@ -1,0 +1,14 @@
+# TEMPORARY (EMBER-49), with deployment.yaml. The chat model, through the tunnel:
+# LLM_BASE_URL=http://llm-tunnel.ember:8001/v1. No API key while the tunnel is in place (k8s/README.md).
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-tunnel
+  namespace: ember
+spec:
+  selector:
+    app: llm-tunnel
+  ports:
+    - name: llm
+      port: 8001
+      targetPort: llm

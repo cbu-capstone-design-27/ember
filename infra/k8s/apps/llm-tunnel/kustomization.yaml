@@ -1,0 +1,15 @@
+# TEMPORARY (EMBER-49): the SSH tunnel to the Spark's chat model (k8s/README.md, llm-tunnel).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ember
+resources:
+  - deployment.yaml
+  - service.yaml
+  # Secret llm-tunnel-ssh: id_ed25519, from vault_llm_tunnel_ssh_key (make llm-tunnel-secret)
+  - ssh.sops.yaml
+configMapGenerator:
+  # The Spark's ED25519 host key, from ssh-keyscan; the same from this machine and from the nodes.
+  # Not secret. The name gets a content hash, so a new host key restarts the pod
+  - name: llm-tunnel-known-hosts
+    files:
+      - known_hosts
