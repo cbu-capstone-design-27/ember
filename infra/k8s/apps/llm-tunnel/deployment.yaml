@@ -37,7 +37,7 @@ spec:
       containers:
         - name: ssh
           # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
-          image: ghcr.io/cbu-capstone-design-27/ember/llm-tunnel:develop-RUN-SHA
+          image: ghcr.io/cbu-capstone-design-27/ember/llm-tunnel:develop-170-c7e15ae
           args:
             - -N
             # No config file, and no prompts: a key that doesn't work fails at once
