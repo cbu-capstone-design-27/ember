@@ -81,18 +81,18 @@ Both subscriptions deliver `event.type == "message"`: public and private channel
 
 ### Everything else
 
-`enrich:slack` builds the user, channel and membership rows below. A channel event that carries only the change (rename, archive, unarchive, delete) is merged onto the newest stored channel, so the record stays a whole channel; a delete sets `is_deleted: true`. Reactions, `app_uninstalled` and `tokens_revoked` are skipped for now: reactions have no ontology type yet, and the uninstall events need `installations` and reconcile.
+`enrich:slack` builds the user, channel and membership rows below. A channel event that carries only the change (rename, archive, unarchive, delete), and a topic, purpose or name system message, is applied onto the channel as stored at or before its own time, so the record stays a whole channel; a delete sets `is_deleted: true`. If newer channel rows already exist (a late or retried delivery), the newer changes are replayed on top, and when the result differs from the newest row, one more row carries the change forward: the newest row's `occurred_at`, version `<newest version>+<this version>`. A newer change to the same field still wins. Changes to one channel are applied one at a time (a Postgres advisory lock). `event_time` is whole seconds, so these versions add the `event_id`: two events about one object in the same second stay two rows, and a retry, which has the same `event_id`, stays one. Reactions, `app_uninstalled` and `tokens_revoked` are skipped for now: reactions have no ontology type yet, and the uninstall events need `installations` and reconcile.
 
 | Event | Payload carries | Enrich fetches | `source_records` row |
 |---|---|---|---|
 | `reaction_added`, `reaction_removed` | `user`, `reaction` (emoji name), `item_user`, `item` = `{type: "message", channel, ts}`, `event_ts` | The reacted message only if it isn't stored (`conversations.replies` for a reply, `conversations.history` for a top-level message) | `reaction`, `<channel>/<item.ts>/<reaction>/<user>`, version `event_ts`. `reaction_removed` writes a tombstone |
-| `channel_created` | `channel` = `{id, name, created, creator}`. No `event_ts` | `conversations.info` for privacy, topic and purpose | `channel`, `<channel id>`, version `event_time` |
-| `channel_rename`, `group_rename` | `channel` = `{id, name, created}`. No `event_ts` | Nothing | `channel`, new name, version `event_time` |
-| `channel_archive`, `group_archive` | `channel` (id), `user`. No `event_ts` | Nothing | `channel`, archived, version `event_time` |
-| `channel_unarchive`, `group_unarchive` | `channel` (id), `user`. No `event_ts` | Nothing | `channel`, unarchived, version `event_time` |
-| `channel_deleted` | `channel` (id). No `event_ts` | Nothing | `channel`, tombstone, version `event_time` |
-| `member_joined_channel` | `user`, `channel`, `channel_type`, `team`, `inviter` (blank if they joined on their own). No `event_ts` | The person if not cached. **If `user` is our bot:** enqueue a reconcile of that channel (the bot can read it now) | `membership`, `<channel>/<user>`, version `event_time` |
-| `member_left_channel` | `user`, `channel`, `channel_type`, `team`. No `event_ts` | Nothing. **If `user` is our bot:** stop reconciling the channel. Stored data is kept (EMBER-53) | `membership`, tombstone, version `event_time` |
+| `channel_created` | `channel` = `{id, name, created, creator}`. No `event_ts` | `conversations.info` for privacy, topic and purpose | `channel`, `<channel id>`, version `<event_time>:<event_id>` |
+| `channel_rename`, `group_rename` | `channel` = `{id, name, created}`. No `event_ts` | Nothing | `channel`, new name, version `<event_time>:<event_id>` |
+| `channel_archive`, `group_archive` | `channel` (id), `user`. No `event_ts` | Nothing | `channel`, archived, version `<event_time>:<event_id>` |
+| `channel_unarchive`, `group_unarchive` | `channel` (id), `user`. No `event_ts` | Nothing | `channel`, unarchived, version `<event_time>:<event_id>` |
+| `channel_deleted` | `channel` (id). No `event_ts` | Nothing | `channel`, tombstone, version `<event_time>:<event_id>` |
+| `member_joined_channel` | `user`, `channel`, `channel_type`, `team`, `inviter` (blank if they joined on their own). No `event_ts` | The person if not cached. **If `user` is our bot:** enqueue a reconcile of that channel (the bot can read it now) | `membership`, `<channel>/<user>`, version `<event_time>:<event_id>` |
+| `member_left_channel` | `user`, `channel`, `channel_type`, `team`. No `event_ts` | Nothing. **If `user` is our bot:** stop reconciling the channel. Stored data is kept (EMBER-53) | `membership`, tombstone, version `<event_time>:<event_id>` |
 | `user_change` | The whole user object (`profile`; `profile.email` with `users:read.email`; `updated`), `cache_ts`, `event_ts` | Nothing | `user`, `<user id>`, version `user.updated` |
 | `team_join` | `user` (Slack's reference elides its fields). No `event_ts` | `users.info` if `user` has no `profile` | `user`, `<user id>`, version `user.updated` |
 | `app_uninstalled` | Nothing but `type`. No `event_ts` | Nothing | No record. Marks the workspace disconnected in `installations` and stops its reconcile |

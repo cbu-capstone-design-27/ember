@@ -210,8 +210,9 @@ To receive real events later, point a tunnel at port `8082` and set the app's Re
 - **Context comes from stored records first.** Users and channels are kept as records of kind `user` and `channel`. `users.info` or `conversations.info` is called only when no record exists yet. A reply's parent comes from `conversations.replies` when it isn't stored, and is stored too. A lookup that finds nothing (`user_not_found`, `thread_not_found`, …) leaves that context empty.
 - **People, channels and membership become records too** (`docs/ingestion/slack-webhooks.md`, Everything else):
   - `user_change` and `team_join` write a `user` record, version `user.updated`. `team_join` calls `users.info` only when the payload has no `profile`.
-  - `channel_created`, `channel_rename` / `group_rename`, `*_archive`, `*_unarchive` and `channel_deleted` write a `channel` record, version `event_time`. `channel_created` calls `conversations.info` for privacy, topic and purpose. The others carry only the change, so it is merged onto the newest stored channel (fetched once if none is stored): `name`, `is_archived`, or `is_deleted: true` for a delete.
-  - `member_joined_channel` and `member_left_channel` write a `membership` record, `<channel>/<user>`, version `event_time`, with `member` true or false. A join fetches the person if not stored. When the person is our bot, the worker logs the `pull_test.py --channel` backfill to run; starting it automatically is reconcile's job.
+  - `channel_created`, `channel_rename` / `group_rename`, `*_archive`, `*_unarchive` and `channel_deleted` write a `channel` record, version `<event_time>:<event_id>` (`event_time` is whole seconds, so the `event_id` keeps two events in one second apart). `channel_created` calls `conversations.info` for privacy, topic and purpose. The others carry only the change: `name`, `is_archived`, or `is_deleted: true` for a delete. Topic, purpose and name system messages also change the channel (`topic` / `purpose` as `{value, creator, last_set}`, or `name`), version `ts`.
+  - A change applies in Slack's order onto the channel as stored at or before its time (fetched once if none is stored), one change per channel at a time. A late or retried change gets the newer changes replayed on top, and if that differs from the newest record, one more record carries it forward (version `<newest version>+<this version>`). A newer change to the same field still wins.
+  - `member_joined_channel` and `member_left_channel` write a `membership` record, `<channel>/<user>`, version `<event_time>:<event_id>`, with `member` true or false. A join fetches the person if not stored. When the person is our bot, the worker logs the `pull_test.py --channel` backfill to run; starting it automatically is reconcile's job.
 - **Everything else is skipped.** Reactions, `app_uninstalled`, `tokens_revoked` and `app_rate_limited` are marked enriched and logged as skipped. Reactions wait for the ontology to have a place for them; the uninstall events need `installations` and reconcile.
 - **No duplicates.** Records are inserted with `on conflict (source, tenant, object_id, version) do nothing`, so running a row twice adds nothing.
 
@@ -220,9 +221,10 @@ To receive real events later, point a tunnel at port `8082` and set the app's Re
 - **Wake.** Idle, it waits on `LISTEN raw_events`. The database sends `NOTIFY raw_events, 'slack'` on each insert (EMBER-75's trigger, which EMBER-62 may replace). A poll every `ENRICH_POLL_SECONDS` covers anything missed.
 - **Claim.** `CONCURRENCY` asyncio runners each claim one pending row (`enriched_at is null`, `FOR UPDATE SKIP LOCKED`), oldest by Slack's time first: `order by occurred_at, id` ([Source ordering value](../../docs/ingestion/architecture.md#source-ordering-value-ember-63)). Each one enriches the row, writes its records and sets `enriched_at` in that row's transaction. A crash releases the row, and it runs again.
 - **Catch up.** At start it claims straight away, so rows inserted while it was stopped are picked up.
-- **Failures.** Kept in memory, as `enrich:github` does, until the job queue's retry and dead letter replace it (`architecture.md`, Job queue). A failure rolls back the row's records and the row is left alone for 2, 4, 8 … seconds (at most one poll interval). After 8 failures, or at once for `invalid_auth`, `token_revoked` and `missing_scope`, the worker logs an error and stops claiming the row until it restarts. The row stays pending in `raw_events`, so a restart tries it again.
+- **Failures.** Kept in memory, as `enrich:github` does, until the job queue's retry and dead letter replace it (`architecture.md`, Job queue). A failure rolls back the row's records and the row is retried after 2, 4, 8 … seconds (at most one poll interval); an idle runner wakes for it. A call Slack still throttles after `SlackClient`'s hour of waiting is not a failure: the row is retried after a poll interval and no attempt is counted. After 8 failures, or at once for `invalid_auth`, `token_revoked` and `missing_scope`, the worker logs an error and stops claiming the row until it restarts. The row stays pending in `raw_events`, so a restart tries it again.
 - **Rate limits.** Every Slack call goes through `SlackClient`, with the pacing, throttle and backoff above ([Rate limits](#rate-limits-ember-52)). Its gates are kept in `rate_limits`, keyed by workspace tenant and method, so every worker process shares one workspace's quota.
-- **Stopping.** `Ctrl+C` (or `SIGTERM`) stops claiming and lets the jobs in flight finish. A second `Ctrl+C` exits at once, and an unfinished row stays pending.
+- **Stopping.** `Ctrl+C` (or `SIGTERM`) stops claiming and lets the jobs in flight finish. A job that would wait on a Slack rate limit for more than 10 s more rolls back instead, so stopping fits in compose's 60 s grace period; its row stays pending for the next start. A second `Ctrl+C` exits at once, and an unfinished row stays pending.
+- **Threads.** Slack calls are synchronous, so they run on a thread pool of their own, one thread per runner.
 - **Tenants.** Rows with `tenant` null (an account not yet mapped) wait.
 
 ### Settings
@@ -284,7 +286,8 @@ PGTEST_URL='postgresql://ember:change-me-locally@127.0.0.1:5432/postgres?sslmode
 - catch-up after a stop
 - concurrency
 - `rate_limits`
-- Ctrl+C finishing the job in flight
-- retries and permanent errors
+- Ctrl+C finishing the job in flight, and rolling back one stuck behind a long rate limit
+- retries (after their backoff) and permanent errors
+- channel changes in Slack's order, late or at once
 
 CI runs all four, plus the smoke.

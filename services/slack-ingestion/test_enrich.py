@@ -112,13 +112,27 @@ class FakeSlackApi:
 
 
 class DictCache:
-    """The Cache, from a dict of (kind, object_id) -> record."""
+    """The Cache, from a dict of (kind, object_id) -> a record (stored long ago), or -> [Stored] oldest first."""
 
     def __init__(self, records: dict | None = None):
         self.records = dict(records or {})
+        self.locked: list[tuple[str, str]] = []
+
+    def _stored(self, kind, object_id) -> list:
+        value = self.records.get((kind, object_id))
+        if value is None or isinstance(value, list):
+            return value or []
+        return [enrich.Stored("0", slack_time(0), value, None)]
 
     async def latest(self, kind, object_id):
-        return self.records.get((kind, object_id))
+        stored = self._stored(kind, object_id)
+        return stored[-1].record if stored else None
+
+    async def history(self, kind, object_id):
+        return self._stored(kind, object_id)
+
+    async def lock(self, kind, object_id):
+        self.locked.append((kind, object_id))
 
 
 def caller(fake: FakeSlackApi):
@@ -413,13 +427,13 @@ class OtherEventsTest(unittest.TestCase):
     def test_team_join_keeps_the_payload_when_the_lookup_finds_nothing(self):
         records, _ = self.run_enrich(callback({"type": "team_join", "user": {"id": "U0NEW"}}, event_time=1700000400),
                                      fake=FakeSlackApi(users={}))
-        self.assertEqual((records[0].record, records[0].version), ({"id": "U0NEW"}, "1700000400"))
+        self.assertEqual((records[0].record, records[0].version), ({"id": "U0NEW"}, "1700000400:Ev1"))
 
     def test_channel_created_fetches_privacy_topic_and_purpose(self):
         sent = {"id": CHANNEL, "name": "decisions", "created": 1690000000, "creator": "U0ADA"}
         records, fake = self.run_enrich(callback({"type": "channel_created", "channel": sent}, event_time=1700000300))
         [channel] = records
-        self.assertEqual((channel.kind, channel.object_id, channel.version), ("channel", CHANNEL, "1700000300"))
+        self.assertEqual((channel.kind, channel.object_id, channel.version), ("channel", CHANNEL, "1700000300:Ev1"))
         self.assertEqual(channel.occurred_at, slack_time(1700000300))
         self.assertEqual(channel.record, {**sent, **CHANNELS[CHANNEL]})
         self.assertEqual(fake.count("conversations.info"), 1)
@@ -435,7 +449,8 @@ class OtherEventsTest(unittest.TestCase):
                           event_time=1700000300)
         records, fake = self.run_enrich(rename, cache=cache)
         self.assertEqual(records[0].record, {**CHANNELS[CHANNEL], "name": "adr"})
-        self.assertEqual(records[0].version, "1700000300")
+        self.assertEqual(records[0].version, "1700000300:Ev1")
+        self.assertEqual(cache.locked, [("channel", CHANNEL)])  # one change to a channel at a time
         for kind, archived in (("channel_archive", True), ("group_archive", True), ("channel_unarchive", False), ("group_unarchive", False)):
             with self.subTest(kind=kind):
                 records, fake = self.run_enrich(callback({"type": kind, "channel": CHANNEL, "user": "U0ADA"}), cache=cache)
@@ -456,6 +471,70 @@ class OtherEventsTest(unittest.TestCase):
         self.assertEqual(records[0].record, {"id": "C0GONE", "is_deleted": True})
         self.assertEqual(fake.calls, [])
 
+    def test_a_late_change_is_carried_onto_the_newest_channel(self):
+        # The archive (t=400) was enriched before a rename (t=300) that Slack sent earlier arrived
+        archive = callback({"type": "channel_archive", "channel": CHANNEL, "user": "U0ADA"}, event_id="Ev2", event_time=1700000400)
+        cache = DictCache({("channel", CHANNEL): [
+            enrich.Stored("1700000000123", slack_time(1700000000), CHANNELS[CHANNEL], None),
+            enrich.Stored("1700000400:Ev2", slack_time(1700000400), {**CHANNELS[CHANNEL], "is_archived": True}, archive),
+        ]})
+        rename = callback({"type": "channel_rename", "channel": {"id": CHANNEL, "name": "adr"}}, event_time=1700000300)
+        records, fake = self.run_enrich(rename, cache=cache)
+        as_of_rename, carried = records
+        self.assertEqual((as_of_rename.version, as_of_rename.occurred_at), ("1700000300:Ev1", slack_time(1700000300)))
+        self.assertEqual(as_of_rename.record, {**CHANNELS[CHANNEL], "name": "adr"})  # not archived yet
+        self.assertEqual((carried.version, carried.occurred_at), ("1700000400:Ev2+1700000300:Ev1", slack_time(1700000400)))
+        self.assertEqual(carried.record, {**CHANNELS[CHANNEL], "name": "adr", "is_archived": True})
+        self.assertEqual(fake.calls, [])
+
+        # Running it again carries nothing new: the carried record is already the newest
+        cache.records[("channel", CHANNEL)].append(enrich.Stored(carried.version, carried.occurred_at, carried.record, rename))
+        records, _ = self.run_enrich(rename, cache=cache)
+        self.assertEqual([r.version for r in records], ["1700000300:Ev1"])
+
+    def test_a_late_change_does_not_undo_a_newer_one(self):
+        newer = callback({"type": "channel_rename", "channel": {"id": CHANNEL, "name": "newest"}}, event_id="Ev2", event_time=1700000400)
+        cache = DictCache({("channel", CHANNEL): [
+            enrich.Stored("1700000000123", slack_time(1700000000), CHANNELS[CHANNEL], None),
+            enrich.Stored("1700000400:Ev2", slack_time(1700000400), {**CHANNELS[CHANNEL], "name": "newest"}, newer),
+        ]})
+        late = callback({"type": "channel_rename", "channel": {"id": CHANNEL, "name": "older"}}, event_time=1700000300)
+        records, _ = self.run_enrich(late, cache=cache)
+        self.assertEqual([(r.version, r.record["name"]) for r in records], [("1700000300:Ev1", "older")])
+
+    def test_two_events_in_one_second_are_two_versions(self):
+        joined = callback({"type": "member_joined_channel", "user": "U0BEN", "channel": CHANNEL}, event_id="Ev1")
+        left = callback({"type": "member_left_channel", "user": "U0BEN", "channel": CHANNEL}, event_id="Ev2")
+        cache = DictCache({("user", "U0BEN"): USERS["U0BEN"]})
+        [join_record], _ = self.run_enrich(joined, cache=cache)
+        [leave_record], _ = self.run_enrich(left, cache=cache)
+        self.assertEqual((join_record.version, leave_record.version), ("1700000200:Ev1", "1700000200:Ev2"))
+
+    def test_topic_purpose_and_name_messages_update_the_channel(self):
+        cache = DictCache({("channel", CHANNEL): CHANNELS[CHANNEL]})
+        ts = "1700000300.000100"
+        for subtype, extra, expected in (
+            ("channel_topic", {"topic": "Ship v2"}, {"topic": {"value": "Ship v2", "creator": "U0ADA", "last_set": 1700000300}}),
+            ("group_purpose", {"purpose": "Decisions"}, {"purpose": {"value": "Decisions", "creator": "U0ADA", "last_set": 1700000300}}),
+            ("channel_name", {"name": "adr", "old_name": "decisions"}, {"name": "adr"}),
+        ):
+            with self.subTest(subtype=subtype):
+                body = callback(message(ts, subtype=subtype, **extra))
+                records, fake = self.run_enrich(body, cache=DictCache({**cache.records, ("user", "U0ADA"): USERS["U0ADA"]}))
+                channel, msg = records
+                self.assertEqual((channel.kind, channel.object_id, channel.version), ("channel", CHANNEL, ts))
+                self.assertEqual(channel.record, {**CHANNELS[CHANNEL], **expected})
+                self.assertEqual((msg.kind, msg.record["channel"]), ("message", channel.record))  # the context is the new channel
+                self.assertEqual(fake.calls, [])
+        # A channel not stored yet is fetched first, as for a channel event
+        records, fake = self.run_enrich(callback(message(ts, subtype="channel_topic", topic="Ship v2")))
+        self.assertEqual(by_kind(records)["channel"][0].record["name"], "decisions")
+        self.assertEqual(fake.count("conversations.info"), 1)
+        # A join is only a message
+        records, _ = self.run_enrich(callback(message(ts, subtype="channel_join")))
+        self.assertEqual(sorted(by_kind(records)), ["channel", "message", "user"])  # the fetched context, no change
+        self.assertEqual(by_kind(records)["channel"][0].version, "1700000000123")
+
     def test_member_joined_fetches_the_person_once(self):
         joined = callback({"type": "member_joined_channel", "user": "U0BEN", "channel": CHANNEL,
                            "channel_type": "C", "team": TEAM, "inviter": "U0ADA"}, event_time=1700000300)
@@ -463,7 +542,7 @@ class OtherEventsTest(unittest.TestCase):
         user, membership = records
         self.assertEqual((user.kind, user.object_id), ("user", "U0BEN"))
         self.assertEqual((membership.kind, membership.object_id, membership.version),
-                         ("membership", f"{CHANNEL}/U0BEN", "1700000300"))
+                         ("membership", f"{CHANNEL}/U0BEN", "1700000300:Ev1"))
         self.assertEqual(membership.record, {"payload": joined, "user": USERS["U0BEN"], "channel": CHANNEL,
                                              "member": True, "inviter": "U0ADA"})
         records, fake = self.run_enrich(joined, cache=DictCache({("user", "U0BEN"): USERS["U0BEN"]}))

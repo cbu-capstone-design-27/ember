@@ -13,8 +13,9 @@ How it runs:
   enriched_at, in the row's own transaction.
   A crash releases the row, and it runs again.
 - At start the runners claim straight away, so rows inserted while it was stopped are picked up.
-- Ctrl+C (SIGINT) or SIGTERM: stop claiming, finish the jobs in flight, exit. A second Ctrl+C
-  exits at once; an unfinished row stays pending.
+- Ctrl+C (SIGINT) or SIGTERM: stop claiming, finish the jobs in flight, exit. A job waiting on a
+  Slack rate limit for longer than STOP_WAIT_LIMIT rolls back instead, so stopping stays quick. A
+  second Ctrl+C exits at once; an unfinished row stays pending.
 
 Scope: message events (new messages, replies, broadcasts, message_replied, edits, deletes, system
 messages). The user and channel a message names are cached as records of kind user and channel,
@@ -23,8 +24,10 @@ comes from conversations.replies when it isn't stored.
 
 People, channels and membership (slack-webhooks.md, Everything else) also become records:
 user_change and team_join write the user; channel_created, *_rename, *_archive, *_unarchive and
-channel_deleted write the channel, merged onto the newest stored copy so a payload's few fields
-don't replace the full channel; member_joined_channel and member_left_channel write a membership.
+channel_deleted write the channel; member_joined_channel and member_left_channel write a
+membership. A channel event, or a topic, purpose or name system message, carries only its change.
+It applies in Slack's order onto the channel as stored before it (Context.change_channel), so a
+payload's few fields don't replace the full channel and a late change doesn't undo a newer one.
 Reactions, app_uninstalled, tokens_revoked and anything else are marked enriched and skipped.
 
 Every Slack call goes through pull_test.SlackClient (EMBER-52's pacing, throttle and backoff), with
@@ -52,6 +55,7 @@ import sys
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -72,6 +76,7 @@ from pull_test import (
     PullError,
     SlackApiError,
     SlackClient,
+    Throttled,
     bot_token,
     make_client,
     rate_table,
@@ -89,6 +94,11 @@ DEFAULT_POLL_SECONDS = 30.0
 # Transient failures before a row is given up on (architecture.md, Stage interfaces: 8 attempts)
 MAX_ATTEMPTS = 8
 ERROR_TEXT_LIMIT = 500
+# Once stopping, a Slack wait (pacing, throttle or backoff) longer than this is cut short and the
+# job rolls back, so SIGTERM finishes within compose's and Kubernetes' grace period
+STOP_WAIT_LIMIT = 10.0
+# Marks a channel record that carries a late change forward onto the newest channel
+CARRIED = "+"
 
 # A lookup that finds nothing leaves that context empty. The record is still written.
 LOOKUP_MISSES = {
@@ -112,6 +122,10 @@ class ConfigError(Exception):
 
 class Permanent(Exception):
     """Retrying cannot enrich this row. It is given up on at once."""
+
+
+class Halted(Exception):
+    """The worker is stopping and a Slack wait was cut short. The row stays pending."""
 
 
 # ---- Configuration ----------------------------------------------------------------------------
@@ -223,8 +237,7 @@ def describe(body) -> Delivery | None:
     channel = _str(event.get("channel"))
     if channel is None:
         raise Permanent("message event without a channel")
-    # The ordering value (slack-webhooks.md, Ordering value): event_ts, then ts, then event_time
-    occurred = slack_time(event.get("event_ts")) or slack_time(event.get("ts")) or slack_time(body.get("event_time"))
+    occurred = ordering_value(body)
     if occurred is None:
         raise Permanent("message event without event_ts, ts or event_time")
     subtype = event.get("subtype")
@@ -288,9 +301,25 @@ class NewRecord:
     record: dict
 
 
+@dataclass(frozen=True)
+class Stored:
+    """A stored source_records row, with the body of the delivery it came from (None once gone)."""
+
+    version: str
+    occurred_at: datetime
+    record: dict
+    body: dict | None
+
+
 class Cache(Protocol):
     async def latest(self, kind: str, object_id: str) -> dict | None:
         """The newest stored record of that kind and object id, or None."""
+
+    async def history(self, kind: str, object_id: str) -> list[Stored]:
+        """Every stored record of that kind and object id, oldest first (occurred_at, then id)."""
+
+    async def lock(self, kind: str, object_id: str) -> None:
+        """Hold the object until the job's transaction ends, so its changes apply one at a time."""
 
 
 # A Slack Web API call: method, params -> the response object
@@ -345,6 +374,41 @@ class Context:
         occurred = millis_time(updated) or slack_time(created) or when
         self.fetched.append(NewRecord("channel", channel_id, version, occurred, channel))
         return channel
+
+    async def change_channel(self, change: ChannelChange, version: str, when: datetime) -> list[NewRecord]:
+        """The channel records one change writes, applied in Slack's order (slack-webhooks.md, Ordering value).
+
+        The change applies onto the channel as stored at or before ``when``, never onto a newer
+        one. When newer records exist (a late or retried delivery), the changes after it are
+        replayed on top, so a newer change to the same field still wins. If that differs from the
+        newest record, a second record carries this change forward: the newest occurred_at,
+        version "<newest version>+<this version>". Replays skip those records.
+
+        The channel is locked first, so two jobs changing one channel run one after the other.
+        """
+        await self._cache.lock("channel", change.channel)
+        history = await self._cache.history("channel", change.channel)
+        before = [s for s in history if s.occurred_at <= when]
+        after = [s for s in history if s.occurred_at > when]
+        if before:
+            base = before[-1].record
+        elif after:
+            base = after[0].record  # older than every stored copy: the earliest one is the best base
+        else:
+            base = (await self.fetch_channel(change.channel) if change.fetch else None) or {"id": change.channel}
+        channel = {**base, **change.fields}
+        records = [NewRecord("channel", change.channel, version, when, channel)]
+        replayed = [s for s in after if CARRIED not in s.version]
+        if replayed:
+            state = channel
+            for stored in replayed:
+                later = channel_change(stored.body)
+                # A change event adds its fields; anything else (a fetched copy) is the whole channel
+                state = {**state, **later.fields} if later and later.channel == change.channel else stored.record
+            if state != after[-1].record:
+                carried = f"{replayed[-1].version}{CARRIED}{version}"
+                records.append(NewRecord("channel", change.channel, carried, after[-1].occurred_at, state))
+        return records
 
     async def stored(self, kind: str, object_id: str) -> dict | None:
         """The newest stored record, with no API call."""
@@ -411,7 +475,13 @@ async def enrich_message(body, context: Context) -> list[NewRecord]:
     if delivery is None:
         return []
     when = delivery.occurred_at
-    channel = await context.channel(delivery.channel, when)
+    change = channel_change(body)  # a topic, purpose or name system message also updates the channel
+    if change is not None:
+        changed = await context.change_channel(change, delivery.version, when)
+        channel = changed[0].record
+    else:
+        changed = []
+        channel = await context.channel(delivery.channel, when)
     user = await context.user(delivery.user, when)
     parent = delivery.parent
     if parent is None and delivery.thread_ts:
@@ -424,7 +494,7 @@ async def enrich_message(body, context: Context) -> list[NewRecord]:
         channel=channel,
         thread_parent=parent,
     )
-    return [*context.fetched, NewRecord("message", delivery.object_id, delivery.version, when, record)]
+    return [*context.fetched, *changed, NewRecord("message", delivery.object_id, delivery.version, when, record)]
 
 
 # ---- People, channels and membership (slack-webhooks.md, Everything else) ----------------------
@@ -433,7 +503,10 @@ async def enrich_message(body, context: Context) -> list[NewRecord]:
 def event_moment(body: dict, event: dict) -> tuple[str, datetime]:
     """(version, occurred_at) for an event that is not a message: event_time, else event_ts.
 
-    Most of these events carry no event_ts; every Events API delivery carries event_time.
+    Most of these events carry no event_ts; every Events API delivery carries event_time. That is
+    whole seconds, so the version is "<event_time>:<event_id>": two events about one object in the
+    same second (a join, then a leave) stay two versions, and a retry, with the same event_id,
+    stays one.
     """
     event_time = body.get("event_time")
     if isinstance(event_time, int) and not isinstance(event_time, bool):
@@ -443,7 +516,8 @@ def event_moment(body: dict, event: dict) -> tuple[str, datetime]:
     occurred = slack_time(event.get("event_ts")) or slack_time(event_time)
     if version is None or occurred is None:
         raise Permanent(f"{event.get('type')} without event_time or event_ts")
-    return version, occurred
+    event_id = _str(body.get("event_id"))
+    return (f"{version}:{event_id}" if event_id else version), occurred
 
 
 def _channel_id(event: dict) -> str:
@@ -476,7 +550,7 @@ async def enrich_user(body: dict, event: dict, context: Context) -> list[NewReco
     return [NewRecord("user", user_id, version, slack_time(updated) or occurred, user)]
 
 
-# event type -> (fields set on the newest stored channel, fetch it when nothing is stored)
+# event type -> (fields it sets besides the channel object it sends, fetch it when nothing is stored)
 CHANNEL_CHANGES = {
     "channel_rename": ({}, True),
     "group_rename": ({}, True),
@@ -486,28 +560,65 @@ CHANNEL_CHANGES = {
     "group_unarchive": ({"is_archived": False}, True),
     "channel_deleted": ({"is_deleted": True}, False),  # a tombstone; conversations.info finds nothing
 }
+# system message subtype -> the channel field it changes (slack-webhooks.md, Messages)
+SYSTEM_CHANGES = {
+    "channel_topic": "topic",
+    "group_topic": "topic",
+    "channel_purpose": "purpose",
+    "group_purpose": "purpose",
+    "channel_name": "name",
+    "group_name": "name",
+}
+
+
+@dataclass(frozen=True)
+class ChannelChange:
+    """What one delivery changes on a channel."""
+
+    channel: str
+    fields: dict
+    fetch: bool  # fetch the channel first when none is stored
+
+
+def channel_change(body) -> ChannelChange | None:
+    """The change a delivery makes to a channel, or None if it makes none.
+
+    A channel event sets what it sends (a rename: id, name, created) plus is_archived or
+    is_deleted. A topic or purpose system message sets that field the way conversations.info
+    shows it ({value, creator, last_set}); a name system message sets name.
+    """
+    event = _dict(body.get("event")) if isinstance(body, dict) and body.get("type") == "event_callback" else None
+    if event is None:
+        return None
+    kind = event.get("type")
+    if kind in CHANNEL_CHANGES:
+        changes, fetch = CHANNEL_CHANGES[kind]
+        return ChannelChange(_channel_id(event), {**(_dict(event.get("channel")) or {}), **changes}, fetch)
+    field = SYSTEM_CHANGES.get(event.get("subtype")) if kind == "message" else None
+    channel = _str(event.get("channel"))
+    value = event.get(field) if field else None
+    if channel is None or not isinstance(value, str):
+        return None
+    if field == "name":
+        return ChannelChange(channel, {"name": value}, True) if value else None
+    last_set = slack_time(event.get("ts"))
+    topic = {"value": value, "creator": _str(event.get("user")) or "", "last_set": int(last_set.timestamp()) if last_set else 0}
+    return ChannelChange(channel, {field: topic}, True)
 
 
 async def enrich_channel(body: dict, event: dict, context: Context) -> list[NewRecord]:
-    """A channel event: the channel as it is after the change, version event_time.
+    """A channel event: the channel as it is after the change, version event_time (event_moment).
 
     channel_created fetches conversations.info for privacy, topic and purpose. The other events
-    carry only the change, so it is merged onto the newest stored channel (else the fetched one)
-    to keep the record a whole channel.
+    carry only the change, which Context.change_channel applies in Slack's order.
     """
-    kind = event.get("type")
-    channel_id = _channel_id(event)
     version, occurred = event_moment(body, event)
-    sent = _dict(event.get("channel")) or {}
-    if kind == "channel_created":
+    if event.get("type") == "channel_created":
+        channel_id = _channel_id(event)
+        sent = _dict(event.get("channel")) or {}
         channel = {**sent, **(await context.fetch_channel(channel_id) or {})}
-    else:
-        changes, fetch = CHANNEL_CHANGES[kind]
-        base = await context.stored("channel", channel_id)
-        if base is None and fetch:
-            base = await context.fetch_channel(channel_id)
-        channel = {**(base or {"id": channel_id}), **sent, **changes}
-    return [NewRecord("channel", channel_id, version, occurred, channel)]
+        return [NewRecord("channel", channel_id, version, occurred, channel)]
+    return await context.change_channel(channel_change(body), version, occurred)
 
 
 async def enrich_membership(body: dict, event: dict, context: Context) -> list[NewRecord]:
@@ -572,6 +683,28 @@ class StoredRecords:
             .limit(1)
         )
 
+    async def history(self, kind: str, object_id: str) -> list[Stored]:
+        rows = await self._session.execute(
+            select(SourceRecord.version, SourceRecord.occurred_at, SourceRecord.record, RawEvent.envelope)
+            .outerjoin(RawEvent, RawEvent.id == SourceRecord.raw_event_id)
+            .where(
+                SourceRecord.source == SOURCE,
+                SourceRecord.tenant == self._tenant,
+                SourceRecord.kind == kind,
+                SourceRecord.object_id == object_id,
+            )
+            .order_by(SourceRecord.occurred_at, SourceRecord.id)
+        )
+        return [
+            Stored(version, occurred_at, record, _dict(envelope.get("body")) if isinstance(envelope, dict) else None)
+            for version, occurred_at, record, envelope in rows
+        ]
+
+    async def lock(self, kind: str, object_id: str) -> None:
+        # A transaction-level advisory lock: released when the row's transaction commits or rolls back
+        key = f"{SOURCE}/{self._tenant}/{kind}/{object_id}"
+        await self._session.execute(text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": key})
+
 
 def _error_text(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"[:ERROR_TEXT_LIMIT]
@@ -592,7 +725,7 @@ class Worker:
         channel: str = DEFAULT_CHANNEL,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
         max_attempts: int = MAX_ATTEMPTS,
-        sleep: Callable[[float], None] = time.sleep,
+        sleep: Callable[[float], None] | None = None,
     ) -> None:
         self._alchemy_url, self._libpq_url = database_urls(database_url)
         self._token = token
@@ -603,7 +736,8 @@ class Worker:
         self.channel = channel
         self.poll_seconds = poll_seconds
         self.max_attempts = max_attempts
-        self._sleep = sleep
+        self._sleep = sleep or self._halting_sleep
+        self._halt = threading.Event()  # stop() sets it, for the Slack waits running in threads
         self._clients: dict[str, SlackClient] = {}
         self._clients_lock = threading.Lock()
         # Failures are kept in memory, as enrich:github does, until the job queue's retry and dead
@@ -625,6 +759,9 @@ class Worker:
         )
         self._sync_engine = create_engine(self._alchemy_url, pool_size=2, max_overflow=self.concurrency, pool_pre_ping=True)
         self._sessions = async_sessionmaker(self._engine, expire_on_commit=False)
+        # Slack calls block (SlackClient is synchronous). A pool of their own, one thread per
+        # runner, so asyncio's default pool, which psycopg uses to connect, never waits on them.
+        self._executor = ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="slack-call")
         listener = asyncio.create_task(self._listen(), name="listen")
         runners = [asyncio.create_task(self._runner(i), name=f"runner-{i}") for i in range(self.concurrency)]
         LOG.info(
@@ -635,14 +772,31 @@ class Worker:
         finally:
             listener.cancel()
             await asyncio.gather(listener, return_exceptions=True)
+            self._executor.shutdown(wait=False)
             await self._engine.dispose()
             self._sync_engine.dispose()
             LOG.info("enrich:slack stopped after %s rows", self.done)
 
     def stop(self) -> None:
-        """Stop claiming rows. Jobs already running finish first."""
+        """Stop claiming rows. Jobs already running finish first, unless stuck behind a long Slack wait."""
         self.stopping.set()
+        self._halt.set()
         self._kick_all()
+
+    def _halting_sleep(self, seconds: float) -> None:
+        """SlackClient's waits (pacing, throttle, backoff), cut short once stop() is called.
+
+        A wait that ends within STOP_WAIT_LIMIT is finished, so a paced job still completes. A
+        longer one (a throttle can last minutes) raises Halted: the job rolls back and the row
+        stays pending for the next start.
+        """
+        deadline = time.monotonic() + seconds
+        if not self._halt.wait(seconds):
+            return
+        remaining = deadline - time.monotonic()
+        if remaining > STOP_WAIT_LIMIT:
+            raise Halted(f"stopping instead of waiting {remaining:.0f}s more for Slack")
+        time.sleep(max(0.0, remaining))
 
     def _kick_all(self) -> None:
         for kick in self._kicks:
@@ -659,7 +813,13 @@ class Worker:
                 await self._pause(min(self.poll_seconds, 5.0), kick)
                 continue
             if not worked:
-                await self._pause(self.poll_seconds, kick)
+                await self._pause(self._idle_seconds(), kick)
+
+    def _idle_seconds(self) -> float:
+        """How long an idle runner waits: one poll interval, or until a failed row may be retried."""
+        if not self._cooldown:
+            return self.poll_seconds
+        return min(self.poll_seconds, max(0.05, min(self._cooldown.values()) - time.monotonic()))
 
     async def _pause(self, seconds: float, kick: asyncio.Event) -> None:
         try:
@@ -749,6 +909,12 @@ class Worker:
                         )
             except Permanent as exc:
                 self._give_up(row_id, exc)
+            except Halted:
+                LOG.info("raw_event %s rolled back while waiting on Slack; it stays pending for the next start", row_id)
+            except Throttled as exc:
+                # Throttling is not a failure: wait, and count no attempt (architecture.md, Failures and replay)
+                self._cooldown[row_id] = time.monotonic() + self.poll_seconds
+                LOG.warning("raw_event %s still throttled, retried later: %s", row_id, _error_text(exc))
             except Exception as exc:
                 attempts = self._attempts.get(row_id, 0) + 1
                 if attempts >= self.max_attempts:
@@ -771,7 +937,7 @@ class Worker:
         client = self._client(tenant)
 
         async def call(method: str, params: dict) -> dict:
-            return await asyncio.to_thread(client.call, method, params)
+            return await asyncio.get_running_loop().run_in_executor(self._executor, client.call, method, params)
 
         return call
 

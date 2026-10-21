@@ -207,7 +207,7 @@ class EnrichDatabaseTest(unittest.TestCase):
         channels = [r.record for r in self.records("channel")]
         self.assertEqual(channels[-1], {**CHANNELS[CHANNEL], "name": "adr"})  # merged onto the stored channel
         [membership] = self.records("membership")
-        self.assertEqual((membership.object_id, membership.version), (f"{CHANNEL}/U0BEN", "1700000500"))
+        self.assertEqual((membership.object_id, membership.version), (f"{CHANNEL}/U0BEN", "1700000500:Ev4"))
         self.assertEqual((membership.record["member"], membership.record["user"]["id"]), (True, "U0BEN"))
         self.assertEqual(fake.count("conversations.info"), 1)  # only for the first message
 
@@ -461,6 +461,90 @@ class EnrichDatabaseTest(unittest.TestCase):
         run_async(scenario())
         self.assertIsNone(self.raw(unmapped).enriched_at)
         self.assertEqual(self.records(), [])
+
+    def newest_channel(self) -> dict:
+        with Session(self.engine) as session:
+            return session.scalars(
+                select(SourceRecord.record).where(SourceRecord.kind == "channel", SourceRecord.object_id == CHANNEL)
+                .order_by(SourceRecord.occurred_at.desc(), SourceRecord.id.desc()).limit(1)
+            ).one()
+
+    def test_channel_changes_apply_in_slacks_order_even_late_or_at_once(self):
+        rename = {"type": "channel_rename", "channel": {"id": CHANNEL, "name": "adr", "created": 1690000000}}
+        archive = {"type": "channel_archive", "channel": CHANNEL, "user": "U0ADA"}
+
+        async def enrich_all(concurrency=1):
+            worker = self.worker(FakeSlackApi(), concurrency=concurrency)
+            task = await self.started(worker)
+            await self.until(lambda: self.pending() == 0)
+            await self.stopped(worker, task)
+
+        # The archive is enriched, then a rename Slack sent a second earlier arrives (a retry)
+        self.insert(callback(message("1700000200.000100")), event_id="Ev1")  # stores the channel
+        self.insert(callback(archive, event_time=1700000400), event_id="Ev-archive")
+        run_async(enrich_all())
+        self.insert(callback(rename, event_time=1700000399), event_id="Ev-rename")
+        run_async(enrich_all())
+        self.assertEqual(self.newest_channel(), {**CHANNELS[CHANNEL], "name": "adr", "is_archived": True})
+        versions = [r.version for r in self.records("channel")]
+        self.assertIn("1700000400:Ev-archive+1700000399:Ev-rename", versions)
+
+        # A rename and an archive enriched at the same time (four runners) keep both changes
+        with self.engine.begin() as conn:
+            conn.execute(text("truncate raw_events, source_records restart identity cascade"))
+        self.insert(callback(message("1700000200.000100")), event_id="Ev1")
+        run_async(enrich_all())
+        self.insert(callback(rename, event_time=1700000300), event_id="Ev-rename")
+        self.insert(callback(archive, event_time=1700000300), event_id="Ev-archive")  # the same second
+        run_async(enrich_all(concurrency=4))
+        self.assertEqual(self.newest_channel(), {**CHANNELS[CHANNEL], "name": "adr", "is_archived": True})
+
+    def test_a_failed_row_is_retried_after_its_backoff_not_the_next_poll(self):
+        fake = FakeSlackApi(garbage={"users.info"})
+        row_id = self.insert(callback(message("1700000200.000100")))
+
+        async def scenario():
+            worker = self.worker(fake, poll_seconds=60.0)  # a poll can't be what retries it
+            task = await self.started(worker)
+            await self.until(lambda: fake.count("users.info") == 1)
+            fake.garbage.clear()
+            started = time.monotonic()
+            await self.until(lambda: self.raw(row_id).enriched_at is not None)
+            self.assertLess(time.monotonic() - started, 5.0)  # the first backoff is 2 s
+            await self.stopped(worker, task)
+
+        run_async(scenario())
+        self.assertEqual(fake.count("users.info"), 2)
+
+    def test_stopping_rolls_back_a_job_stuck_behind_a_long_rate_limit(self):
+        fake = FakeSlackApi()
+        first = self.insert(callback(message("1700000200.000100", user="U0ADA")), event_id="Ev1")
+        second = self.insert(callback(message("1700000300.000100", user="U0BEN")), event_id="Ev2")
+
+        async def scenario():
+            worker = self.worker(fake, rates={"users.info": 1})  # one users.info a minute
+            task = await self.started(worker)
+            await self.until(lambda: self.raw(first).enriched_at is not None)
+            # The first call set the next slot a minute out; the second job took the one after it and waits
+            await self.until(lambda: self.rate_limit_wait("users.info") > 90)
+            started = time.monotonic()
+            await self.stopped(worker, task)
+            self.assertLess(time.monotonic() - started, 5.0)
+
+        with self.assertLogs("slack-enrich", "INFO") as logs:
+            run_async(scenario())
+        self.assertTrue(any("stays pending" in line for line in logs.output), logs.output)
+        self.assertIsNone(self.raw(second).enriched_at)  # rolled back, for the next start
+        self.assertEqual(fake.count("users.info"), 1)
+        self.assertEqual(len(self.records("message")), 1)
+
+    def rate_limit_wait(self, bucket: str) -> float:
+        with self.engine.begin() as conn:
+            wait = conn.execute(
+                text("select extract(epoch from next_allowed_at - now()) from rate_limits where bucket = :bucket"),
+                {"bucket": bucket},
+            ).scalar_one_or_none()
+        return float(wait or 0)
 
     def test_seed_stores_a_fixture_as_intake_would(self):
         added, duplicate, ignored = enrich.seed(

@@ -123,6 +123,10 @@ class PullError(Exception):
     pass
 
 
+class Throttled(PullError):
+    """Slack kept throttling one call after it waited its whole THROTTLE_BUDGET."""
+
+
 class SlackApiError(PullError):
     """Slack answered HTTP 200 with {"ok": false, "error": ...}."""
 
@@ -422,7 +426,7 @@ class SlackClient:
             if response.status == 429 or ratelimited_body:
                 wait = self._throttle_wait(response, 1.0 if response.status == 429 else RATELIMITED_DEFAULT_WAIT)
                 if throttled + wait > self._throttle_budget:
-                    raise PullError(
+                    raise Throttled(
                         f"{api_method} still throttled after waiting {throttled:.0f}s; "
                         "Slack may be limiting this app harder than its tier (see SLACK_RATE_MODE)"
                     )
