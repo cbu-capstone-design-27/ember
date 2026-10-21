@@ -42,12 +42,15 @@ export function SignupForm({ next, loginHref }: { next: string; loginHref: strin
     router.refresh();
   }
 
+  // Coming from somewhere else (e.g. the CLI's /device page), onboarding isn't the next step.
+  const onboardingNext = next === "/onboarding";
+
   return (
     <>
-      <Steps current={1} />
+      {onboardingNext && <Steps current={1} />}
       <div className={styles.heading}>
         <h1>Create your account</h1>
-        <p>Then tell us which tools your team uses. It takes a minute.</p>
+        <p>{onboardingNext ? "Then tell us which tools your team uses. It takes a minute." : "Then you'll go back to where you left off."}</p>
       </div>
       <form className={styles.form} onSubmit={onSubmit}>
         <label className="field">

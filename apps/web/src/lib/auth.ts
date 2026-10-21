@@ -8,7 +8,7 @@
 // session token it sends as `Authorization: Bearer <token>`. The flow is in
 // the README, under "CLI sign-in".
 
-import { betterAuth } from "better-auth";
+import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
 import { bearer, deviceAuthorization } from "better-auth/plugins";
@@ -19,6 +19,19 @@ export const MIN_PASSWORD_LENGTH = 8;
 
 /** The only client allowed to ask for a device code: the Ember CLI (EMBER-87). */
 export const CLI_CLIENT_ID = "ember-cli";
+
+/**
+ * The request half of Better Auth's bearer plugin: `Authorization: Bearer
+ * <token>` counts as the session, so the CLI's token works. Its response half
+ * is left out on purpose. It copies every new session token, browser sign-ins
+ * included, into a `set-auth-token` header that page scripts can read, which
+ * the HttpOnly session cookie is there to prevent. The CLI gets its token from
+ * the /device/token response body instead.
+ */
+function bearerRequests(): BetterAuthPlugin {
+  const { id, version, hooks } = bearer();
+  return { id, version, hooks: { before: hooks.before } };
+}
 
 /**
  * Columns Ember adds to Better Auth's `user` table. `sources` is the list of
@@ -59,7 +72,7 @@ export function authOptions(settings: AuthSettings = {}) {
         verificationUri: "/device",
         validateClient: (clientId) => clientId === CLI_CLIENT_ID,
       }),
-      bearer(),
+      bearerRequests(),
       nextCookies(), // last, so it sees the cookies the other plugins set
     ],
   };
