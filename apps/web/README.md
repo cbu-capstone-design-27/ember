@@ -72,7 +72,9 @@ The rest is real code that keeps working when the data comes from the graph inst
 | `file:./data/ember.db` (default) | SQLite, through Node's built-in `node:sqlite` (no native module) |
 | `postgres://user:pass@host:5432/db` | Postgres |
 
-The auth tables (`user`, `session`, `account`, `verification`, and `deviceCode` for CLI sign-in) are created or updated when the server starts (`src/instrumentation.ts`). An existing database gains the `sources` column on the next start, and its users are asked to pick sources when they next log in.
+The auth tables (`user`, `session`, `account`, `verification`, `deviceCode` for CLI sign-in, and `rateLimit`) are created or updated when the server starts (`src/instrumentation.ts`), which also logs where they are, e.g. `[db] Auth database: Postgres, schema web, on hv-worker-1.tail470a31.ts.net:5432/ember`, or `SQLite file … (DATABASE_URL not set)`. The password is never logged. An existing database gains the `sources` column on the next start, and its users are asked to pick sources when they next log in.
+
+Better Auth's rate limits are counted in the `rateLimit` table, not in memory, so every copy of the app shares them. They apply in production only: sign-in and sign-up allow 3 requests per 10 seconds per client IP, then answer `429`. The IP comes from `x-forwarded-for`, which `next start` sets itself. Behind a reverse proxy that appends to it, set `advanced.ipAddress.trustedProxies` in `src/lib/auth.ts`; otherwise Better Auth logs a warning and every client shares one limit.
 
 On Postgres the tables live in their own schema, `web` (EMBER-80). The web app shares the `ember` database with ingestion, whose tables (`raw_events`, `source_records`, …) are in `public`, so their names never collide. Better Auth creates the schema on the first start and names it in every query, so the connection's `search_path` doesn't matter. Tables a pre-EMBER-80 build made in `public` are not moved; those were test accounts, so sign up again.
 

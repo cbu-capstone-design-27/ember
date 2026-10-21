@@ -51,6 +51,17 @@ export function sqlitePath(url: string): string {
   return path === ":memory:" ? path : resolve(path);
 }
 
+/**
+ * Which database the app uses, for the startup log: never the password, and
+ * says so when DATABASE_URL is unset, since then sign-ins land in a local file.
+ */
+export function describeDatabase(url: string | undefined): string {
+  if (!url) return `SQLite file ${sqlitePath(DEFAULT_DATABASE_URL)} (DATABASE_URL not set)`;
+  if (databaseKind(url) === "sqlite") return `SQLite file ${sqlitePath(url)}`;
+  const { hostname, port, pathname } = new URL(url);
+  return `Postgres, schema ${POSTGRES_SCHEMA}, on ${hostname}:${port || "5432"}${pathname}`;
+}
+
 export function createDatabase(url: string): DatabaseSync | PostgresDatabase {
   if (databaseKind(url) === "sqlite") {
     const path = sqlitePath(url);

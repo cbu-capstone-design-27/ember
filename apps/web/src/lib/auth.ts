@@ -53,6 +53,10 @@ export function authOptions(settings: AuthSettings = {}) {
       minPasswordLength: MIN_PASSWORD_LENGTH,
     },
     user: { additionalFields: userFields },
+    // Count requests in the database (table rateLimit), not in this process's
+    // memory, so every copy of the app shares one count (EMBER-80). Better
+    // Auth limits only in production; sign-in and sign-up allow 3 per 10 s per IP.
+    rateLimit: { storage: "database" as const },
     plugins: [
       // Codes last 30 minutes and the CLI polls every 5 s (the plugin's defaults).
       deviceAuthorization({
