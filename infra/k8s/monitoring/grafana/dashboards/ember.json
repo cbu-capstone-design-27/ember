@@ -62,7 +62,7 @@
     {
       "type": "stat",
       "title": "Node ready",
-      "description": "Each node's Ready condition, from kube-state-metrics.",
+      "description": "Each node's Ready condition, from kube-state-metrics. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -74,10 +74,10 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "max by (node) (kube_node_status_condition{condition=\"Ready\", status=\"true\"})",
+          "expr": "(max by (node) (kube_node_status_condition{condition=\"Ready\", status=\"true\"})) or on() vector(-1)",
           "legendFormat": "{{node}}",
-          "range": true,
-          "instant": false
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -105,10 +105,15 @@
                 "1": {
                   "text": "Ready",
                   "color": "green"
+                },
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
                 }
               }
             }
-          ]
+          ],
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -132,14 +137,14 @@
       "gridPos": {
         "x": 0,
         "y": 1,
-        "w": 8,
+        "w": 6,
         "h": 4
       }
     },
     {
       "type": "stat",
       "title": "Uptime",
-      "description": "Time since each node last booted. Red for the first hour after a reboot.",
+      "description": "Time since each node last booted. Red for the first hour after a reboot. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -151,10 +156,10 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "time() - node_boot_time_seconds{job=\"integrations/node_exporter\"}",
+          "expr": "(time() - node_boot_time_seconds{job=\"integrations/node_exporter\"}) or on() vector(-1)",
           "legendFormat": "{{instance}}",
-          "range": true,
-          "instant": false
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -175,7 +180,19 @@
           "color": {
             "mode": "thresholds"
           },
-          "unit": "dtdurations"
+          "unit": "dtdurations",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -197,16 +214,16 @@
       },
       "id": 3,
       "gridPos": {
-        "x": 8,
+        "x": 6,
         "y": 1,
-        "w": 8,
+        "w": 6,
         "h": 4
       }
     },
     {
       "type": "stat",
       "title": "Reboots in the last 24 h",
-      "description": "How often each node's boot time changed. hv-worker-1's reboots are its Hyper-V host restarting (EMBER-90).",
+      "description": "How often each node's boot time changed. hv-worker-1's reboots are its Hyper-V host restarting (EMBER-90). Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -218,10 +235,10 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "changes(node_boot_time_seconds{job=\"integrations/node_exporter\"}[24h])",
+          "expr": "(changes(node_boot_time_seconds{job=\"integrations/node_exporter\"}[24h])) or on() vector(-1)",
           "legendFormat": "{{instance}}",
-          "range": true,
-          "instant": false
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -245,7 +262,19 @@
           },
           "color": {
             "mode": "thresholds"
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -267,11 +296,91 @@
       },
       "id": 4,
       "gridPos": {
-        "x": 16,
+        "x": 12,
         "y": 1,
-        "w": 8,
+        "w": 6,
         "h": 4
       }
+    },
+    {
+      "id": 27,
+      "type": "stat",
+      "title": "Public route",
+      "description": "Grafana Cloud's synthetic checks of https://ember.tail470a31.ts.net from outside the cluster (k8s/README.md, Synthetic checks): ember-healthz reaches nginx, ember-webhook-unsigned reaches intake. They run every 10 minutes, so this shows each check's latest result from the last 15. Unlike the panels fed from the cluster, it keeps working when the whole cluster is down. Red **No data** means neither check has reported in 15 minutes.",
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Failing",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "OK",
+                  "color": "green"
+                },
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "expr": "(max by (job) (last_over_time(probe_success{job=~\"ember-.*\"}[15m]))) or on() vector(-1)",
+          "legendFormat": "{{job}}",
+          "range": false,
+          "instant": true
+        }
+      ]
     },
     {
       "type": "timeseries",
@@ -606,7 +715,7 @@
     {
       "type": "stat",
       "title": "Postgres",
-      "description": "Whether CloudNativePG's exporter reaches the instance.",
+      "description": "Whether CloudNativePG's exporter reaches the instance. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -618,10 +727,10 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "max(cnpg_collector_up)",
+          "expr": "(max(cnpg_collector_up)) or on() vector(-1)",
           "legendFormat": "Postgres",
-          "range": true,
-          "instant": false
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -649,10 +758,15 @@
                 "1": {
                   "text": "Up",
                   "color": "green"
+                },
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
                 }
               }
             }
-          ]
+          ],
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -683,7 +797,7 @@
     {
       "type": "stat",
       "title": "Database ember",
-      "description": "Size of database ember, without WAL. The volume's 10Gi is nominal; the disk panel above is the real limit.",
+      "description": "Size of database ember, without WAL. The volume's 10Gi is nominal; the disk panel above is the real limit. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -695,10 +809,10 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "sum(cnpg_pg_database_size_bytes{datname=\"ember\"})",
+          "expr": "(sum(cnpg_pg_database_size_bytes{datname=\"ember\"})) or on() vector(-1)",
           "legendFormat": "size",
-          "range": true,
-          "instant": false
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -715,7 +829,19 @@
           "color": {
             "mode": "thresholds"
           },
-          "unit": "bytes"
+          "unit": "bytes",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -759,7 +885,7 @@
     {
       "type": "stat",
       "title": "intake pods available",
-      "description": "Ready intake pods. With one, deliveries still land; with none, they fail at nginx.",
+      "description": "Ready intake pods. With one, deliveries still land; with none, they fail at nginx. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -771,10 +897,10 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "max(kube_deployment_status_replicas_available{namespace=\"ember\", deployment=\"intake\"})",
+          "expr": "(max(kube_deployment_status_replicas_available{namespace=\"ember\", deployment=\"intake\"})) or on() vector(-1)",
           "legendFormat": "available",
-          "range": true,
-          "instant": false
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -798,7 +924,19 @@
           },
           "color": {
             "mode": "thresholds"
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -1145,7 +1283,7 @@
     {
       "type": "stat",
       "title": "Unmapped",
-      "description": "Rows from accounts with no installations row. Enrich never claims them until the account is mapped to a tenant.",
+      "description": "Rows from accounts with no installations row. Enrich never claims them until the account is mapped to a tenant. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -1157,10 +1295,10 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "sum by (source) (cnpg_raw_events_unmapped_rows)",
+          "expr": "((sum by (source) (cnpg_raw_events_unmapped_rows)) or on() (0 * max(cnpg_collector_up))) or on() vector(-1)",
           "legendFormat": "{{source}} rows",
-          "range": true,
-          "instant": false
+          "range": false,
+          "instant": true
         },
         {
           "refId": "B",
@@ -1168,10 +1306,10 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "sum by (source) (cnpg_raw_events_unmapped_accounts)",
+          "expr": "((sum by (source) (cnpg_raw_events_unmapped_accounts)) or on() (0 * max(cnpg_collector_up))) or on() vector(-1)",
           "legendFormat": "{{source}} accounts",
-          "range": true,
-          "instant": false
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -1187,7 +1325,19 @@
           },
           "color": {
             "mode": "thresholds"
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -1267,7 +1417,7 @@
     {
       "type": "stat",
       "title": "Flux objects not Ready",
-      "description": "Kustomizations, HelmReleases and sources whose Ready condition isn't True.",
+      "description": "Kustomizations, HelmReleases and sources whose Ready condition isn't True. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -1279,10 +1429,10 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "count(gotk_resource_info{ready!=\"True\"}) or vector(0)",
+          "expr": "((count(gotk_resource_info{ready!=\"True\"})) or on() (0 * count(gotk_resource_info))) or on() vector(-1)",
           "legendFormat": "not Ready",
-          "range": true,
-          "instant": false
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -1302,7 +1452,19 @@
           },
           "color": {
             "mode": "thresholds"
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -1333,7 +1495,7 @@
     {
       "type": "stat",
       "title": "postgres-migrate failed",
-      "description": "Whether the migration Job's last run failed. Its log has the error.",
+      "description": "Whether the migration Job's last run failed. Its log has the error. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -1345,10 +1507,10 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "max(kube_job_status_failed{namespace=\"ember\", job_name=\"postgres-migrate\"}) or vector(0)",
+          "expr": "((max(kube_job_status_failed{namespace=\"ember\", job_name=\"postgres-migrate\"})) or on() (0 * count(kube_node_info))) or on() vector(-1)",
           "legendFormat": "failed",
-          "range": true,
-          "instant": false
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -1368,7 +1530,19 @@
           },
           "color": {
             "mode": "thresholds"
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "No data"
         },
         "overrides": []
       },
