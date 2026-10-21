@@ -310,6 +310,9 @@ class Worker:
         """Only what the payload lacks (github-webhooks.md, "Event types")."""
         event, _, action = raw.event_name.partition(":")
         body = raw.envelope["body"]
+        if event not in ("push", "pull_request"):
+            return {}
+        # Only these two fetch, and both carry a repository. installation* events have none
         repo = body["repository"]["full_name"]
         if event == "push" and len(body.get("commits") or []) >= FULL_PUSH and body["before"].strip("0"):
             # A new branch (before = 000...) has no base to compare against, so it keeps the payload's commits

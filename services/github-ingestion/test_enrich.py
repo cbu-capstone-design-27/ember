@@ -201,6 +201,17 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((ref["object_id"], ref["version"]), ("acme/widget:refs/heads/main", "b" * 40))
         self.assertEqual(ref["occurred_at"].timestamp(), 1790326800)
 
+    async def test_installation_events_are_enriched_without_a_record_or_a_call(self):
+        # No `repository` on these (github-webhooks.md, "Event types"); they used to fail on every poll
+        github = FakeGitHub()
+        ids = [await self.insert("installation:new_permissions_accepted",
+                                 {"action": "new_permissions_accepted", "installation": INSTALLATION}),
+               await self.insert("installation_repositories:added",
+                                 {"action": "added", "installation": INSTALLATION, "repositories_added": [REPOSITORY]})]
+        await self.process(github, *ids)
+        self.assertEqual(await self.records(), [])
+        self.assertEqual(github.calls, [])
+
     async def test_reprocessing_and_duplicate_versions_leave_one_record(self):
         first = await self.insert("issues:opened", issue_opened())
         await self.process(FakeGitHub(), first)
