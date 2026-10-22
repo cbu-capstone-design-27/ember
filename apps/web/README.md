@@ -120,7 +120,7 @@ The `ember` user owns the database, so the first start can create the `web` sche
 
 ## CLI sign-in
 
-`ember auth login` (EMBER-87) signs in through the browser, the way `gh auth login` does (EMBER-81). Accounts are only created on the web app. It's the OAuth device flow ([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)) from Better Auth's `deviceAuthorization` plugin, plus its `bearer` plugin so the token works in an `Authorization` header. Setup is in `src/lib/auth.ts`, the page in `src/app/(auth)/device/`.
+`ember auth login` (EMBER-87) signs in through the browser, the way `gh auth login` does (EMBER-81). Accounts are only created on the web app. It's the OAuth device flow ([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)) from Better Auth's `deviceAuthorization` plugin. The request side of its `bearer` plugin makes the token work in an `Authorization` header. Its response side is left out, because it would copy browser session tokens into a header page scripts can read. Setup is in `src/lib/auth.ts`, the page in `src/app/(auth)/device/`. Opening the page binds the code to no one: the first account to click Approve or Deny claims it, so a user signed into the wrong account can use **Use another account** first.
 
 Every request below is JSON (`content-type: application/json`) to the web app's address, e.g. `http://localhost:3000`. The CLI sends no cookie and no `Origin`.
 
@@ -149,7 +149,7 @@ Every request below is JSON (`content-type: application/json`) to the web app's 
    | `expired_token` | 30 minutes passed | Stop: run `ember auth login` again |
    | `invalid_grant` | Unknown code, or one already used (a code gives out one token) | Stop |
 
-   Once approved: `200 {"access_token": "…", "token_type": "Bearer", "expires_in": 604800, "scope": ""}`. The token is a normal session, good for 7 days. Store it (EMBER-87 keeps it in the config directory with `0600`). The code is deleted at this point, so reopening the link in the browser shows it as unknown.
+   Once approved: `200 {"access_token": "…", "token_type": "Bearer", "expires_in": 604800, "scope": ""}`. The token is a normal session. It stops working after 7 days without use, and any use more than a day after its last refresh (`whoami`, for one) moves that to 7 days from then, so a CLI in regular use stays signed in. When a call answers 401, the CLI asks for `ember auth login` again. Store the token (EMBER-87 keeps it in the config directory with `0600`). The code is deleted at this point, so reopening the link in the browser shows it as unknown.
 
 4. **Who am I.** `GET /api/whoami` with `Authorization: Bearer <token>` answers `200 {"name": "Ada Lovelace", "email": "ada@example.com"}`, or `401 {"error": "unauthorized", …}` for a missing, wrong or expired token. Accounts have no username, so `Successfully authenticated as <username>` prints the email. `ember auth status` is the same call.
 
@@ -210,7 +210,8 @@ Give the tests a database of their own: they leave their test accounts behind. W
   - log-out ending the session
   - passwords stored hashed
   - saving and validating `sources`
-  - CLI sign-in, called the way the CLI calls it: a token after approval and `whoami` naming the user; a used, denied or expired code; polling too fast; an unknown `client_id`; a made-up token; logging out with the token; and the `/device` page showing a request only to the user who opened it
+  - CLI sign-in, called the way the CLI calls it: a token after approval and `whoami` naming the user; a used, denied or expired code; polling too fast; an unknown `client_id`; a made-up token; logging out with the token; browser sign-in not exposing the session token in a header
+  - the `/device` page: showing a code claims nothing, so the user can switch accounts before approving; a code another account claimed can't be decided; deciding after signing out or a second time
 - `test/workspace.test.ts` covers:
   - reading references and signals out of text
   - the preview data's consistency

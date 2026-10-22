@@ -1,7 +1,7 @@
 ---
 # Checks k8s/apps on the cluster end to end: nginx, the reverse proxy behind the public
 # https://ember.<tailnet_domain> (a Tailscale Funnel Ingress), and intake, the webhook listener it
-# routes /webhook/ to. Flux deploys them (playbooks/flux.yml); this playbook deploys nothing.
+# routes /webhook/ to, and the enrich workers behind it. Flux deploys them (playbooks/flux.yml); this playbook deploys nothing.
 # Run from the controller against the "homelab" kubeconfig context. Use make apps-health.
 - name: Apps
   hosts: localhost
@@ -15,6 +15,8 @@
     ember_url: "https://{{ ember_host }}"
     webhook_url: "{{ ember_url }}/webhook/github"
     # The A records (type 1) in the public DNS answer, which can list a CNAME before them
+    # One per enrich worker on the cluster: Deployment enrich-<source>, which logs "enrich:<source> listening"
+    enrich_sources: [github]
     public_ips: >-
       {{ (public_dns.content | default('{}') | from_json).Answer | default([])
       | selectattr('type', 'equalto', 1) | map(attribute='data') | list }}
@@ -31,6 +33,32 @@
           ansible.builtin.command: "{{ kubectl }} -n {{ apps_ns }} rollout status {{ item }} --timeout=180s"
           loop: "{{ apps_objects.stdout_lines }}"
           changed_when: false
+
+    # A rolled-out worker can still be failing to reach Postgres. It logs "listening" only once its
+    # LISTEN connection is up, and a restart after that would show in the restart count
+    - name: Enrich workers
+      tags: [health]
+      block:
+        - name: Read each worker's log since its pod started
+          ansible.builtin.command: "{{ kubectl }} -n {{ apps_ns }} logs deploy/enrich-{{ item }}"
+          loop: "{{ enrich_sources }}"
+          register: enrich_logs
+          until: ("enrich:" ~ item ~ " listening") in enrich_logs.stdout
+          retries: 6
+          delay: 5
+          changed_when: false
+          failed_when: false
+
+        - name: Require each worker to be listening
+          ansible.builtin.assert:
+            that: ("enrich:" ~ item.item ~ " listening") in item.stdout
+            fail_msg: >-
+              enrich-{{ item.item }} rolled out but never logged "enrich:{{ item.item }} listening", so it
+              is not taking work. Its log: {{ (item.stdout ~ item.stderr) | default('') | truncate(2000) }}
+            quiet: true
+          loop: "{{ enrich_logs.results }}"
+          loop_control:
+            label: "enrich-{{ item.item }}"
 
     - name: Health
       tags: [health]

@@ -28,7 +28,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
 /** The signed-in user, or a redirect to the log-in page. */
 export async function requireUser(next?: string): Promise<CurrentUser> {
   const user = await getCurrentUser();
-  if (!user) redirect(next ? `/login?next=${encodeURIComponent(next)}` : "/login");
+  if (!user) redirect(withNext("/login", next));
   return user;
 }
 
@@ -44,4 +44,10 @@ export function safeNext(next: string | string[] | undefined, fallback = "/dashb
   const value = Array.isArray(next) ? next[0] : next;
   if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) return fallback;
   return value;
+}
+
+/** `path` with `?next=` when `next` is a same-site path, else plain `path` (log-in and sign-up pass it to each other). */
+export function withNext(path: string, next: string | string[] | undefined): string {
+  const target = safeNext(next, "");
+  return target ? `${path}?next=${encodeURIComponent(target)}` : path;
 }

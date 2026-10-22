@@ -24,8 +24,11 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make flux-health` | Flux's controllers are healthy and every Kustomization is applied; lists what is deployed and at which commit |
 | `make sync` | Fetch `develop` and apply it now instead of within the next minute |
 | `make apps-diff` | Shows what this checkout's `infrastructure/`, `apps/` and `monitoring/` would change on the cluster. Deploys nothing |
-| `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Deploys nothing |
+| `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Also checks each enrich worker logged that it is listening. Deploys nothing |
 | `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret in the vault ([The webhook secret](#the-webhook-secret)). Commit the result |
+| `make enrich-github-secret` | Writes `apps/enrich-github/github-app.sops.yaml`, encrypted, from the GitHub App's private key in the vault ([enrich-github](#enrich-github)). Commit the result |
+| `make llm-tunnel-secret` | Temporary (EMBER-49). Writes `apps/llm-tunnel/ssh.sops.yaml` and `model-keys.sops.yaml`, encrypted, from the tunnel key and the Spark's API keys in the vault, and prints the `authorized_keys` line for the Spark ([llm-tunnel](#llm-tunnel)). Commit the result |
+| `make map-tenant SOURCE=… ACCOUNT=… TENANT=…` | Maps a source account to a tenant and hands the deliveries already stored for it to the enrich workers ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
 | `make grafana-secret` | Writes the collector's and the Grafana Operator's Secrets, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud tokens](#the-grafana-cloud-tokens)). Commit the result |
 | `make grafana-health` | Checks Grafana Cloud end to end: the operator synced the stack and the Ember dashboard, and the stack has metrics from every node, intake, Postgres and Flux, pod logs, Kubernetes events and both synthetic checks. Deploys nothing |
 | `make flux-preview BRANCH=<branch>` | Deploys a pushed branch instead of `develop`, to try a change before merging it. Tell the team, since it replaces what everyone else sees |
@@ -121,6 +124,76 @@ GitHub signs each delivery with the App's webhook secret, and intake checks it. 
 
 Between steps 4 and 5 GitHub's deliveries are refused with 401. GitHub doesn't retry them, but each one can be redelivered from the App's Advanced tab, Recent Deliveries, for 3 days.
 
+### enrich-github
+
+`enrich:github` (EMBER-65, `services/github-ingestion`): turns the GitHub rows intake stores in `raw_events` into `source_records`. One replica in namespace `ember` from `apps/enrich-github/`, with no Service, because it serves nothing. It claims rows with `FOR UPDATE SKIP LOCKED`, so a rollout's overlap never enriches a row twice.
+
+- **Image.** `deployment.yaml` pins a `develop-<run>-<sha>` tag of `ghcr.io/cbu-capstone-design-27/ember/github-ingestion`, as intake does.
+- **Credentials.** `DATABASE_URL` comes from Secret `postgres-app`. `GITHUB_APP_ID` is set in the Deployment (it is not a secret). The App's private key is Secret `enrich-github-app`, mounted as a file at `/etc/github-app/private-key.pem`. Intake never sees the key, and this worker never sees the webhook secret (`docs/ingestion/architecture.md`, Credentials).
+- **Tenants.** Intake stores a delivery with `tenant` null until its installation id is in `installations`, and the worker leaves those rows alone. Until `ember-admin map` exists, map one with `make map-tenant SOURCE=github ACCOUNT=<installation id> TENANT=<tenant>` ([Mapping a tenant](#mapping-a-tenant)).
+- **Stopping.** On SIGTERM it stops claiming and finishes the rows in flight, for up to 60 s (`terminationGracePeriodSeconds`). A row cut off by the kill is rolled back and claimed again by the next pod.
+
+```bash
+kubectl --context homelab -n ember logs deploy/enrich-github
+```
+
+It logs `enrich:github listening on raw_events` once connected, and one line per row with how many `source_records` it wrote, never the payload.
+
+To set or rotate the key: generate a private key in the App's settings (`ember-ingest`, Private keys), put the whole `.pem` in the vault as `vault_github_app_private_key` (a YAML block scalar, `|`), run `make enrich-github-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-github`. Delete the old key on GitHub once the new pod is listening.
+
+### llm-tunnel
+
+> **Temporary fix (EMBER-49).** This tunnel exists only because the Spark's models have no address the cluster can reach. Remove it, meaning `apps/llm-tunnel/`, `playbooks/llm-tunnel.yml`, `make llm-tunnel-secret`, `vault_llm_tunnel_ssh_key` and the key's line on the Spark, once the models are served somewhere the cluster reaches directly: a Spark that can join the tailnet, an endpoint behind its own authentication, or models on the cluster.
+
+An SSH tunnel to the two models on the DGX Spark. Both listen only on the Spark's loopback: the chat model (Qwen3-30B-A3B) on `127.0.0.1:8001` (ADR 0008) and embeddings (Qwen3-Embedding-0.6B) on `127.0.0.1:8000`. The Spark is shared with other people's containers and can't join Tailscale. Its SSH port is open, so Deployment `llm-tunnel` logs in as `save-water@172.99.171.11` and forwards both ports to that loopback.
+
+| Model | Pods use | Spark side |
+|---|---|---|
+| Chat | `LLM_BASE_URL=http://llm-tunnel.ember:8001/v1` | container `ember-llm`, `127.0.0.1:8001` |
+| Embeddings | `EMBEDDING_BASE_URL=http://llm-tunnel.ember:8000/v1` | container `ember-embedding`, `127.0.0.1:8000` |
+
+```
+ pipeline pods ──▶ Service llm-tunnel:8001 / :8000 ──▶ pod: ssh -N -L 8001 -L 8000 ══ SSH :22 ══▶ Spark 127.0.0.1:8001 / :8000
+```
+
+- **Embeddings aren't public any more.** Until 2026-10-21 embeddings were published on the Spark's public address (port 8000), and for a while they ran with no key, open to the internet. They're on loopback now (`EMBEDDING_BIND_ADDR=127.0.0.1` in `~/ember/.env` on the Spark, run by its `infra/docker-compose.yml`, profile `embedding`). Anything that called `http://172.99.171.11:8000` has to go through the tunnel instead.
+- **API keys.** Each model checks its own key (`EMBEDDING_API_KEY` and `LLM_API_KEY` in the Spark's `~/ember/.env`, passed to vLLM as `VLLM_API_KEY`), so pods send `Authorization: Bearer <key>`. The tunnel's SSH key can reach only these two ports, but anything already on the Spark can call them too, so the keys stay on. Secret `spark-model-keys` (`apps/llm-tunnel/model-keys.sops.yaml`) holds copies as `LLM_API_KEY` and `EMBEDDING_API_KEY`, for pods to load with `envFrom` or `secretKeyRef`. `make llm-tunnel-secret` writes it from `vault_spark_llm_api_key` and `vault_spark_embedding_api_key`.
+  To rotate a key, change it in the Spark's `.env` and run `docker compose -f infra/docker-compose.yml --env-file .env --profile embedding --profile llm up -d` in `~/ember` there. Then set the same value in the vault, run `make llm-tunnel-secret`, merge, and restart the pods that use it.
+- **Supervision.** There's no autossh. `ssh` sends a keepalive every 15 s and exits after 3 unanswered ones, or at once if either forward can't be set up (`ExitOnForwardFailure`). Kubernetes then restarts the container. The pod is ready only once `ssh` has logged in and opened its ports, so the Service never routes to a tunnel that isn't up.
+- **Key.** A dedicated ED25519 key, Secret `llm-tunnel-ssh` (`apps/llm-tunnel/ssh.sops.yaml`), written by `make llm-tunnel-secret` from `vault_llm_tunnel_ssh_key`. On the Spark, `save-water`'s `authorized_keys` restricts it to these two forwards: `restrict,port-forwarding,permitopen="127.0.0.1:8001",permitopen="127.0.0.1:8000",command="/bin/false" ssh-ed25519 … ember-llm-tunnel`. A stolen copy can't open a shell or reach anything else on a shared machine. `make llm-tunnel-secret` prints the line.
+- **Host key.** `apps/llm-tunnel/known_hosts` pins the Spark's ED25519 host key (`SHA256:erUVb1xzektcqoOqjZ6jF0IEN9QYH04XZvlft/tanOs`), with `StrictHostKeyChecking=yes`. If the Spark is reinstalled and its key changes, the tunnel refuses to connect until `known_hosts` is updated with `ssh-keyscan -t ed25519 172.99.171.11`, checked against the Spark's `/etc/ssh/ssh_host_ed25519_key.pub`.
+- **Network.** Pods leave through each node's own internet connection, not the tailnet: 209.160.254.205 and .206 today. The Spark accepts SSH connections from both today. If it ever filters by source address, those addresses have to be allowed, and they change when the cluster moves.
+
+```bash
+kubectl --context homelab -n ember logs deploy/llm-tunnel        # empty when healthy; ssh logs only errors
+kubectl --context homelab -n ember run llm-check --rm -it --restart=Never --image=curlimages/curl -- sh -c \
+  'for p in 8001 8000; do curl -s -o /dev/null -w "$p %{http_code}\n" http://llm-tunnel.ember:$p/health; done'   # 200 for both
+```
+
+To rotate the key, generate a new one (`ssh-keygen -t ed25519 -N "" -C ember-llm-tunnel`), put the private half in the vault as `vault_llm_tunnel_ssh_key`, run `make llm-tunnel-secret`, and add the line it prints on the Spark. Commit and merge, restart the Deployment, then remove the old line from the Spark.
+
+### Mapping a tenant
+
+Intake stores a delivery with `tenant` null when its account isn't in `installations`. For GitHub, the account is the App installation id. The enrich workers skip those rows, because every record belongs to a tenant's subgraph. Until `ember-admin map` exists (`docs/ingestion/architecture.md`), `make map-tenant` (from `infra/ansible`, `playbooks/tenants.yml`) does it. It runs `playbooks/map-tenant.sql` with psql in the Postgres primary's pod, so no credential leaves the cluster.
+
+To find the accounts that are waiting:
+
+```bash
+kubectl --context homelab -n ember exec postgres-1 -c postgres -- psql -d ember -c \
+  "select source, account_id, count(*) from raw_events where tenant is null group by 1, 2"
+```
+
+Then map one:
+
+```bash
+make map-tenant SOURCE=github ACCOUNT=164866568 TENANT=<tenant>
+```
+
+It adds the `installations` row, so intake stores the account's new deliveries with the tenant. Then it sets the tenant on the rows already stored with none, and sends a `NOTIFY` so the worker starts on them at once. It prints how many rows it handed over. `TENANT` follows the ontology's `subgraph_id` rules (lowercase letters, digits and hyphens), since it becomes part of the Neo4j subgraph name.
+
+- **Re-running is safe.** It changes nothing and reports 0. A delivery intake was storing at the moment of mapping can still land without a tenant; running it again picks that up.
+- **No remapping.** If the account is already mapped to a different tenant, it refuses and changes nothing, since moving an account would split its records across two subgraphs. Rows with no `account_id` (GitHub `ping`s, webhooks set directly on a repo) can't be mapped.
+
 ### Restarts
 
 nginx and intake come back by themselves after a pod or node restart. Their Deployments, Services, ConfigMaps and the Ingress are stored in the cluster, k3s starts on boot on every node, the Tailscale proxy keeps its identity and certificate in a Secret, and a pod restarting on the same node uses the image already cached there.
@@ -205,6 +278,8 @@ env:
 
 Service `postgres-rw` always points at the primary. Every component connects as `ember` for now; ADR 0004's role per component comes later.
 
+`ember` is not a superuser, and superuser access is off (the operator's default), so no Secret holds a superuser password. An extension only a superuser can create, such as `vector` (pgvector, EMBER-77), goes in `apps/postgres/database.yaml`, a CloudNativePG `Database` for `ember` with `extensions: [{name: ..., ensure: present}]`. The operator creates it there, and a migration's `create extension if not exists` then finds it and needs no privilege. Merge that change before the migration that uses it. The image (`imageName` in `cluster.yaml`) must ship the extension: `select * from pg_available_extensions` in the pod lists what it has.
+
 From the tailnet, `make postgres-url` prints `postgresql://ember:<password>@hv-worker-2.tail470a31.ts.net:5432/ember`. As with Neo4j, `apps/postgres/service-lb.yaml` publishes port 5432 on every node's IP through ServiceLB, tailnet sources only, so the other nodes' names work too. Reading the Secret needs the kubeconfig: Headlamp's viewer cannot see Secrets.
 
 #### Migrations
@@ -221,7 +296,7 @@ Once merged, the new file changes the hashed name of the ConfigMap the Job mount
 To run the test locally you need `psql`, `dbmate`, and a Postgres it may create databases on:
 
 ```bash
-docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55432:5432 postgres:18.6
+docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55432:5432 pgvector/pgvector:0.8.7-pg18-trixie
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
   python3 infra/k8s/apps/postgres/test_migrations.py
 ```

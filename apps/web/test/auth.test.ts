@@ -19,7 +19,7 @@ import {
   isPostgresDatabase,
   POSTGRES_SCHEMA,
 } from "../src/lib/db.ts";
-import { formatUserCode, openDeviceRequest } from "../src/lib/device.ts";
+import { decideDeviceRequest, findDeviceRequest, formatUserCode } from "../src/lib/device.ts";
 
 const BASE = "http://localhost:3000";
 const SECRET = "test-secret-at-least-32-characters-long!!";
@@ -42,7 +42,7 @@ async function call(auth: Auth, path: string, init: { body?: unknown; cookie?: s
     .getSetCookie()
     .map((c) => c.split(";")[0])
     .join("; ");
-  return { status: response.status, json, cookie };
+  return { status: response.status, json, cookie, headers: response.headers };
 }
 
 /** A POST the way the CLI sends it: JSON, with no Origin and no cookie. */
@@ -230,13 +230,25 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
         await adapter.update({ model: "deviceCode", where: [{ field: "userCode", value: userCode }], update });
       }
 
-      /** What /device does: the signed-in user opens the link, then approves or denies. */
+      const signedIn = async (as = email) =>
+        new Headers({ cookie: (await call(auth, "/sign-in/email", { body: { email: as, password } })).cookie });
+      const signUp = async (name: string) => {
+        const address = `${name.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
+        const res = await call(auth, "/sign-up/email", { body: { name, email: address, password } });
+        return { email: address, headers: new Headers({ cookie: res.cookie }) };
+      };
+
+      /** What /device does when the signed-in user clicks Approve or Deny (its server action). */
       async function review(userCode: string, action: "approve" | "deny") {
-        const { cookie } = await call(auth, "/sign-in/email", { body: { email, password } });
-        const opened = await call(auth, `/device?user_code=${userCode}`, { cookie });
-        assert.equal(opened.status, 200, JSON.stringify(opened.json));
-        return call(auth, `/device/${action}`, { body: { userCode }, cookie });
+        return decideDeviceRequest(auth, userCode, action, await signedIn());
       }
+
+      test("browser sign-in doesn't hand page scripts the session token", async () => {
+        const res = await call(auth, "/sign-in/email", { body: { email, password } });
+        assert.equal(res.status, 200, JSON.stringify(res.json));
+        assert.ok(res.cookie.includes("better-auth.session_token="), "the HttpOnly cookie is still set");
+        assert.equal(res.headers.get("set-auth-token"), null);
+      });
 
       test("the CLI gets a token once the user approves, and whoami names the user", async () => {
         const code = await requestCode();
@@ -250,8 +262,7 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
         assert.equal(pending.status, 400);
         assert.equal(pending.json.error, "authorization_pending");
 
-        const approved = await review(user_code, "approve");
-        assert.equal(approved.status, 200, JSON.stringify(approved.json));
+        assert.deepEqual(await review(user_code, "approve"), { state: "approved" });
 
         await age(user_code, { lastPolledAt: new Date(Date.now() - 60_000) });
         const token = await poll(device_code);
@@ -273,8 +284,7 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
 
       test("a denied request tells the CLI access_denied", async () => {
         const code = await requestCode();
-        const denied = await review(code.json.user_code, "deny");
-        assert.equal(denied.status, 200, JSON.stringify(denied.json));
+        assert.deepEqual(await review(code.json.user_code, "deny"), { state: "denied" });
         const result = await poll(code.json.device_code);
         assert.equal(result.status, 400);
         assert.equal(result.json.error, "access_denied");
@@ -283,28 +293,40 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       test("an expired code is refused in the browser and in the CLI", async () => {
         const code = await requestCode();
         await age(code.json.user_code, { expiresAt: new Date(Date.now() - 1000) });
-        const { cookie } = await call(auth, "/sign-in/email", { body: { email, password } });
-        const opened = await call(auth, `/device?user_code=${code.json.user_code}`, { cookie });
-        assert.equal(opened.status, 400);
-        assert.equal(opened.json.error, "expired_token");
-        assert.deepEqual(await openDeviceRequest(auth, code.json.user_code, new Headers({ cookie })), { state: "expired" });
+        assert.deepEqual(await findDeviceRequest(auth, code.json.user_code), { state: "expired" });
+        assert.deepEqual(await review(code.json.user_code, "approve"), { state: "expired" });
         const result = await poll(code.json.device_code);
         assert.equal(result.status, 400);
         assert.equal(result.json.error, "expired_token");
       });
 
-      test("the /device page shows a request only to the user who opened it first", async () => {
+      test("showing /device claims nothing, so the user can switch accounts before approving", async () => {
+        const { device_code, user_code } = (await requestCode()).json;
+        // Ada is shown the code, notices it's the wrong account, and switches to Eve.
+        assert.deepEqual(await findDeviceRequest(auth, user_code), { state: "pending", userCode: user_code });
+        const eve = await signUp("Eve");
+        assert.deepEqual(await decideDeviceRequest(auth, user_code, "approve", eve.headers), { state: "approved" });
+        assert.deepEqual(await findDeviceRequest(auth, user_code), { state: "approved" });
+        const token = await poll(device_code);
+        assert.equal(token.status, 200, JSON.stringify(token.json));
+        assert.deepEqual(await whoami(auth, bearer(token.json.access_token)), { name: "Eve", email: eve.email });
+      });
+
+      test("a code another account claimed first can't be decided by anyone else", async () => {
         const { user_code } = (await requestCode()).json;
-        const ada = new Headers({ cookie: (await call(auth, "/sign-in/email", { body: { email, password } })).cookie });
-        assert.deepEqual(await openDeviceRequest(auth, user_code, ada), { state: "pending", userCode: user_code });
+        const ada = await signedIn();
+        await call(auth, `/device?user_code=${user_code}`, { cookie: ada.get("cookie")! }); // Ada's browser claims it
+        const mallory = await signUp("Mallory");
+        assert.deepEqual(await decideDeviceRequest(auth, user_code, "approve", mallory.headers), { state: "taken" });
+        assert.deepEqual(await decideDeviceRequest(auth, user_code, "approve", ada), { state: "approved" });
+      });
 
-        const eve = await call(auth, "/sign-up/email", { body: { name: "Eve", email: `eve-${Date.now()}@example.com`, password } });
-        const asEve = await openDeviceRequest(auth, user_code, new Headers({ cookie: eve.cookie }));
-        assert.deepEqual(asEve, { state: "invalid" }, "someone else sees it as an unknown code");
-
-        await call(auth, "/device/approve", { body: { userCode: user_code }, cookie: ada.get("cookie")! });
-        assert.deepEqual(await openDeviceRequest(auth, user_code, ada), { state: "approved" });
-        assert.deepEqual(await openDeviceRequest(auth, "NOTACODE", ada), { state: "invalid" });
+      test("deciding after signing out, or twice, says so instead of failing", async () => {
+        const { user_code } = (await requestCode()).json;
+        assert.deepEqual(await decideDeviceRequest(auth, user_code, "approve", new Headers()), { state: "signed-out" });
+        assert.deepEqual(await review(user_code, "approve"), { state: "approved" });
+        assert.deepEqual(await review(user_code, "deny"), { state: "changed" }, "e.g. approved in another tab");
+        assert.deepEqual(await findDeviceRequest(auth, "NOTACODE"), { state: "invalid" });
       });
 
       test("polling faster than the interval is told to slow down", async () => {

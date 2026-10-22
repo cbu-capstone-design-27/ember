@@ -1,38 +1,44 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AlertIcon } from "../../../components/icons.tsx";
 import { authClient } from "../../../lib/auth-client.ts";
 import styles from "../auth.module.css";
+import { decide } from "./actions.ts";
 
-type Outcome = "approved" | "denied" | "expired" | "invalid";
+type Outcome = "approved" | "denied" | "expired" | "invalid" | "taken";
 
-const MESSAGES: Record<Outcome, { title: string; text: (email: string) => string }> = {
+const MESSAGES: Record<Outcome, { title: string; text: string }> = {
   approved: {
     title: "The CLI is signed in",
-    text: (email) => `The Ember CLI is signed in as ${email}. You can close this tab and go back to your terminal.`,
+    text: "You can close this tab and go back to your terminal.",
   },
   denied: {
     title: "Sign-in denied",
-    text: () => "The CLI was not signed in. Run ember auth login again if you meant to approve it.",
+    text: "The CLI was not signed in. Run ember auth login again if you meant to approve it.",
   },
   expired: {
     title: "This code has expired",
-    text: () => "Codes last 30 minutes. Run ember auth login again for a new one.",
+    text: "Codes last 30 minutes. Run ember auth login again for a new one.",
   },
   invalid: {
     title: "We don't recognize that code",
-    text: () => "Check the code in your terminal and enter it below, or run ember auth login again.",
+    text: "Check the code in your terminal and enter it below, or run ember auth login again.",
+  },
+  taken: {
+    title: "Another account has this code",
+    text: "It was opened by a different account first. Run ember auth login again for a new code.",
   },
 };
 
-export function DeviceMessage({ state, email }: { state: Outcome; email: string }) {
+export function DeviceMessage({ state }: { state: Outcome }) {
   const { title, text } = MESSAGES[state];
   return (
     <>
       <div className={styles.heading}>
         <h1>{title}</h1>
-        <p>{text(email)}</p>
+        <p>{text}</p>
       </div>
       {state === "invalid" && <CodeInput />}
     </>
@@ -66,23 +72,36 @@ function CodeInput() {
   );
 }
 
-export function DeviceApproval({ userCode, code, email }: { userCode: string; code: string; email: string }) {
+export function DeviceApproval({ userCode, code, email, here }: { userCode: string; code: string; email: string; here: string }) {
+  const router = useRouter();
   const [outcome, setOutcome] = useState<Outcome | null>(null);
-  const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
+  const [busy, setBusy] = useState<"approve" | "deny" | "switch" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const backHere = `/login?next=${encodeURIComponent(here)}`;
 
-  async function decide(action: "approve" | "deny") {
+  async function onDecide(action: "approve" | "deny") {
     setBusy(action);
     setError(null);
-    const { error } = action === "approve" ? await authClient.device.approve({ userCode }) : await authClient.device.deny({ userCode });
-    setBusy(null);
-    if (!error) return setOutcome(action === "approve" ? "approved" : "denied");
-    const reason = (error as { error?: string; error_description?: string }).error;
-    if (reason === "expired_token") return setOutcome("expired");
-    setError((error as { error_description?: string }).error_description || "Couldn't finish signing in the CLI. Try again.");
+    try {
+      const { state } = await decide(userCode, action);
+      if (state === "signed-out") return router.replace(backHere);
+      if (state === "changed") return router.refresh(); // the page shows what happened instead
+      setOutcome(state);
+    } catch {
+      setError("Couldn't reach Ember. Check your connection and try again.");
+    } finally {
+      setBusy(null);
+    }
   }
 
-  if (outcome) return <DeviceMessage state={outcome} email={email} />;
+  async function switchAccount() {
+    setBusy("switch");
+    await authClient.signOut();
+    router.replace(backHere);
+    router.refresh();
+  }
+
+  if (outcome) return <DeviceMessage state={outcome} />;
   return (
     <>
       <div className={styles.heading}>
@@ -101,14 +120,20 @@ export function DeviceApproval({ userCode, code, email }: { userCode: string; co
             <span>{error}</span>
           </p>
         )}
-        <button type="button" className="btn btn-primary btn-lg btn-block" disabled={busy !== null} onClick={() => decide("approve")}>
+        <button type="button" className="btn btn-primary btn-lg btn-block" disabled={busy !== null} onClick={() => onDecide("approve")}>
           {busy === "approve" && <span className="spinner" aria-hidden="true" />}
           {busy === "approve" ? "Approving…" : "Approve"}
         </button>
-        <button type="button" className="btn btn-secondary btn-lg btn-block" disabled={busy !== null} onClick={() => decide("deny")}>
+        <button type="button" className="btn btn-secondary btn-lg btn-block" disabled={busy !== null} onClick={() => onDecide("deny")}>
           {busy === "deny" ? "Denying…" : "Deny"}
         </button>
       </div>
+      <p className={styles.switch}>
+        Not {email}?{" "}
+        <button type="button" className="btn btn-ghost btn-sm" disabled={busy !== null} onClick={switchAccount}>
+          {busy === "switch" ? "Signing out…" : "Use another account"}
+        </button>
+      </p>
     </>
   );
 }
