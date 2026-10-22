@@ -157,8 +157,8 @@ function InsightCard({ insight, now }: { insight: Insight; now: number }) {
 
         <div className={styles.insightActions}>
           {insight.actions.length > 0 ? (
-            insight.actions.map((a, n) => (
-              <button key={a.label} type="button" className={`btn btn-sm ${n === 0 ? "btn-primary" : "btn-secondary"}`} onClick={() => apply(a.edit, a.done)}>
+            insight.actions.map((a) => (
+              <button key={a.label} type="button" className="btn btn-secondary btn-sm" onClick={() => apply(a.edit, a.done)}>
                 {a.label}
               </button>
             ))

@@ -165,8 +165,8 @@ function InsightCallout({ insight }: { insight: Insight }) {
       <p className={styles.calloutTitle}>{insight.title}</p>
       <p className={styles.calloutText}>{insight.summary}</p>
       <div className={styles.calloutActions}>
-        {insight.actions.map((a, n) => (
-          <button key={a.label} type="button" className={`btn btn-sm ${n === 0 ? "btn-primary" : "btn-secondary"}`} onClick={() => apply(a.edit, a.done)}>
+        {insight.actions.map((a) => (
+          <button key={a.label} type="button" className="btn btn-secondary btn-sm" onClick={() => apply(a.edit, a.done)}>
             {a.label}
           </button>
         ))}

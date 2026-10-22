@@ -1,22 +1,20 @@
 .page {
   display: grid;
-  grid-template-columns: minmax(380px, 0.9fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(380px, 1fr) minmax(0, 1fr);
   min-height: 100vh;
 }
 
-/* --- story side: always dark, in both themes ----------------------------- */
+/* --- fire side: always dark, in both themes ------------------------------ */
 
 .story {
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: var(--space-8) var(--space-10);
+  padding: var(--space-6) var(--space-8);
   overflow: hidden;
   color: var(--ink-text);
   background: var(--ink);
   border-right: var(--border-width) solid var(--border);
-  /* The GitHub mark follows the theme; on this dark panel it must be light. */
-  --src-github: var(--ink-text);
 }
 
 /* The fire along the bottom (flame.tsx), drawn low-res and scaled up pixelated, as on ember-ai.dev.
@@ -42,75 +40,12 @@
   align-self: flex-start;
 }
 
-.storyBody {
-  position: relative;
-  z-index: 1;
-  margin: auto 0;
-  padding-bottom: var(--space-16);
-  max-width: 28rem;
-  display: grid;
-  gap: var(--space-8);
-}
-
-.storyTitle {
-  font-family: var(--font-serif);
-  font-size: var(--text-2xl);
-  line-height: var(--leading-tight);
-  letter-spacing: var(--tracking-display);
-}
-
-.storyTitle em {
-  display: block;
-  color: var(--ink-ember);
-}
-
-.ledger {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border-top: var(--border-width) solid var(--ink-line);
-  font-size: var(--text-sm);
-}
-
-.ledger li {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto 8.5rem minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) 0;
-  border-bottom: var(--border-width) solid var(--ink-line);
-  color: var(--ink-text-2);
-}
-
-.ledger code {
-  color: var(--ink-text);
-  font-size: var(--text-xs);
-}
-
-.ledger li[data-odd="true"] span {
-  color: var(--ink-ember);
-  font-weight: var(--weight-medium);
-}
-
-.storyFoot {
-  position: relative;
-  z-index: 1;
-  font-size: var(--text-xs);
-  color: var(--ink-text);
-  /* It sits on the brightest part of the fire */
-  text-shadow:
-    0 1px 2px rgba(12, 10, 9, 0.95),
-    0 0 8px rgba(12, 10, 9, 0.85),
-    0 0 18px rgba(12, 10, 9, 0.7);
-}
-
 /* --- form side ---------------------------------------------------------- */
 
 .formSide {
   display: flex;
   flex-direction: column;
-  padding: var(--space-5) var(--space-6) var(--space-8);
+  padding: var(--space-4) var(--space-6) var(--space-8);
 }
 
 .topBar {
@@ -118,6 +53,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-4);
+  min-height: var(--control-lg);
 }
 
 .mobileBrand {
@@ -129,7 +65,7 @@
 
 .formWrap {
   width: 100%;
-  max-width: 23rem;
+  max-width: 22rem;
   margin: auto;
   padding: var(--space-8) 0;
 }
@@ -143,39 +79,37 @@
 }
 
 .heading p {
+  font-size: var(--text-sm);
   color: var(--text-2);
-  line-height: var(--leading-relaxed);
 }
 
 .form {
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-4);
 }
 
 .form > button[type="submit"],
 .form > button:last-child {
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
 }
 
 .switch {
-  margin-top: var(--space-8);
-  padding-top: var(--space-5);
-  border-top: var(--border-width) solid var(--border);
-  color: var(--text-2);
+  margin-top: var(--space-6);
   font-size: var(--text-sm);
+  color: var(--text-2);
 }
 
 /* CLI sign-in (/device): the code to compare with the terminal. */
 .deviceCode {
-  margin-bottom: var(--space-8);
-  padding: var(--space-5) 0;
-  border-top: var(--border-width) solid var(--text);
-  border-bottom: var(--border-width) solid var(--border);
+  margin-bottom: var(--space-6);
+  padding: var(--space-5);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
   font-family: var(--font-mono);
   font-size: var(--text-xl);
-  font-weight: var(--weight-medium);
-  letter-spacing: 0.2em;
-  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.16em;
+  text-align: center;
 }
 
 .codeInput {
@@ -202,21 +136,16 @@
 }
 
 .stepNum {
-  font-variant-numeric: tabular-nums;
-  font-weight: var(--weight-medium);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
 .stepActive {
   color: var(--text);
-  font-weight: var(--weight-medium);
-}
-
-.stepActive .stepNum {
-  color: var(--accent-text);
 }
 
 .stepLine {
-  flex: 0 0 var(--space-8);
+  flex: 0 0 var(--space-6);
   height: var(--border-width);
   background: var(--border-strong);
 }
@@ -230,7 +159,7 @@
 }
 
 .strengthBar {
-  height: 3px;
+  height: var(--space-0-5);
   border-radius: var(--radius-full);
   background: var(--surface-3);
   transition: background-color var(--duration) var(--ease-out);
@@ -258,6 +187,6 @@
   }
 
   .formSide {
-    padding: var(--space-4) var(--space-5) var(--space-8);
+    padding: var(--space-3) var(--space-5) var(--space-8);
   }
 }

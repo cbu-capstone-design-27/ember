@@ -1,23 +1,36 @@
-/* The dashboard reads like a ledger: no boxed cards, sections opened by a
-   strong rule, rows divided by hairlines, figures set in the serif. */
+/* The dashboard: dense, quiet, everything in bordered panels. Technical
+   values (keys, repos, channels, times) are set in mono. */
 
 .page {
   max-width: var(--page-max);
   margin: 0 auto;
-  padding: var(--space-10) var(--space-10) var(--space-20);
+  padding: var(--space-8) var(--space-8) var(--space-16);
   display: grid;
-  gap: var(--space-10);
+  gap: var(--space-6);
 }
 
 .header {
-  display: grid;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-4);
+  flex-wrap: wrap;
 }
 
 .note {
-  max-width: 48rem;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--control-sm);
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
   color: var(--text-2);
-  line-height: var(--leading-relaxed);
+}
+
+.note > :global(.link) {
+  white-space: nowrap;
 }
 
 .inlineLink {
@@ -26,7 +39,6 @@
   background: none;
   color: var(--text);
   font: inherit;
-  font-weight: var(--weight-medium);
   text-decoration: underline;
   text-decoration-color: var(--border-strong);
   text-underline-offset: 3px;
@@ -37,13 +49,62 @@
   text-decoration-color: currentColor;
 }
 
+/* --- shared panel parts --------------------------------------------------- */
+
+.panel {
+  min-width: 0;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.panelHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-lg);
+  padding: 0 var(--space-4);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.panelHead h2 {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.panelCount {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+.panelAction {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.panelAction:hover {
+  color: var(--text);
+}
+
 /* --- figures ------------------------------------------------------------ */
 
 .stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-top: var(--border-width) solid var(--text);
-  border-bottom: var(--border-width) solid var(--border);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
 }
 
 .stat {
@@ -51,7 +112,7 @@
   align-content: start;
   gap: var(--space-1);
   width: 100%;
-  padding: var(--space-4) var(--space-5) var(--space-5);
+  padding: var(--space-4);
   border: 0;
   border-left: var(--border-width) solid var(--border);
   background: none;
@@ -65,11 +126,14 @@
 
 .stat:first-child {
   border-left: 0;
-  padding-left: 0;
 }
 
 .stat:hover {
-  background: linear-gradient(to bottom, var(--surface-2), transparent);
+  background: var(--surface-2);
+}
+
+.stat:focus-visible {
+  outline-offset: -2px;
 }
 
 .statLabel {
@@ -78,7 +142,6 @@
   justify-content: space-between;
   gap: var(--space-2);
   font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
   color: var(--text-2);
 }
 
@@ -89,10 +152,7 @@
   font-size: var(--text-xs);
   color: var(--text-3);
   opacity: 0;
-  transform: translateX(calc(-1 * var(--space-1)));
-  transition:
-    opacity var(--duration) var(--ease-out),
-    transform var(--duration) var(--ease-out);
+  transition: opacity var(--duration) var(--ease-out);
 }
 
 .statHint svg {
@@ -103,16 +163,15 @@
 .stat:hover .statHint,
 .stat:focus-visible .statHint {
   opacity: 1;
-  transform: none;
 }
 
 .statValue {
-  margin-top: var(--space-2);
-  font-family: var(--font-serif);
-  font-size: var(--text-3xl);
+  margin-top: var(--space-1);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-medium);
   line-height: var(--leading-none);
-  letter-spacing: var(--tracking-display);
-  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--tracking-heading);
+  font-variant-numeric: tabular-nums;
 }
 
 .stat[data-tone="danger"] .statValue {
@@ -120,27 +179,23 @@
 }
 
 .statDetail {
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--text-3);
-}
-
-.stat[data-tone="danger"] .statDetail {
-  color: var(--accent-text);
 }
 
 /* --- layout ------------------------------------------------------------- */
 
 .columns {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 21rem;
-  gap: var(--space-12);
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  gap: var(--space-6);
   align-items: start;
 }
 
 .mainCol,
 .sideCol {
   display: grid;
-  gap: var(--space-12);
+  gap: var(--space-6);
   min-width: 0;
 }
 
@@ -149,92 +204,35 @@
   top: var(--space-6);
 }
 
-.panel {
-  min-width: 0;
-  border-top: var(--border-width) solid var(--text);
-}
-
-.panelHead {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: var(--space-4) 0;
-}
-
-.panelCount {
-  font-size: var(--text-sm);
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-
-.panelAction {
-  margin-left: auto;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  color: var(--text-2);
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.panelAction:hover {
-  color: var(--text);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
 /* --- insights ----------------------------------------------------------- */
 
 .filters {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1-5);
-  padding-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--border-width) solid var(--border);
 }
 
 .insights {
   list-style: none;
   margin: 0;
   padding: 0;
-  border-top: var(--border-width) solid var(--border);
 }
 
 .insight {
-  position: relative;
-  padding: var(--space-5) 0 var(--space-6);
-  border-bottom: var(--border-width) solid var(--border);
+  padding: var(--space-4);
+  border-top: var(--border-width) solid var(--border);
   cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-out);
 }
 
-.insight:last-child {
-  border-bottom: 0;
+.insight:first-child {
+  border-top: 0;
 }
 
-/* Severity hangs in the margin, outside the text column. */
-.insight::before {
-  content: "";
-  position: absolute;
-  left: calc(-1 * var(--space-5));
-  top: var(--space-5);
-  height: var(--space-6);
-  width: var(--rule-strong);
-  background: transparent;
-  transition: height var(--duration) var(--ease-out);
-}
-
-.insight[data-severity="high"]::before {
-  background: var(--accent);
-}
-
-.insight[data-severity="medium"]::before {
-  background: var(--warning);
-}
-
-.insight:hover::before {
-  height: calc(100% - var(--space-10));
+.insight:hover {
+  background: var(--surface-2);
 }
 
 .insightBody {
@@ -248,13 +246,13 @@
   align-items: center;
   gap: var(--space-3);
   font-size: var(--text-xs);
+  color: var(--text-3);
 }
 
 .insightKind {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1-5);
-  font-weight: var(--weight-medium);
   color: var(--text-2);
 }
 
@@ -264,11 +262,16 @@
   color: var(--text-3);
 }
 
+/* High severity is the one place the dashboard runs hot. */
+.insight[data-severity="high"] .insightKind,
+.insight[data-severity="high"] .insightKind svg {
+  color: var(--accent-text);
+}
+
 .severity {
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-caps);
+  text-transform: lowercase;
   color: var(--text-3);
 }
 
@@ -276,15 +279,10 @@
   color: var(--accent-text);
 }
 
-.severity[data-severity="medium"] {
-  color: var(--warning-text);
-}
-
 .insightTime {
   margin-left: auto;
-  color: var(--text-3);
+  font-family: var(--font-mono);
   white-space: nowrap;
-  font-variant-numeric: tabular-nums;
 }
 
 .dismiss {
@@ -293,11 +291,10 @@
 }
 
 .insightTitle {
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   font-weight: var(--weight-medium);
   letter-spacing: var(--tracking-tight);
   line-height: var(--leading-snug);
-  text-wrap: balance;
 }
 
 .insightTitleButton {
@@ -308,40 +305,40 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 4px;
-  transition: text-decoration-color var(--duration-fast) var(--ease-out);
-}
-
-.insight:hover .insightTitleButton {
-  text-decoration-color: var(--border-strong);
 }
 
 .insightSummary {
+  font-size: var(--text-sm);
   color: var(--text-2);
   max-width: 44rem;
 }
 
 .evidence {
   list-style: none;
-  margin: var(--space-2) 0 0;
+  margin: var(--space-1) 0 0;
   padding: 0;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.evidence li + li {
   border-top: var(--border-width) solid var(--border);
 }
 
 .evidenceRow {
   width: 100%;
   border: 0;
-  border-bottom: var(--border-width) solid var(--border);
   font: inherit;
   text-align: left;
   cursor: pointer;
   display: grid;
-  grid-template-columns: auto 9.5rem 9rem minmax(0, 1fr);
+  grid-template-columns: auto 9rem 9.5rem minmax(0, 1fr);
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-2);
+  height: var(--control);
+  padding: 0 var(--space-3);
   background: none;
   color: inherit;
   font-size: var(--text-sm);
@@ -352,6 +349,10 @@
   background: var(--surface-2);
 }
 
+.evidenceRow:focus-visible {
+  outline-offset: -2px;
+}
+
 .evidenceLogo {
   align-self: center;
 }
@@ -359,18 +360,17 @@
 .evidenceLabel {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .evidenceDetail {
+  font-size: var(--text-xs);
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: var(--text-xs);
 }
 
 .evidenceText,
@@ -382,18 +382,11 @@
   color: var(--text-2);
 }
 
-.evidenceQuote {
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: var(--text-base);
-  color: var(--text);
-}
-
 .insightActions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-3);
+  margin-top: var(--space-1);
   flex-wrap: wrap;
 }
 
@@ -402,11 +395,11 @@
   align-items: center;
   gap: var(--space-2);
   font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
+  color: var(--text-2);
 }
 
 .suggestion svg {
-  color: var(--accent);
+  color: var(--text-3);
 }
 
 .actionsEnd {
@@ -417,9 +410,10 @@
 
 .dismissedList {
   list-style: none;
-  margin: 0 0 var(--space-4);
-  padding: 0;
-  border-top: var(--border-width) dashed var(--border-strong);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: var(--border-width) solid var(--border);
+  background: var(--bg);
   font-size: var(--text-sm);
   color: var(--text-2);
 }
@@ -429,28 +423,25 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-1) 0;
-  border-bottom: var(--border-width) dashed var(--border);
 }
 
 .allClear {
   display: flex;
   gap: var(--space-3);
   align-items: center;
-  padding: var(--space-8) 0;
-  border-top: var(--border-width) solid var(--border);
+  padding: var(--space-8) var(--space-4);
   color: var(--text-2);
 }
 
 .allClear b {
   color: var(--text);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
 }
 
 .allClear > svg {
   width: var(--icon-md);
   height: var(--icon-md);
-  color: var(--success);
+  color: var(--text-2);
 }
 
 /* --- work table --------------------------------------------------------- */
@@ -467,18 +458,18 @@
 
 .table th {
   text-align: left;
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   font-size: var(--text-xs);
   color: var(--text-3);
-  padding: var(--space-2) var(--space-3);
-  border-top: var(--border-width) solid var(--border);
+  height: var(--control);
+  padding: 0 var(--space-3);
   border-bottom: var(--border-width) solid var(--border);
   white-space: nowrap;
 }
 
 .table th:first-child,
 .table td:first-child {
-  padding-left: 0;
+  padding-left: var(--space-4);
 }
 
 .table td {
@@ -488,7 +479,7 @@
 }
 
 .table td:last-child {
-  padding-right: 0;
+  padding-right: var(--space-4);
   text-align: right;
 }
 
@@ -546,31 +537,21 @@
   color: var(--text-3);
 }
 
+.ticketSummary {
+  color: var(--text);
+}
+
 .ticket:hover .ticketSummary {
   text-decoration: underline;
   text-decoration-color: var(--border-strong);
   text-underline-offset: 3px;
 }
 
-.ticketSummary {
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--text);
-}
-
-/* Open insights on a ticket: a small accent figure next to its key. */
+/* Open insights on a ticket: a small accent count next to its key. */
 .flag {
-  display: inline-grid;
-  place-items: center;
-  min-width: 1rem;
-  height: 1rem;
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-full);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-family: var(--font-sans);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
+  color: var(--accent-text);
 }
 
 .changeCell {
@@ -583,11 +564,7 @@
 .changeState {
   display: grid;
   place-items: center;
-  color: var(--success);
-}
-
-.changeState[data-state="merged"] {
-  color: var(--merged);
+  color: var(--text-2);
 }
 
 .changeState[data-state="draft"],
@@ -624,11 +601,11 @@
 }
 
 .checks[data-checks="passing"] {
-  color: var(--success);
+  color: var(--text-2);
 }
 
 .checks[data-checks="failing"] {
-  color: var(--danger);
+  color: var(--accent-text);
 }
 
 .mention {
@@ -637,12 +614,13 @@
   align-items: center;
   column-gap: var(--space-1-5);
   white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
   line-height: var(--leading-snug);
 }
 
 .mentionTime {
   grid-column: 2;
-  font-size: var(--text-xs);
   color: var(--text-3);
 }
 
@@ -652,6 +630,9 @@
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.sourceList li + li {
   border-top: var(--border-width) solid var(--border);
 }
 
@@ -661,12 +642,13 @@
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  padding: var(--space-3) 0;
+  height: var(--control-lg);
+  padding: 0 var(--space-4);
   border: 0;
-  border-bottom: var(--border-width) solid var(--border);
   background: none;
   color: inherit;
   font: inherit;
+  font-size: var(--text-sm);
   text-align: left;
   text-decoration: none;
   cursor: pointer;
@@ -677,12 +659,17 @@
   background: var(--surface-2);
 }
 
+.sourceRow:focus-visible {
+  outline-offset: -2px;
+}
+
 .sourceName {
   font-weight: var(--weight-medium);
 }
 
 .sourceDetail {
-  justify-self: end;
+  min-width: 0;
+  text-align: right;
   font-size: var(--text-xs);
   color: var(--text-3);
   white-space: nowrap;
@@ -693,24 +680,7 @@
 .activity {
   list-style: none;
   margin: 0;
-  padding: 0;
-  border-top: var(--border-width) solid var(--border);
-}
-
-.activity li {
-  position: relative;
-}
-
-/* A thread down the source marks, newest at the top. */
-.activity li:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  left: calc(var(--space-2) + 0.4375rem);
-  top: calc(var(--space-3) + 1.25rem);
-  bottom: calc(-1 * var(--space-1));
-  width: var(--border-width);
-  background: var(--border);
-  pointer-events: none;
+  padding: var(--space-2) 0;
 }
 
 .activityItem {
@@ -718,9 +688,8 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--space-3);
   width: 100%;
-  padding: var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-4);
   border: 0;
-  border-radius: var(--radius-sm);
   background: none;
   color: inherit;
   font: inherit;
@@ -733,14 +702,14 @@
   background: var(--surface-2);
 }
 
+.activityItem:focus-visible {
+  outline-offset: -2px;
+}
+
 .activityLogo {
-  position: relative;
-  z-index: 1;
   display: grid;
   place-items: center;
-  width: 0.875rem;
   padding-top: var(--space-0-5);
-  background: var(--bg);
 }
 
 .activityBody {
@@ -762,8 +731,9 @@
 }
 
 .activityTarget {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
   color: var(--text);
-  font-weight: var(--weight-medium);
   white-space: nowrap;
 }
 
@@ -776,31 +746,31 @@
 }
 
 .activityTime {
-  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
   color: var(--text-3);
   white-space: nowrap;
-  font-variant-numeric: tabular-nums;
+  padding-top: var(--space-0-5);
 }
 
 .empty {
   display: grid;
   justify-items: start;
   gap: var(--space-4);
-  padding: var(--space-10) 0;
-  border-top: var(--border-width) solid var(--text);
+  padding: var(--space-8);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
 }
 
 .empty h2 {
-  font-family: var(--font-serif);
   font-size: var(--text-xl);
-  font-weight: var(--weight-regular);
-  letter-spacing: var(--tracking-display);
+  letter-spacing: var(--tracking-heading);
 }
 
 .empty p {
   max-width: var(--measure);
   color: var(--text-2);
-  line-height: var(--leading-relaxed);
 }
 
 @media (max-width: 1180px) {
@@ -811,14 +781,13 @@
   .sideCol {
     position: static;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-8);
   }
 }
 
 @media (max-width: 900px) {
   .page {
-    padding: var(--space-6) var(--space-5) var(--space-16);
-    gap: var(--space-8);
+    padding: var(--space-5) var(--space-4) var(--space-12);
+    gap: var(--space-4);
   }
 
   .stats {
@@ -827,7 +796,6 @@
 
   .stat:nth-child(3) {
     border-left: 0;
-    padding-left: 0;
   }
 
   .stat:nth-child(n + 3) {
@@ -843,15 +811,16 @@
     display: none;
   }
 
-  .insight::before {
-    left: calc(-1 * var(--space-3));
-  }
-
   .evidenceRow {
     grid-template-columns: auto auto minmax(0, 1fr);
   }
 
   .evidenceDetail {
     display: none;
+  }
+
+  .note {
+    height: auto;
+    padding: var(--space-2) var(--space-3);
   }
 }

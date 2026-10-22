@@ -20,7 +20,7 @@ export default async function OnboardingPage() {
     <div className={styles.page}>
       <header className={styles.header}>
         <Link href="/" aria-label="Ember home" className={styles.brand}>
-          <Wordmark size={26} />
+          <Wordmark size={20} />
         </Link>
         <div className={styles.headerActions}>
           <ThemeSwitcher />

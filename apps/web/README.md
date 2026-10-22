@@ -226,6 +226,6 @@ CI runs both against a Postgres service container.
 ## Conventions
 
 - Owns only the UI and the web app's auth. Shared logic that a second consumer needs moves to `packages/` (see `packages/README.md`).
-- API calls are same-origin and relative, and nothing loads from a CDN (icons and source marks are inline SVG, and the two fonts, Instrument Serif and Instrument Sans, are files in `src/app/fonts/` served through `next/font/local`), so the future Electron shell can load the app unchanged and offline.
+- API calls are same-origin and relative, and nothing loads from a CDN (icons and source marks are inline SVG, and the fonts, Geist and Geist Mono, are files in `src/app/fonts/` served through `next/font/local`), so the future Electron shell can load the app unchanged and offline.
 - Styling is plain CSS: design tokens (color for both themes, type and spacing scales, radii, shadows, motion) and shared pieces in `src/app/globals.css`, one CSS module per page or component. Modules use the tokens, not raw values, so both themes stay in step.
 - The graph layout uses `d3-force`. Everything else on the page is React and SVG.
