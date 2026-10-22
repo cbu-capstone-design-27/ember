@@ -32,12 +32,8 @@ export default async function OnboardingPage() {
         <div className={styles.intro}>
           <h1>Which tools does your team use, {firstName}?</h1>
           <p>
-            Ember builds its knowledge graph from these. Pick every one your team works in. You can change this
-            anytime in Settings.
-          </p>
-          <p className={styles.note}>
-            Nothing connects yet. GitHub, Jira and Slack come with a preview workspace, so you can explore the
-            dashboard and the graph right away.
+            Pick every one your team works in. Nothing connects yet, but GitHub, Jira and Slack come with a preview
+            workspace, so the dashboard and the graph have data right away. You can change this in Settings.
           </p>
         </div>
         <SourcesForm initial={user.sources} mode="onboarding" />

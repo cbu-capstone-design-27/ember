@@ -8,21 +8,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { Avatar } from "../../../components/avatar.tsx";
 import { SourceLogo } from "../../../components/brand.tsx";
-import {
-  ActivityIcon,
-  ArrowRightIcon,
-  CheckIcon,
-  ChevronRightIcon,
-  DraftIcon,
-  InfoIcon,
-  LayersIcon,
-  MergeIcon,
-  MessageIcon,
-  PullRequestIcon,
-  SparkIcon,
-  TicketIcon,
-  XIcon,
-} from "../../../components/icons.tsx";
+import { ArrowRightIcon, CheckIcon, ChevronRightIcon, DraftIcon, MergeIcon, PullRequestIcon, XIcon } from "../../../components/icons.tsx";
 import { usePreview } from "../../../components/preview/store.tsx";
 import { sourceInfo, type SourceId } from "../../../lib/sources.ts";
 import { changeId, contextRefs, nodeId } from "../../../lib/workspace/model.ts";
@@ -41,45 +27,34 @@ function scrollTo(id: string) {
 }
 
 export function DashboardView({ firstName, sources }: { firstName: string; sources: SourceId[] }) {
-  const { model, insights, now, editCount, reset } = usePreview();
+  const { model, insights, editCount, reset } = usePreview();
   const withData = model.sources;
 
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <div>
-          <h1>Welcome back, {firstName}</h1>
-          <p className="muted">
-            {withData.length
-              ? `What moved across ${listOf(withData.map((s) => sourceInfo(s).name))} at ${model.ws.organization.name}, and where it doesn't add up.`
-              : "Your sources don't have preview data yet."}
-          </p>
-        </div>
-        <div className={styles.headerMeta}>
-          <Link className="badge badge-accent" href="/settings#preview-data" title="About preview data">
-            <span className="dot" /> Preview data
-          </Link>
-          <span className="subtle">Updated {ago(new Date(now).toISOString(), now)}</span>
-        </div>
+        <h1>Welcome back, {firstName}</h1>
+        <p className={styles.note}>
+          <span>
+            You&apos;re looking at{" "}
+            <Link className="link" href="/settings#preview-data" title="About preview data">
+              preview data
+            </Link>
+            . {model.ws.organization.name} is a made-up team, so you can try Ember before anything is connected. Open any
+            item or take a suggested action.{" "}
+            {editCount > 0 ? (
+              <>
+                You&apos;ve made {editCount} change{editCount === 1 ? "" : "s"}, saved in this browser.{" "}
+                <button type="button" className={styles.inlineLink} onClick={reset}>
+                  Start over
+                </button>
+              </>
+            ) : (
+              "Changes stay in this browser."
+            )}
+          </span>
+        </p>
       </header>
-
-      <div className={`alert alert-info ${styles.banner}`}>
-        <InfoIcon />
-        <span>
-          This is <b>{model.ws.organization.name}</b>, a made-up team, so you can try Ember before anything is connected.
-          Everything works: click any item, or take a suggested action.{" "}
-          {editCount > 0 ? (
-            <>
-              You&apos;ve made {editCount} change{editCount === 1 ? "" : "s"}, saved in this browser.{" "}
-              <button type="button" className={styles.inlineLink} onClick={reset}>
-                Start over
-              </button>
-            </>
-          ) : (
-            "Changes you make stay in this browser."
-          )}
-        </span>
-      </div>
 
       {withData.length === 0 ? (
         <NoPreviewData sources={sources} />
@@ -104,11 +79,10 @@ export function DashboardView({ firstName, sources }: { firstName: string; sourc
 
 function NoPreviewData({ sources }: { sources: SourceId[] }) {
   return (
-    <section className={`card ${styles.empty}`}>
-      <LayersIcon />
+    <section className={styles.empty}>
       <h2>No preview data for {listOf(sources.map((s) => sourceInfo(s).name))} yet</h2>
-      <p className="muted">
-        The preview workspace has GitHub, Jira and Slack data. Add one of those to your sources to explore the dashboard
+      <p>
+        The preview workspace has GitHub, Jira and Slack data. Add one of them to your sources to explore the dashboard
         and the graph while the other connectors are built.
       </p>
       <Link className="btn btn-primary" href="/settings">
@@ -135,7 +109,6 @@ function StatCards() {
 
   const cards = [
     {
-      Icon: SparkIcon,
       label: "Needs attention",
       value: s.attention.total,
       detail: s.attention.high ? `${s.attention.high} high priority` : "Nothing urgent",
@@ -145,7 +118,6 @@ function StatCards() {
       hint: "Go to the list",
     },
     {
-      Icon: PullRequestIcon,
       label: "Open pull requests",
       value: s.pullRequests?.open,
       detail: s.pullRequests && `${s.pullRequests.awaitingReview} waiting for review · ${s.pullRequests.drafts} drafts`,
@@ -155,7 +127,6 @@ function StatCards() {
       hint: "See them",
     },
     {
-      Icon: TicketIcon,
       label: "Tickets in flight",
       value: s.inFlight?.total,
       detail: s.inFlight && `${s.inFlight.inReview} in review`,
@@ -165,7 +136,6 @@ function StatCards() {
       hint: "Go to the table",
     },
     {
-      Icon: MessageIcon,
       label: "Messages about work",
       value: s.conversations?.linked,
       detail: s.conversations && `of ${s.conversations.total} mention a ticket or PR`,
@@ -177,27 +147,23 @@ function StatCards() {
   ];
   return (
     <section className={styles.stats} aria-label="Summary">
-      {cards.map(({ Icon, label, value, detail, tone, missing, onClick, hint }) =>
+      {cards.map(({ label, value, detail, tone, missing, onClick, hint }) =>
         value === undefined ? (
-          <Link key={label} href="/settings" className={`card ${styles.stat}`} data-tone="neutral">
-            <span className={styles.statIcon}>
-              <Icon />
-            </span>
+          <Link key={label} href="/settings" className={styles.stat} data-tone="neutral">
             <span className={styles.statLabel}>{label}</span>
             <span className={`${styles.statValue} subtle`}>—</span>
             <span className={styles.statDetail}>Add {missing} to see this</span>
           </Link>
         ) : (
-          <button key={label} type="button" className={`card ${styles.stat}`} data-tone={tone} onClick={onClick}>
-            <span className={styles.statIcon}>
-              <Icon />
+          <button key={label} type="button" className={styles.stat} data-tone={tone} onClick={onClick}>
+            <span className={styles.statLabel}>
+              {label}
+              <span className={styles.statHint}>
+                {hint} <ChevronRightIcon />
+              </span>
             </span>
-            <span className={styles.statLabel}>{label}</span>
             <span className={styles.statValue}>{value}</span>
             <span className={styles.statDetail}>{detail}</span>
-            <span className={styles.statHint}>
-              {hint} <ChevronRightIcon />
-            </span>
           </button>
         ),
       )}
@@ -254,12 +220,10 @@ function WorkTable({ rows }: { rows: WorkRow[] }) {
   }, [rows, model]);
 
   return (
-    <section id="work" className={`card ${styles.panel}`} aria-labelledby="work-title">
-      <div className="card-header">
-        <div>
-          <h2 id="work-title">Work in flight</h2>
-          <p>Every ticket in progress or review, with its pull request and where it was last discussed. Click a row to open it.</p>
-        </div>
+    <section id="work" className={styles.panel} aria-labelledby="work-title">
+      <div className={styles.panelHead}>
+        <h2 id="work-title">Work in flight</h2>
+        <span className={styles.panelCount}>{rows.length}</span>
       </div>
       <div className={styles.tableWrap}>
         <table className={styles.table}>
@@ -343,13 +307,10 @@ function SourcesCard({ sources }: { sources: SourceId[] }) {
     return null;
   };
   return (
-    <section className={`card ${styles.panel}`} aria-labelledby="sources-title">
-      <div className="card-header">
-        <div>
-          <h2 id="sources-title">Your sources</h2>
-          <p>What this dashboard reads.</p>
-        </div>
-        <Link className="btn btn-ghost btn-sm" href="/settings">
+    <section className={styles.panel} aria-labelledby="sources-title">
+      <div className={styles.panelHead}>
+        <h2 id="sources-title">Your sources</h2>
+        <Link className={styles.panelAction} href="/settings">
           Manage
         </Link>
       </div>
@@ -358,14 +319,9 @@ function SourcesCard({ sources }: { sources: SourceId[] }) {
           const to = target(id);
           const content = (
             <>
-              <span className={styles.sourceLogo}>
-                <SourceLogo source={id} size={20} />
-              </span>
-              <span className={styles.sourceText}>
-                <span className={styles.sourceName}>{sourceInfo(id).name}</span>
-                <span className="subtle">{detail ?? "No preview data yet"}</span>
-              </span>
-              {detail ? <span className="badge badge-accent">Preview</span> : <span className="badge">Later</span>}
+              <SourceLogo source={id} size={18} />
+              <span className={styles.sourceName}>{sourceInfo(id).name}</span>
+              <span className={styles.sourceDetail}>{detail ?? "No preview data yet"}</span>
             </>
           );
           return (
@@ -391,13 +347,9 @@ function ActivityFeed() {
   const { model, now, openItem } = usePreview();
   const items = activity(model, 14);
   return (
-    <section className={`card ${styles.panel}`} aria-labelledby="activity-title">
-      <div className="card-header">
-        <div>
-          <h2 id="activity-title">Recent activity</h2>
-          <p>Across every source, newest first.</p>
-        </div>
-        <ActivityIcon className={`icon ${styles.headerIcon}`} />
+    <section className={styles.panel} aria-labelledby="activity-title">
+      <div className={styles.panelHead}>
+        <h2 id="activity-title">Recent activity</h2>
       </div>
       <ol className={styles.activity}>
         {items.map((item) => (

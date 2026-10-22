@@ -19,7 +19,7 @@ function StatusLine({ status }: { status: Status }) {
   );
 }
 
-export function ProfileForm({ name, email }: { name: string; email: string }) {
+export function ProfileForm({ name, email, memberSince }: { name: string; email: string; memberSince: string }) {
   const router = useRouter();
   const [value, setValue] = useState(name);
   const [busy, setBusy] = useState(false);
@@ -46,7 +46,7 @@ export function ProfileForm({ name, email }: { name: string; email: string }) {
         <span className="field-label">Email</span>
         <input className="input" value={email} readOnly aria-describedby="email-hint" />
         <span id="email-hint" className="field-hint">
-          Your sign-in email. Changing it comes with email verification.
+          Your sign-in email. Member since {memberSince}.
         </span>
       </label>
       <StatusLine status={status} />
@@ -104,6 +104,7 @@ export function PasswordForm() {
       </div>
       <StatusLine status={status} />
       <div className={styles.formActions}>
+        <span className="field-hint">Changing it signs you out everywhere else.</span>
         <button className="btn btn-secondary" type="submit" disabled={busy}>
           {busy && <span className="spinner" aria-hidden="true" />}
           Change password
@@ -118,16 +119,16 @@ export function PreviewDataForm() {
   const changes = editCount + dismissed.length;
   return (
     <div className={styles.form}>
-      <p className="muted">
+      <p className={styles.prose}>
         The dashboard and the graph show <b>{model.ws.organization.name}</b>, a made-up team. You can act on it like real
         data: move tickets, comment, re-run checks, post in Slack. Changes are saved in this browser only.
       </p>
-      <p>
-        {changes === 0
-          ? "You haven't changed anything yet."
-          : `${editCount} change${editCount === 1 ? "" : "s"} and ${dismissed.length} dismissed insight${dismissed.length === 1 ? "" : "s"}.`}
-      </p>
       <div className={styles.formActions}>
+        <span className="field-hint">
+          {changes === 0
+            ? "You haven't changed anything yet."
+            : `${editCount} change${editCount === 1 ? "" : "s"} and ${dismissed.length} dismissed insight${dismissed.length === 1 ? "" : "s"}.`}
+        </span>
         <button type="button" className="btn btn-secondary" disabled={changes === 0} onClick={reset}>
           Reset preview data
         </button>

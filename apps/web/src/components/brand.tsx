@@ -42,7 +42,7 @@ export function Wordmark({ size = 28 }: { size?: number }) {
     // The flame is tall and narrow, so it's drawn a little larger than the text to read at the same weight.
     <span style={{ display: "inline-flex", alignItems: "center", gap: size * 0.2 }}>
       <EmberMark size={Math.round(size * 1.25)} />
-      <span style={{ fontWeight: 700, fontSize: size * 0.64, letterSpacing: "-0.03em" }}>ember</span>
+      <span style={{ fontWeight: 600, fontSize: size * 0.66, letterSpacing: "-0.025em" }}>ember</span>
     </span>
   );
 }

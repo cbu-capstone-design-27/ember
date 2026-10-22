@@ -23,26 +23,22 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             <Wordmark size={26} />
           </Link>
 
-          <div className={styles.workspace}>
-            <span className={styles.workspaceIcon} aria-hidden="true">K</span>
-            <span className={styles.workspaceText}>
-              <span className={styles.workspaceName}>Kestrel Labs</span>
-              <span className={styles.workspaceMeta}>Preview workspace</span>
-            </span>
-          </div>
+          <p className={styles.workspace}>
+            <span className={styles.workspaceName}>Kestrel Labs</span>
+            <span className="badge badge-accent">Preview</span>
+          </p>
 
           <NavLinks className={styles.nav} linkClassName={styles.navLink} />
 
           <div className={styles.footer}>
-            <ThemeSwitcher />
-            <div className={styles.user}>
+            <div className={styles.user} title={user.email}>
               <Avatar name={user.name} />
-              <span className={styles.userText}>
-                <span className={styles.userName}>{user.name}</span>
-                <span className={styles.userEmail}>{user.email}</span>
-              </span>
+              <span className={styles.userName}>{user.name}</span>
             </div>
-            <SignOutButton className={`btn btn-ghost btn-sm ${styles.signOut}`} />
+            <div className={styles.footerRow}>
+              <ThemeSwitcher />
+              <SignOutButton className={`btn btn-ghost btn-sm ${styles.signOut}`} />
+            </div>
           </div>
         </aside>
         <main className={styles.main}>{children}</main>
