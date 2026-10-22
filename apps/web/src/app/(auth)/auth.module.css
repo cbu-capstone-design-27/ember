@@ -19,19 +19,18 @@
 }
 
 /* The fire along the bottom (flame.tsx), drawn low-res and scaled up pixelated, as on ember-ai.dev.
-   The drop shadow is a soft glow around the pixels, so they read as embers, not blocks. It runs
-   past the right edge (the panel clips it): the fire drifts left, so its last columns burn thin. */
+   A tight glow around the flames; the mask only softens their tips. */
 .flame {
   position: absolute;
   left: 0;
   bottom: 0;
-  width: 112%;
-  height: 34%;
+  width: 100%;
+  height: 40%;
   image-rendering: pixelated;
-  opacity: 0.8;
+  opacity: 0.95;
   pointer-events: none;
-  filter: drop-shadow(0 -6px 22px rgba(249, 115, 22, 0.35));
-  mask-image: linear-gradient(to top, #000 25%, transparent 95%);
+  filter: drop-shadow(0 0 8px rgba(255, 120, 24, 0.45));
+  mask-image: linear-gradient(to top, #000 55%, transparent 100%);
 }
 
 .story::after {
