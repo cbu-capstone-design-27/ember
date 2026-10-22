@@ -3,7 +3,8 @@
 // The landing's slice of the knowledge graph: CHK-131 in the middle, its
 // neighbours on an inner ring, one more step out on an outer ring (layout in
 // data.ts). Source records show their real logo, people their initials.
-// Labels only on key nodes; hover any node to light its links and read it.
+// Labels only on key nodes, on the side away from their edge; hover any node
+// to light its links and read it.
 // The rings settle in once on screen; with reduced motion they're just there.
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -78,6 +79,8 @@ export function MiniGraphView({ graph }: { graph: MiniGraph }) {
             className={styles.node}
             data-depth={n.depth}
             data-person={n.source === null || undefined}
+            data-up={n.up || undefined}
+            data-up-alone={n.upAlone || undefined}
             data-dim={(!!lit && !lit.has(n.id)) || undefined}
             style={{ left: `${n.x}%`, top: `${n.y}%`, ["--delay" as string]: `${n.depth * 220 + i * 25}ms` }}
             onPointerEnter={() => setHover(n.id)}

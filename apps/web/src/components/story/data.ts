@@ -60,8 +60,19 @@ export interface MiniGraph {
     /** Position in percent of the drawing (0 to 100). */
     x: number;
     y: number;
+    /** Its label goes above the node rather than below, clear of its edges. */
+    up: boolean;
+    /** The same on phones, where the outer ring is hidden: away from the focus. */
+    upAlone: boolean;
   }>;
   edges: Array<{ id: string; source: string; target: string; type: EdgeType; focus: boolean }>;
+}
+
+/** Cuts text to at most `max` characters at a word boundary, with an ellipsis. */
+function clip(text: string, max: number) {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max - 1);
+  return `${cut.slice(0, cut.lastIndexOf(" ") > 0 ? cut.lastIndexOf(" ") : cut.length)}…`;
 }
 
 function load() {
@@ -128,13 +139,19 @@ export function searchPreview(question: string, k = 3, order: SearchHit["kind"][
   for (const m of model.messages.values()) {
     const text = plainSlackText(m.text, (uid) => model.byAccount.slack.get(uid)?.name);
     const channel = model.ws.slack!.channels.find((c) => c.id === m.channel)?.name ?? m.channel;
-    if (has(text)) hits.push({ source: "slack", kind: "message", object_id: `${m.channel}/${m.ts}`, label: `#${channel}`, title: text.slice(0, 80), snippet: bold(text) });
+    if (has(text)) hits.push({ source: "slack", kind: "message", object_id: `${m.channel}/${m.ts}`, label: `#${channel}`, title: clip(text, 80), snippet: bold(text) });
   }
   return hits.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind)).slice(0, k);
 }
 
-// Ring sizes in percent of the drawing's width and height.
-const RING = { 1: { rx: 22, ry: 28 }, 2: { rx: 42, ry: 44 } };
+// The layout works in units of the drawing's height, then converts to percent
+// of a 16:10 box (graph.module.css). Ring 1 is a slightly wide ellipse; each
+// outer node sits a fixed distance out from its parent, so every outer edge is
+// the same length.
+const ASPECT = 16 / 10;
+const RING1 = { rx: 0.55, ry: 0.25 };
+const OUTER_STEP = 0.24;
+const FAN = 40; // degrees between siblings on the outer ring
 
 /**
  * CHK-131 and the records around it, laid out on two rings: its neighbours,
@@ -175,16 +192,31 @@ export function miniGraph(): MiniGraph {
   const start = -90 - (360 / sorted.length) * 0.5;
   sorted.forEach((id, i) => angle.set(id, start + (360 / sorted.length) * (i + 0.5)));
   // Ring 2: fanned out behind each parent.
+  const parentOf = new Map(ring2.map((r) => [r.id, r.parent]));
   const kids = new Map<string, string[]>();
   for (const r of ring2) kids.set(r.parent, [...(kids.get(r.parent) ?? []), r.id]);
   for (const [parent, list] of kids) {
-    list.forEach((id, j) => angle.set(id, angle.get(parent)! + (j - (list.length - 1) / 2) * 16));
+    list.forEach((id, j) => angle.set(id, angle.get(parent)! + (j - (list.length - 1) / 2) * FAN));
   }
 
+  const rad = (id: string) => ((angle.get(id) ?? 0) * Math.PI) / 180;
+  // Position in height units, with the focus at (0, 0).
+  const at = (id: string, depth: 0 | 1 | 2): [number, number] => {
+    if (depth === 0) return [0, 0];
+    if (depth === 1) return [Math.cos(rad(id)) * RING1.rx, Math.sin(rad(id)) * RING1.ry];
+    const [px, py] = at(parentOf.get(id)!, 1);
+    return [px + Math.cos(rad(id)) * OUTER_STEP, py + Math.sin(rad(id)) * OUTER_STEP];
+  };
+  // A label goes on the side its node's children don't use; without children,
+  // on the side away from the focus.
+  const labelUp = (id: string, depth: 0 | 1 | 2, y: number) => {
+    const list = depth === 1 ? kids.get(id) : undefined;
+    if (!list) return y < -0.05;
+    return list.reduce((sum, k) => sum + Math.sin(rad(k)), 0) > 0;
+  };
   const place = (id: string, depth: 0 | 1 | 2) => {
     const n = byId.get(id)!;
-    const a = ((angle.get(id) ?? 0) * Math.PI) / 180;
-    const r = depth === 0 ? { rx: 0, ry: 0 } : RING[depth];
+    const [x, y] = at(id, depth);
     const src = n.type === "Person" ? null : ((n.source ?? n.subgraph?.split("_").pop()) as SourceId);
     return {
       id,
@@ -192,8 +224,10 @@ export function miniGraph(): MiniGraph {
       label: n.label,
       source: src,
       depth,
-      x: Math.round((50 + Math.cos(a) * r.rx) * 10) / 10,
-      y: Math.round((50 + Math.sin(a) * r.ry) * 10) / 10,
+      x: Math.round((50 + (x / ASPECT) * 100) * 10) / 10,
+      y: Math.round((50 + y * 100) * 10) / 10,
+      up: labelUp(id, depth, y),
+      upAlone: y < -0.05,
     };
   };
   const nodes = [place(focus, 0), ...ring1.map((id) => place(id, 1)), ...ring2.map((r) => place(r.id, 2))];
@@ -291,7 +325,7 @@ export function featureData(): FeatureData {
     timeline,
     decision: { who: personName(model, "slack", m.user), where: `#${channel.name}`, text: d.statement, issues: d.issues },
     person: { name: p.name, title: p.title, accounts },
-    activity: activity(model, 7).map((a) => ({ id: a.id, source: a.source, actor: a.actor, action: a.action, target: a.target, when: ago(a.at, now) })),
+    activity: activity(model, 11).map((a) => ({ id: a.id, source: a.source, actor: a.actor, action: a.action, target: a.target, when: ago(a.at, now) })),
     counts: { nodes: graph.nodes.length, edges: graph.edges.length, subgraphs: [...new Set(graph.nodes.map((n) => n.subgraph).filter((x): x is string => !!x))] },
   };
 }

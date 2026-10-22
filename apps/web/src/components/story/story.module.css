@@ -1,18 +1,20 @@
 /* The animated stories: the drift (landing, log-in), the sources linking up
-   (sign-up), sparks over the fire, floating logo tiles. Motion is slow and
+   (sign-up), embers over the fire, floating logo tiles. Motion is slow and
    eased; reduced motion turns it off (globals.css), and PauseOffscreen pauses
    CSS animations off screen (globals.css). */
 
-/* --- the drift: cards on a grid, joined by straight 1px wires --------------- */
+/* --- the drift: cards on a grid, joined by <Links> ----------------------- */
 
 .drift {
+  position: relative;
   display: grid;
+  gap: var(--space-8);
   width: 100%;
   max-width: 34rem;
 }
 
-/* Two equal columns; every card in the row is the same height, so the wires
-   below start exactly on their bottom edges. */
+/* Two equal columns; every card in the row is the same height, so both links
+   leave from the same line. */
 .pair {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -21,30 +23,6 @@
 
 .pair > .slot {
   display: grid;
-}
-
-.single {
-  display: grid;
-  justify-items: center;
-}
-
-/* A wire fills the space between two rows, centred under its card. */
-.wire {
-  justify-self: center;
-  width: var(--border-width);
-  height: var(--space-6);
-  background: var(--border-strong);
-  transform: scaleY(0);
-  transform-origin: top;
-  transition: transform 600ms var(--ease-out);
-}
-
-.wire[data-on="true"] {
-  transform: none;
-}
-
-.wireHot {
-  background: var(--accent);
 }
 
 /* Cards rise in one at a time; everything fades out together when the loop restarts. */
@@ -61,6 +39,8 @@
   transform: none;
 }
 
+/* --- links between cards (links.tsx) ------------------------------------ */
+
 .links {
   position: absolute;
   inset: 0;
@@ -68,6 +48,52 @@
   height: 100%;
   overflow: visible;
   pointer-events: none;
+}
+
+.link path {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 700ms var(--ease-out);
+}
+
+.link[data-on="true"] path {
+  stroke-dashoffset: 0;
+}
+
+.link circle {
+  opacity: 0;
+  transition: opacity 300ms var(--ease-out);
+}
+
+.link[data-on="true"] .linkFromDot {
+  opacity: 1;
+}
+
+/* The end dot lands once the line has drawn in. */
+.link[data-on="true"] .linkToDot {
+  opacity: 1;
+  transition-delay: 550ms;
+}
+
+.linkFrom {
+  stop-color: var(--text-3);
+}
+
+.linkTo,
+.link[data-hot="true"] .linkFrom {
+  stop-color: var(--accent);
+}
+
+.linkFromDot {
+  fill: var(--text-3);
+}
+
+.linkToDot,
+.link[data-hot="true"] .linkFromDot {
+  fill: var(--accent);
 }
 
 /* --- a record card ----------------------------------------------------- */
@@ -144,7 +170,7 @@
   border: var(--border-width) solid var(--accent-border);
   border-radius: var(--radius-button);
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  box-shadow: 0 0 0 var(--space-1) var(--accent-soft), var(--shadow-lg);
+  box-shadow: var(--shadow-lg);
 }
 
 .flag p {
@@ -161,7 +187,9 @@
 /* --- sources linking up (sign-up) -------------------------------------- */
 
 .connect {
+  position: relative;
   display: grid;
+  gap: var(--space-10);
   width: 100%;
   max-width: 34rem;
 }
@@ -176,22 +204,10 @@
   display: grid;
 }
 
-/* The shared line: from the centre of the first column to the centre of the last. */
-.bus {
-  height: var(--border-width);
-  margin: 0 calc((100% - (var(--cols) - 1) * var(--space-4)) / var(--cols) / 2);
-  background: var(--border-strong);
-  transform: scaleX(0);
-  transition: transform 700ms var(--ease-out);
-}
-
-.bus[data-on="true"] {
-  transform: none;
-}
-
 .tile {
   display: grid;
   justify-items: center;
+  align-content: center;
   gap: var(--space-2);
   padding: var(--space-4) var(--space-3);
   border: var(--border-width) solid var(--border);
@@ -199,6 +215,11 @@
   background: var(--surface);
   box-shadow: var(--shadow-lg);
   text-align: center;
+}
+
+/* One count per line when the pair doesn't fit, never a number without its noun. */
+.tile code span {
+  white-space: nowrap;
 }
 
 .tile code {
@@ -215,7 +236,7 @@
   border: var(--border-width) solid var(--accent-border);
   border-radius: var(--radius-button);
   background: color-mix(in srgb, var(--accent) 6%, var(--surface));
-  box-shadow: 0 0 0 var(--space-1) var(--accent-soft), var(--shadow-lg);
+  box-shadow: var(--shadow-lg);
 }
 
 .hub > span {
@@ -233,43 +254,18 @@
   color: var(--text-2);
 }
 
-/* --- sparks over the fire ---------------------------------------------- */
+/* --- embers over the fire (embers.tsx) ------------------------------------ */
 
-/* A size container, so a spark can travel the box's full height (100cqh). */
-.sparks {
+/* Above the fire canvas, under the content. Full width and bottom-aligned
+   like the fire; embers.tsx sets the height to a whole number of fire rows. */
+.embers {
   position: absolute;
-  inset: 0;
-  overflow: hidden;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
   pointer-events: none;
-  container-type: size;
-}
-
-.sparks span {
-  position: absolute;
-  bottom: 12%;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 6px 1px rgba(249, 116, 50, 0.55);
-  opacity: 0;
-  animation: rise linear infinite;
-}
-
-/* From the flames to the top edge, staying visible the whole way. */
-@keyframes rise {
-  0% {
-    opacity: 0;
-    transform: translate(0, 0);
-  }
-  8% {
-    opacity: 0.9;
-  }
-  85% {
-    opacity: 0.7;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(var(--drift), calc(-88cqh - var(--space-4)));
-  }
 }
 
 /* --- floating logo tiles (landing hero) ------------------------------- */
@@ -294,5 +290,20 @@
   }
   to {
     transform: translate3d(0, var(--space-2), 0) rotate(calc(var(--tilt, 0deg) * -0.6));
+  }
+}
+
+/* Two cards side by side get narrow on phones: drop the timestamps and keep
+   each header on one line. */
+@media (max-width: 760px) {
+  .cardWhen {
+    display: none;
+  }
+
+  .cardHead code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }

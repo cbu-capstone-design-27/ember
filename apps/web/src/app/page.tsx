@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { EmberMark, SourceLogo, Wordmark } from "../components/brand.tsx";
@@ -8,7 +9,7 @@ import { agentAsks, connectStory, driftStory, featureData, miniGraph, searchPrev
 import { DriftStory } from "../components/story/drift.tsx";
 import { PauseOffscreen, WhenVisible } from "../components/story/in-view.tsx";
 import { MiniGraphView } from "../components/story/mini-graph.tsx";
-import { Sparks } from "../components/story/sparks.tsx";
+import { Embers } from "../components/story/embers.tsx";
 import storyStyles from "../components/story/story.module.css";
 import { getCurrentUser } from "../lib/session.ts";
 import { SOURCES, type SourceId } from "../lib/sources.ts";
@@ -25,21 +26,21 @@ const REPO = "https://github.com/cbu-capstone-design-27/ember";
 
 // The sources with ingestion in the repo, and what Ember reads from each.
 // Teams is left out: it is designed (docs/ingestion/teams.md) but not built.
-const READS: Partial<Record<SourceId, string>> = {
-  github: "pull requests · reviews · checks",
-  gitlab: "merge requests · approvals · notes",
-  jira: "issues · status history · comments",
-  slack: "channels · threads · decisions",
+const READS: Partial<Record<SourceId, string[]>> = {
+  github: ["pull requests", "reviews", "checks"],
+  gitlab: ["merge requests", "approvals", "notes"],
+  jira: ["issues", "status history", "comments"],
+  slack: ["channels", "threads", "decisions"],
 };
 const BUILT = SOURCES.filter((src) => READS[src.id]);
 
 // The tiles that drift around the headline: [Logo, left %, top %, size rem, tilt deg, seconds].
 const TILES = [
-  [ClaudeLogo, 9, 22, 3.5, -8, 13],
+  [ClaudeLogo, 6, 24, 3.5, -8, 13],
   [GitHubLogo, 3, 58, 3, 5, 11],
   [JiraLogo, 17, 68, 3.25, -4, 15],
   [GitLabLogo, 27, 4, 2.75, 6, 12],
-  [CodexLogo, 86, 18, 3.5, 7, 14],
+  [CodexLogo, 89, 10, 3.5, 7, 14],
   [SlackLogo, 93, 54, 3, -6, 12],
   [CursorLogo, 79, 70, 3.25, 4, 16],
 ] as const;
@@ -115,7 +116,7 @@ export default async function Home() {
             <h1 className={styles.title}>The why behind your code, for every coding agent.</h1>
             <p className={styles.lede}>
               Ember turns your team&apos;s GitHub, Jira and Slack history into a knowledge graph of decisions, tickets,
-              people and code, and serves it to Claude Code, Codex and Cursor over MCP.
+              people and code, and serves it to Claude&nbsp;Code, Codex and Cursor over MCP.
             </p>
             <div className={styles.cta}>
               <Link className="btn btn-primary btn-lg" href="/signup">
@@ -138,7 +139,17 @@ export default async function Home() {
                 <SourceLogo source={src.id} size={22} />
                 <span>
                   <span className={styles.sourceName}>{src.name}</span>
-                  <code>{READS[src.id]}</code>
+                  <code>
+                    {READS[src.id]!.map((r, i, all) =>
+                      i < all.length - 1 ? (
+                        <Fragment key={r}>
+                          <span>{r} ·</span>{" "}
+                        </Fragment>
+                      ) : (
+                        <span key={r}>{r}</span>
+                      ),
+                    )}
+                  </code>
                 </span>
               </li>
             ))}
@@ -161,9 +172,6 @@ export default async function Home() {
             <p className={styles.sectionLede}>
               Ember&apos;s MCP server gives Claude Code, Codex and Cursor two read-only tools, <code>search</code> and{" "}
               <code>get_record</code>, over everything Ember has ingested.
-            </p>
-            <p className={styles.note}>
-              <code>apps/mcp</code> is a prototype (EMBER-79). The hits on the right come from the preview workspace.
             </p>
           </div>
           <AgentTabs question={QUESTION} hits={hits} />
@@ -276,7 +284,7 @@ export default async function Home() {
         </section>
 
         <section id="architecture" className={styles.section}>
-          <h2 className={styles.sectionTitle}>How the graph is built</h2>
+          <h2 className={styles.sectionTitle}>From webhook to agent</h2>
           <Architecture />
         </section>
 
@@ -294,8 +302,8 @@ export default async function Home() {
       <section className={styles.closing}>
         <WhenVisible className={styles.closingFire}>
           <Flame />
-          <Sparks />
         </WhenVisible>
+        <Embers fire={0.45} toTop className={styles.pageEmbers} />
         <div className={styles.closingBody}>
           <h2 className={styles.closingTitle}>Give your agent the why.</h2>
           <p>Try it on the preview workspace. Nothing to connect yet.</p>
@@ -324,14 +332,16 @@ export default async function Home() {
           <div>
             <h3>Sources</h3>
             {BUILT.map((src) => (
-              <span key={src.id}>{src.name}</span>
+              <a key={src.id} href="#sources">
+                {src.name}
+              </a>
             ))}
           </div>
           <div>
             <h3>Agents</h3>
-            <span>Claude Code</span>
-            <span>Codex</span>
-            <span>Cursor</span>
+            <a href="#agents">Claude Code</a>
+            <a href="#agents">Codex</a>
+            <a href="#agents">Cursor</a>
           </div>
           <div>
             <h3>Project</h3>

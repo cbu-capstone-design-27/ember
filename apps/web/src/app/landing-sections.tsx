@@ -1,13 +1,14 @@
 // The landing page's content sections. Every artifact is drawn from the
 // preview workspace or from what the repo really runs (docs/ingestion,
-// ADR 0001 and 0002, apps/mcp); nothing here is a mock of a feature that
-// doesn't exist. Planned pieces say so.
+// services/, apps/mcp); nothing here is a mock of a feature that doesn't exist.
 
 import type { ReactNode } from "react";
 import { Avatar } from "../components/avatar.tsx";
 import { EmberMark, SourceLogo } from "../components/brand.tsx";
-import { ClaudeLogo, CodexLogo, CursorLogo } from "../components/logos/index.ts";
+import { ClaudeLogo, CodexLogo, CursorLogo, GitHubLogo, GitLabLogo, JiraLogo, SlackLogo } from "../components/logos/index.ts";
 import type { AgentAsk, FeatureData } from "../components/story/data.ts";
+import { elbow } from "../components/story/elbow.ts";
+import { PauseOffscreen } from "../components/story/in-view.tsx";
 import type { SourceId } from "../lib/sources.ts";
 import styles from "./landing.module.css";
 
@@ -169,11 +170,11 @@ export function FeatureGrid({ data, hit }: { data: FeatureData; hit: { source: s
         </ol>
       </Feature>
 
-      <Feature title="Search over MCP" text="Agents send a few key words and get back ranked records with a snippet and a link to the source.">
+      <Feature title="Search over MCP" text="Agents ask in plain words and get back the closest records by meaning, each with a snippet and a link to the source.">
         <pre className={styles.json}>
           <code>
             {"{ "}
-            <span>&quot;question&quot;</span>: &quot;saved cards&quot;, <span>&quot;k&quot;</span>: 8 {"}"}
+            <span>&quot;question&quot;</span>: &quot;saved cards&quot;, <span>&quot;k&quot;</span>: 3 {"}"}
             {"\n→ "}
             {"{ "}
             <span>&quot;source&quot;</span>: &quot;{hit.source}&quot;, <span>&quot;kind&quot;</span>: &quot;{hit.kind}&quot;,{"\n    "}
@@ -233,74 +234,120 @@ export function FeatureGrid({ data, hit }: { data: FeatureData; hit: { source: s
   );
 }
 
-/** How data moves, from docs/ingestion/architecture.md, ADR 0001 and ADR 0002, and apps/mcp. */
+// The architecture figure's layout, in px at 1:1. Every box in a column has
+// the same height; connector coordinates sit on the quarter pixel so 1.5px
+// strokes land on whole device pixels at 2x.
+const ARCH = { w: 1100, h: 260, mid: 130, side: 44, stage: 64, gap: 12 };
+const ARCH_SOURCES = [
+  { name: "GitHub", Logo: GitHubLogo },
+  { name: "GitLab", Logo: GitLabLogo },
+  { name: "Jira", Logo: JiraLogo },
+  { name: "Slack", Logo: SlackLogo },
+];
+const ARCH_AGENTS = [
+  { name: "Claude Code", Logo: ClaudeLogo },
+  { name: "Codex", Logo: CodexLogo },
+  { name: "Cursor", Logo: CursorLogo },
+];
+// The pipeline, from docs/ingestion/architecture.md, services/ and apps/mcp.
+const ARCH_STAGES = [
+  { title: "Intake", detail: "POST /webhook", x: 168, w: 148 },
+  { title: "Enrich", detail: "worker per source", x: 352, w: 156 },
+  { title: "Postgres + embeddings", detail: "pgvector · Qwen3", x: 544, w: 184 },
+  { title: "MCP server", detail: "search · get_record", x: 764, w: 160, hot: true },
+];
+const SOURCE_W = 120;
+const AGENT_X = 960;
+
+/** Centres of `n` side boxes stacked around the middle line. */
+function stack(n: number) {
+  const top = ARCH.mid - (n * ARCH.side + (n - 1) * ARCH.gap) / 2;
+  return Array.from({ length: n }, (_, i) => top + i * (ARCH.side + ARCH.gap) + ARCH.side / 2);
+}
+
+/** Sources → intake → enrich → Postgres + embeddings → MCP → agents, as one SVG. */
 export function Architecture() {
-  const sources: SourceId[] = ["github", "gitlab", "jira", "slack"];
-  const agents = [
-    { name: "Claude Code", Logo: ClaudeLogo },
-    { name: "Codex", Logo: CodexLogo },
-    { name: "Cursor", Logo: CursorLogo },
+  const q = (v: number) => v + 0.25;
+  const src = stack(ARCH_SOURCES.length);
+  const agt = stack(ARCH_AGENTS.length);
+  const first = ARCH_STAGES[0];
+  const mcp = ARCH_STAGES[ARCH_STAGES.length - 1];
+  // Each leg in pipeline order; `step` staggers the pulse from left to right.
+  const legs = [
+    ...src.map((y) => ({ d: elbow(q(SOURCE_W), q(y), q(first.x), q(ARCH.mid), "x"), step: 0 })),
+    ...ARCH_STAGES.slice(1).map((s, i) => {
+      const prev = ARCH_STAGES[i];
+      return { d: elbow(q(prev.x + prev.w), q(ARCH.mid), q(s.x), q(ARCH.mid), "x"), step: i + 1 };
+    }),
+    ...agt.map((y) => ({ d: elbow(q(mcp.x + mcp.w), q(ARCH.mid), q(AGENT_X), q(y), "x"), step: ARCH_STAGES.length })),
+  ];
+  const ends = [
+    ...src.map((y) => [SOURCE_W, y]),
+    ...ARCH_STAGES.flatMap((s) => [
+      [s.x, ARCH.mid],
+      [s.x + s.w, ARCH.mid],
+    ]),
+    ...agt.map((y) => [AGENT_X, y]),
   ];
   return (
-    <figure className={styles.arch}>
-      <div className={styles.archCol}>
-        <span className={styles.archLabel}>Sources</span>
-        {sources.map((s) => (
-          <span key={s} className={styles.archNode}>
-            <SourceLogo source={s} size={14} />
-            <code>{s}</code>
-          </span>
+    <PauseOffscreen className={styles.arch}>
+      <svg
+        width={ARCH.w}
+        height={ARCH.h}
+        viewBox={`0 0 ${ARCH.w} ${ARCH.h}`}
+        role="img"
+        aria-label="GitHub, GitLab, Jira and Slack send webhooks to intake. Enrich workers turn them into records in Postgres with embeddings. The MCP server serves search and get_record to Claude Code, Codex and Cursor."
+      >
+        <defs>
+          <linearGradient id="arch-flow" gradientUnits="userSpaceOnUse" x1={SOURCE_W} y1="0" x2={AGENT_X} y2="0">
+            <stop offset="0" className={styles.archFrom} />
+            <stop offset="1" className={styles.archTo} />
+          </linearGradient>
+        </defs>
+        {ARCH_SOURCES.map(({ name, Logo }, i) => (
+          <g key={name} transform={`translate(0 ${src[i] - ARCH.side / 2})`}>
+            <rect className={styles.archBox} x={0.5} y={0.5} width={SOURCE_W - 1} height={ARCH.side - 1} rx={8} />
+            <g transform={`translate(14 ${ARCH.side / 2 - 8})`}>
+              <Logo size={16} />
+            </g>
+            <text className={styles.archName} x={40} y={ARCH.side / 2 + 4.5}>
+              {name}
+            </text>
+          </g>
         ))}
-      </div>
-      <div className={styles.archFlow}>
-        <div className={styles.archStage}>
-          <b>intake</b>
-          <code>/webhook/{"{source}"}</code>
-          <span>verify, store, answer 200</span>
-        </div>
-        <div className={styles.archStage}>
-          <b>enrich</b>
-          <code>raw_events → source_records</code>
-          <span>one worker per source</span>
-        </div>
-        <div className={styles.archStage}>
-          <b>extract</b>
-          <code>source_records → episodes</code>
-          <span>ontology mapping</span>
-        </div>
-        <div className={styles.archStage}>
-          <b>load</b>
-          <code>episodes → Neo4j</code>
-          <span>Graphiti, a subgraph per source</span>
-        </div>
-        <div className={styles.archStore}>
-          <span>
-            <b>Postgres</b> <code>raw_events · source_records · episodes</code>
-          </span>
-          <span>
-            <b>Embeddings</b> <code>Qwen3-Embedding-0.6B</code>
-          </span>
-        </div>
-      </div>
-      <div className={styles.archCol}>
-        <span className={styles.archLabel}>MCP server</span>
-        <span className={styles.archNode} data-hot="true">
-          <EmberMark size={14} />
-          <code>search · get_record</code>
-        </span>
-        <span className={styles.archLabel}>Agents</span>
-        {agents.map(({ name, Logo }) => (
-          <span key={name} className={styles.archNode}>
-            <Logo size={14} />
-            <span>{name}</span>
-          </span>
+        {ARCH_STAGES.map((s) => (
+          <g key={s.title} transform={`translate(${s.x} ${ARCH.mid - ARCH.stage / 2})`}>
+            <rect className={styles.archBox} data-hot={s.hot} x={0.5} y={0.5} width={s.w - 1} height={ARCH.stage - 1} rx={8} />
+            <text className={styles.archName} x={14} y={27}>
+              {s.title}
+            </text>
+            <text className={styles.archDetail} x={14} y={46}>
+              {s.detail}
+            </text>
+          </g>
         ))}
-      </div>
-      <figcaption className={styles.archNote}>
-        The MCP server is a prototype that searches <code>source_records</code> with full-text search; vector search
-        over the embeddings comes next.
-      </figcaption>
-    </figure>
+        {ARCH_AGENTS.map(({ name, Logo }, i) => (
+          <g key={name} transform={`translate(${AGENT_X} ${agt[i] - ARCH.side / 2})`}>
+            <rect className={styles.archBox} x={0.5} y={0.5} width={ARCH.w - AGENT_X - 1} height={ARCH.side - 1} rx={8} />
+            <g transform={`translate(14 ${ARCH.side / 2 - 8})`}>
+              <Logo size={16} />
+            </g>
+            <text className={styles.archName} x={40} y={ARCH.side / 2 + 4.5}>
+              {name}
+            </text>
+          </g>
+        ))}
+        {legs.map((l, i) => (
+          <g key={i} style={{ ["--step" as string]: l.step }}>
+            <path className={styles.archLink} d={l.d} pathLength={1} />
+            <path className={styles.archPulse} d={l.d} pathLength={1} />
+          </g>
+        ))}
+        {ends.map(([x, y], i) => (
+          <circle key={i} className={styles.archDot} cx={q(x)} cy={q(y)} r={2.5} />
+        ))}
+      </svg>
+    </PauseOffscreen>
   );
 }
 

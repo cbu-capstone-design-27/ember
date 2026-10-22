@@ -1,13 +1,13 @@
 "use client";
 
 // The sign-up panel: GitHub, Jira and Slack link into one graph, one at a
-// time. Each tile's wire drops to a shared line that runs into the graph
-// card; every line is straight, 1px, and meets the card edges exactly.
+// time, then <Links> joins each tile to the graph card.
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { EmberMark, SourceLogo } from "../brand.tsx";
 import type { ConnectStory } from "./data.ts";
 import { useInView, useReducedMotion } from "./in-view.tsx";
+import { Links } from "./links.tsx";
 import styles from "./story.module.css";
 
 const STEP_MS = 1100;
@@ -18,7 +18,7 @@ export function ConnectStoryView({ story, className }: { story: ConnectStory; cl
   const inView = useInView(ref);
   const reduced = useReducedMotion();
   const linked = story.sources.filter((s) => s.status === "linked");
-  // Steps: empty, one per source, the shared line, then the graph card (held).
+  // Steps: empty, one per source, the links, then the graph card (held).
   const last = linked.length + 2;
   const [step, setStep] = useState(0);
 
@@ -33,24 +33,25 @@ export function ConnectStoryView({ story, className }: { story: ConnectStory; cl
     <div ref={ref} className={`${styles.connect} ${className ?? ""}`} style={{ ["--cols" as string]: linked.length }} aria-hidden="true">
       <div className={styles.row}>
         {linked.map((s, i) => (
-          <div key={s.id} className={styles.slot} data-on={shown >= i + 1}>
+          <div key={s.id} className={styles.slot} data-on={shown >= i + 1} data-node={s.id}>
             <div className={styles.tile}>
               <SourceLogo source={s.id} size={18} />
-              <code>{s.detail}</code>
+              <code>
+                {s.detail?.split(" · ").map((part, i, all) =>
+                  i < all.length - 1 ? (
+                    <Fragment key={part}>
+                      <span>{part} ·</span>{" "}
+                    </Fragment>
+                  ) : (
+                    <span key={part}>{part}</span>
+                  ),
+                )}
+              </code>
             </div>
           </div>
         ))}
       </div>
-      <div className={styles.row}>
-        {linked.map((s, i) => (
-          <span key={s.id} className={styles.wire} data-on={shown >= i + 1} />
-        ))}
-      </div>
-      <span className={styles.bus} data-on={shown >= linked.length + 1} />
-      <div className={styles.single}>
-        <span className={`${styles.wire} ${styles.wireHot}`} data-on={shown >= linked.length + 1} />
-      </div>
-      <div className={styles.slot} data-on={shown >= last}>
+      <div className={styles.slot} data-on={shown >= last} data-node="hub">
         <div className={styles.hub}>
           <EmberMark size={22} />
           <span>
@@ -61,6 +62,7 @@ export function ConnectStoryView({ story, className }: { story: ConnectStory; cl
           </span>
         </div>
       </div>
+      <Links links={linked.map((s) => ({ from: s.id, to: "hub", on: shown >= linked.length + 1 }))} />
     </div>
   );
 }
