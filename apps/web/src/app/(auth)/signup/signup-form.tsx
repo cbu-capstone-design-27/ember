@@ -12,7 +12,7 @@ import { Steps } from "../steps.tsx";
 
 const MIN_PASSWORD_LENGTH = 8; // matches lib/auth.ts
 
-export function SignupForm() {
+export function SignupForm({ next, loginHref }: { next: string; loginHref: string }) {
   const router = useRouter();
   const [error, setError] = useState<{ text: string; exists: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,17 +37,20 @@ export function SignupForm() {
       });
       return;
     }
-    // Signing up also signs in. Next: pick the sources.
-    router.replace("/onboarding");
+    // Signing up also signs in. Next: pick the sources (or back to where the user was going).
+    router.replace(next);
     router.refresh();
   }
 
+  // Coming from somewhere else (e.g. the CLI's /device page), onboarding isn't the next step.
+  const onboardingNext = next === "/onboarding";
+
   return (
     <>
-      <Steps current={1} />
+      {onboardingNext && <Steps current={1} />}
       <div className={styles.heading}>
         <h1>Create your account</h1>
-        <p>Then tell us which tools your team uses. It takes a minute.</p>
+        <p>{onboardingNext ? "Then tell us which tools your team uses. It takes a minute." : "Then you'll go back to where you left off."}</p>
       </div>
       <form className={styles.form} onSubmit={onSubmit}>
         <label className="field">
@@ -88,7 +91,7 @@ export function SignupForm() {
             <span>
               {error.text}{" "}
               {error.exists && (
-                <Link className="link" href="/login">
+                <Link className="link" href={loginHref}>
                   Log in instead
                 </Link>
               )}
@@ -102,7 +105,7 @@ export function SignupForm() {
       </form>
       <p className={styles.switch}>
         Already have an account?{" "}
-        <Link className="link" href="/login">
+        <Link className="link" href={loginHref}>
           Log in
         </Link>
       </p>

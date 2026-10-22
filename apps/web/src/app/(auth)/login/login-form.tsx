@@ -9,7 +9,7 @@ import { authClient } from "../../../lib/auth-client.ts";
 import { authErrorMessage } from "../../../lib/auth-errors.ts";
 import styles from "../auth.module.css";
 
-export function LoginForm({ next }: { next: string }) {
+export function LoginForm({ next, signupHref }: { next: string; signupHref: string }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,7 +60,7 @@ export function LoginForm({ next }: { next: string }) {
       </form>
       <p className={styles.switch}>
         New to Ember?{" "}
-        <Link className="link" href="/signup">
+        <Link className="link" href={signupHref}>
           Create an account
         </Link>
       </p>

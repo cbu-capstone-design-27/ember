@@ -182,6 +182,26 @@
   font-size: 0.875rem;
 }
 
+/* CLI sign-in (/device): the code to compare with the terminal. */
+.deviceCode {
+  margin-bottom: 1.6rem;
+  padding: 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-align: center;
+}
+
+.codeInput {
+  font-family: var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 .steps {
   list-style: none;
   padding: 0;
