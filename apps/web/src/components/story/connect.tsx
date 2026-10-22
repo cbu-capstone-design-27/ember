@@ -1,8 +1,8 @@
 "use client";
 
-// The sign-up panel: each source links into one graph, one at a time.
-// GitLab has no preview data and Teams has no ingestion yet; both stay
-// unlinked and say so.
+// The sign-up panel: GitHub, Jira and Slack link into one graph, one at a
+// time. Each tile's wire drops to a shared line that runs into the graph
+// card; every line is straight, 1px, and meets the card edges exactly.
 
 import { useEffect, useRef, useState } from "react";
 import { EmberMark, SourceLogo } from "../brand.tsx";
@@ -10,24 +10,16 @@ import type { ConnectStory } from "./data.ts";
 import { useInView, useReducedMotion } from "./in-view.tsx";
 import styles from "./story.module.css";
 
-// Tile centres on a 440×400 canvas, around the hub at (220, 196).
-const AT: Record<string, { x: number; y: number }> = {
-  github: { x: 220, y: 40 },
-  gitlab: { x: 370, y: 140 },
-  jira: { x: 320, y: 320 },
-  slack: { x: 120, y: 320 },
-  teams: { x: 70, y: 140 },
-};
-const HUB = { x: 220, y: 196 };
-const STEP_MS = 1300;
-const HOLD_MS = 4500;
+const STEP_MS = 1100;
+const HOLD_MS = 5000;
 
 export function ConnectStoryView({ story, className }: { story: ConnectStory; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref);
   const reduced = useReducedMotion();
   const linked = story.sources.filter((s) => s.status === "linked");
-  const last = linked.length + 1;
+  // Steps: empty, one per source, the shared line, then the graph card (held).
+  const last = linked.length + 2;
   const [step, setStep] = useState(0);
 
   useEffect(() => {
@@ -37,42 +29,37 @@ export function ConnectStoryView({ story, className }: { story: ConnectStory; cl
   }, [step, last, inView, reduced]);
 
   const shown = reduced ? last : step;
-  const order = new Map(linked.map((s, i) => [s.id, i + 1]));
   return (
-    <div ref={ref} className={`${styles.connect} ${className ?? ""}`} aria-hidden="true">
-      <svg className={styles.links} viewBox="0 0 440 400">
-        {story.sources.map((s) => {
-          const p = AT[s.id];
-          const n = order.get(s.id);
-          return (
-            <line
-              key={s.id}
-              className={n ? styles.link : styles.linkIdle}
-              data-on={n ? shown >= n : true}
-              x1={p.x}
-              y1={p.y}
-              x2={HUB.x}
-              y2={HUB.y}
-              pathLength={1}
-            />
-          );
-        })}
-      </svg>
-      {story.sources.map((s) => {
-        const p = AT[s.id];
-        const n = order.get(s.id);
-        return (
-          <div key={s.id} className={styles.tile} style={{ left: p.x, top: p.y }} data-on={n ? shown >= n : false} data-idle={!n}>
-            <SourceLogo source={s.id} size={20} />
-            <code>{s.status === "linked" ? s.detail : s.status}</code>
+    <div ref={ref} className={`${styles.connect} ${className ?? ""}`} style={{ ["--cols" as string]: linked.length }} aria-hidden="true">
+      <div className={styles.row}>
+        {linked.map((s, i) => (
+          <div key={s.id} className={styles.slot} data-on={shown >= i + 1}>
+            <div className={styles.tile}>
+              <SourceLogo source={s.id} size={18} />
+              <code>{s.detail}</code>
+            </div>
           </div>
-        );
-      })}
-      <div className={styles.hub} style={{ left: HUB.x, top: HUB.y }} data-on={shown >= last}>
-        <EmberMark size={30} />
-        <code>
-          {story.tenant} · {story.nodes} nodes · {story.edges} edges
-        </code>
+        ))}
+      </div>
+      <div className={styles.row}>
+        {linked.map((s, i) => (
+          <span key={s.id} className={styles.wire} data-on={shown >= i + 1} />
+        ))}
+      </div>
+      <span className={styles.bus} data-on={shown >= linked.length + 1} />
+      <div className={styles.single}>
+        <span className={`${styles.wire} ${styles.wireHot}`} data-on={shown >= linked.length + 1} />
+      </div>
+      <div className={styles.slot} data-on={shown >= last}>
+        <div className={styles.hub}>
+          <EmberMark size={22} />
+          <span>
+            <b>One graph</b>
+            <code>
+              {story.tenant} · {story.nodes} nodes · {story.edges} edges
+            </code>
+          </span>
+        </div>
       </div>
     </div>
   );

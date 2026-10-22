@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { THEME_SCRIPT } from "../components/theme-script.ts";
 import { mono, sans } from "./fonts.ts";
 import "./globals.css";
 
@@ -18,11 +17,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    // data-theme is set by THEME_SCRIPT before React hydrates.
-    <html lang="en" className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
-      </head>
+    // Light or dark follows the system (prefers-color-scheme in globals.css).
+    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <body>{children}</body>
     </html>
   );

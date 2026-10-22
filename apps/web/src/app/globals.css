@@ -6,8 +6,8 @@
  * errors and focus. One sans (Geist) for all text; Geist Mono only for
  * technical values. Every module uses these tokens, never raw values.
  *
- * [data-theme] is set before first paint by the script in layout.tsx (from
- * the saved choice, or the system setting). Light reuses the same roles.
+ * The theme follows the system (prefers-color-scheme); light reuses the same
+ * roles.
  */
 
 :root {
@@ -115,11 +115,6 @@
   --accent-border: rgba(249, 116, 50, 0.32);
   --on-accent: #09090b;
 
-  /* Fixed colors for the always-dark log-in panel. */
-  --ink: #09090b;
-  --ink-text: #fafafa;
-  --ink-text-2: #a1a1aa;
-  --ink-line: #1d1d20;
 
   /* Ontology node types (docs/graph-schema.md): small, muted identifying
      colors, used in the graph only. */
@@ -155,79 +150,58 @@
 }
 
 /* Light: shoo-style off-white, the same roles. */
-:root[data-theme="light"] {
-  color-scheme: light;
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
 
-  --bg: #f7f7f5;
-  --surface: #ffffff;
-  --surface-2: #f2f2ef;
-  --surface-3: #eaeae6;
-  --border: #e5e5e1;
-  --border-strong: #d4d4cf;
-  --text: #09090b;
-  --text-2: #52525b;
-  --text-3: #64646c;
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --surface-2: #f2f2ef;
+    --surface-3: #eaeae6;
+    --border: #e5e5e1;
+    --border-strong: #d4d4cf;
+    --text: #09090b;
+    --text-2: #52525b;
+    --text-3: #64646c;
 
-  --primary: #09090b;
-  --primary-hover: #27272a;
-  --on-primary: #fafafa;
+    --primary: #09090b;
+    --primary-hover: #27272a;
+    --on-primary: #fafafa;
 
-  --accent: #e25a16;
-  --accent-text: #ab400b;
-  --accent-soft: rgba(226, 90, 22, 0.08);
-  --accent-border: rgba(226, 90, 22, 0.3);
-  --on-accent: #ffffff;
+    --accent: #e25a16;
+    --accent-text: #ab400b;
+    --accent-soft: rgba(226, 90, 22, 0.08);
+    --accent-border: rgba(226, 90, 22, 0.3);
+    --on-accent: #ffffff;
 
-  --node-workitem: #4f6a9c;
-  --node-change: #4f7d5b;
-  --node-message: #7563a0;
-  --node-person: #3f3f46;
-  --node-decision: #9a5a73;
-  --node-conversation: #5f62a0;
-  --node-container: #6b6b73;
-  --node-module: #3f7d78;
-  --node-identity: #a1a1aa;
-  --graph-edge: rgba(9, 9, 11, 0.1);
-  --graph-edge-strong: rgba(9, 9, 11, 0.6);
-  --graph-bg-dot: rgba(9, 9, 11, 0.07);
+    --node-workitem: #4f6a9c;
+    --node-change: #4f7d5b;
+    --node-message: #7563a0;
+    --node-person: #3f3f46;
+    --node-decision: #9a5a73;
+    --node-conversation: #5f62a0;
+    --node-container: #6b6b73;
+    --node-module: #3f7d78;
+    --node-identity: #a1a1aa;
+    --graph-edge: rgba(9, 9, 11, 0.1);
+    --graph-edge-strong: rgba(9, 9, 11, 0.6);
+    --graph-bg-dot: rgba(9, 9, 11, 0.07);
 
-  --avatar-1: #e4e4e7;
-  --avatar-2: #dedee2;
-  --avatar-3: #e8e8eb;
-  --avatar-4: #dcdce0;
-  --avatar-5: #e2e2e5;
-  --avatar-6: #d8d8dc;
-  --avatar-7: #e6e6e9;
-  --avatar-8: #dfdfe3;
-  --avatar-text: #3f3f46;
+    --avatar-1: #e4e4e7;
+    --avatar-2: #dedee2;
+    --avatar-3: #e8e8eb;
+    --avatar-4: #dcdce0;
+    --avatar-5: #e2e2e5;
+    --avatar-6: #d8d8dc;
+    --avatar-7: #e6e6e9;
+    --avatar-8: #dfdfe3;
+    --avatar-text: #3f3f46;
 
-  --grid-line: rgba(9, 9, 11, 0.04);
-  --shadow-lg: 0 24px 64px -24px rgba(9, 9, 11, 0.18);
-  --scrim: rgba(9, 9, 11, 0.24);
-  --selection: rgba(226, 90, 22, 0.2);
-}
-
-/* Always dark, whatever the theme: the log-in panel and the landing's fire band. */
-.dark-scope {
-  color-scheme: dark;
-  --bg: #09090b;
-  --surface: #0f0f12;
-  --surface-2: #141417;
-  --surface-3: #1b1b1f;
-  --border: #1d1d20;
-  --border-strong: #2a2a2f;
-  --text: #fafafa;
-  --text-2: #a1a1aa;
-  --text-3: #82828c;
-  --primary: #fafafa;
-  --primary-hover: #e4e4e7;
-  --on-primary: #09090b;
-  --accent: #f97432;
-  --accent-text: #fb8a52;
-  --accent-soft: rgba(249, 116, 50, 0.1);
-  --accent-border: rgba(249, 116, 50, 0.32);
-  --shadow-lg: 0 24px 64px -24px rgba(0, 0, 0, 0.8);
-  color: var(--text);
+    --grid-line: rgba(9, 9, 11, 0.04);
+    --shadow-lg: 0 24px 64px -24px rgba(9, 9, 11, 0.18);
+    --scrim: rgba(9, 9, 11, 0.24);
+    --selection: rgba(226, 90, 22, 0.2);
+  }
 }
 
 /* --- base --------------------------------------------------------------- */
@@ -725,7 +699,8 @@ code,
 }
 
 /* The logo glows on dark backgrounds, like the artwork. */
-:root:not([data-theme="light"]) .ember-mark,
-.on-dark .ember-mark {
-  filter: drop-shadow(0 0 5px rgba(255, 116, 32, 0.4));
+@media (prefers-color-scheme: dark) {
+  .ember-mark {
+    filter: drop-shadow(0 0 5px rgba(255, 116, 32, 0.4));
+  }
 }

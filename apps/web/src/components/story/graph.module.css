@@ -1,0 +1,160 @@
+/* The landing's graph slice: HTML nodes over an SVG of thin edges, placed in
+   percent of the box, so it scales without moving anything. */
+
+.graph {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  margin: var(--space-6) var(--space-8);
+}
+
+.edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.edges line {
+  stroke: var(--graph-edge);
+  stroke-width: 1;
+  opacity: 0;
+  transition:
+    opacity 900ms var(--ease-out) 500ms,
+    stroke var(--duration) var(--ease-out);
+}
+
+/* CHK-131's own links read a step stronger than the rest. */
+.edges line[data-focus="true"] {
+  stroke: color-mix(in srgb, var(--graph-edge-strong) 45%, transparent);
+}
+
+.graph[data-settled="true"] .edges line {
+  opacity: 1;
+}
+
+.edges line[data-lit] {
+  stroke: var(--accent);
+}
+
+.graph[data-settled="true"] .edges line[data-dim] {
+  opacity: 0.35;
+}
+
+/* --- nodes ---------------------------------------------------------------- */
+
+.node {
+  position: absolute;
+  transform: translate(-50%, -50%) scale(0.6);
+  opacity: 0;
+  transition:
+    transform 900ms var(--ease-out) var(--delay),
+    opacity 900ms var(--ease-out) var(--delay);
+  cursor: default;
+}
+
+/* The node box is just the dot (the label hangs below it), so this centres the dot on its point. */
+.graph[data-settled="true"] .node {
+  transform: translate(-50%, -50%);
+  opacity: 1;
+}
+
+.graph[data-settled="true"] .node[data-dim] {
+  opacity: 0.4;
+}
+
+.dot {
+  display: grid;
+  place-items: center;
+  width: var(--size);
+  height: var(--size);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 0 0 var(--space-1) var(--surface);
+  transition:
+    border-color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out);
+}
+
+.node[data-depth="0"] {
+  --size: 3.75rem;
+}
+
+.node[data-depth="1"] {
+  --size: 2.5rem;
+}
+
+.node[data-depth="2"] {
+  --size: 1.875rem;
+}
+
+/* CHK-131: the accent ring. */
+.node[data-depth="0"] .dot {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 var(--space-1) var(--surface),
+    0 0 0 calc(var(--space-1) + var(--border-width)) var(--accent-border),
+    0 0 var(--space-8) var(--accent-soft);
+}
+
+/* People: initials on the avatar tone. */
+.node[data-person] .dot {
+  background: var(--avatar-3);
+  color: var(--avatar-text);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+}
+
+.node[data-depth="2"][data-person] .dot {
+  font-size: 0.5625rem;
+}
+
+.node:hover .dot {
+  border-color: var(--text-2);
+}
+
+.label {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 var(--space-1-5);
+  border-radius: var(--radius-xs);
+  background: var(--surface);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.node[data-depth="0"] .label {
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.node:hover .label {
+  color: var(--text);
+  z-index: 2;
+}
+
+@media (max-width: 760px) {
+  .graph {
+    aspect-ratio: 1;
+    margin: var(--space-4);
+  }
+
+  .node[data-depth="2"],
+  .edges line[data-outer] {
+    display: none;
+  }
+
+  .node[data-depth="0"] {
+    --size: 3rem;
+  }
+
+  .node[data-depth="1"] {
+    --size: 2rem;
+  }
+}

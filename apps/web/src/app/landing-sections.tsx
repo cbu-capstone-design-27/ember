@@ -60,7 +60,7 @@ export function AgentStack({ asks }: { asks: AgentAsk[] }) {
   );
 }
 
-const STATUS_LABEL = { linked: "Preview data", "no preview data": "No preview data", coming: "Coming" } as const;
+const STATUS_LABEL = { linked: "Preview data", "no preview data": "No preview data" } as const;
 
 /** Sign up, pick sources, connect an agent: the real steps, each with its artifact. */
 export function HowItWorks({
@@ -235,7 +235,7 @@ export function FeatureGrid({ data, hit }: { data: FeatureData; hit: { source: s
 
 /** How data moves, from docs/ingestion/architecture.md, ADR 0001 and ADR 0002, and apps/mcp. */
 export function Architecture() {
-  const sources: SourceId[] = ["github", "gitlab", "jira", "slack", "teams"];
+  const sources: SourceId[] = ["github", "gitlab", "jira", "slack"];
   const agents = [
     { name: "Claude Code", Logo: ClaudeLogo },
     { name: "Codex", Logo: CodexLogo },
@@ -246,9 +246,9 @@ export function Architecture() {
       <div className={styles.archCol}>
         <span className={styles.archLabel}>Sources</span>
         {sources.map((s) => (
-          <span key={s} className={styles.archNode} data-planned={s === "teams" || undefined}>
+          <span key={s} className={styles.archNode}>
             <SourceLogo source={s} size={14} />
-            <code>{s === "teams" ? "teams · planned" : s}</code>
+            <code>{s}</code>
           </span>
         ))}
       </div>
@@ -297,8 +297,8 @@ export function Architecture() {
         ))}
       </div>
       <figcaption className={styles.archNote}>
-        Teams is designed (<code>docs/ingestion/teams.md</code>), not built. The MCP server is a prototype that
-        searches <code>source_records</code> with full-text search; vector search over the embeddings comes next.
+        The MCP server is a prototype that searches <code>source_records</code> with full-text search; vector search
+        over the embeddings comes next.
       </figcaption>
     </figure>
   );
@@ -339,7 +339,7 @@ const FAQ = [
   ],
   [
     "Which tools does it read?",
-    "GitHub, GitLab, Jira and Slack. Microsoft Teams is designed but not built yet. In Slack, Ember reads only the channels you invite it to.",
+    "GitHub, GitLab, Jira and Slack. In Slack, Ember reads only the channels you invite it to.",
   ],
   [
     "Which agents can use it?",

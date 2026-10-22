@@ -19,9 +19,9 @@
 .header {
   position: relative;
   z-index: 2;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   height: var(--space-16);
 }
 
@@ -32,12 +32,6 @@
   border-radius: var(--radius-sm);
 }
 
-.headerNav {
-  display: flex;
-  gap: var(--space-6);
-}
-
-.headerNav a,
 .headerLink {
   font-size: var(--text-sm);
   color: var(--text-2);
@@ -45,16 +39,38 @@
   transition: color var(--duration-fast) var(--ease-out);
 }
 
-.headerNav a:hover,
 .headerLink:hover {
   color: var(--text);
 }
 
 .headerActions {
-  justify-self: end;
   display: flex;
   align-items: center;
-  gap: var(--space-5);
+  gap: var(--space-6);
+}
+
+/* The GitHub link, as a pill: rounded, a 1px border, a faint fill. */
+.githubPill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control);
+  padding: 0 var(--space-4);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.githubPill:hover {
+  background: var(--surface-2);
+  border-color: var(--text-3);
 }
 
 /* --- hero --------------------------------------------------------------- */
@@ -337,7 +353,7 @@
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -361,9 +377,6 @@
   background: var(--surface-2);
 }
 
-.sources li[data-coming="true"] > span:first-child {
-  opacity: 0.55;
-}
 
 .sources li > span:last-child {
   display: grid;
@@ -379,14 +392,6 @@
   white-space: nowrap;
 }
 
-.coming {
-  padding: 0 var(--space-1-5);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-xs);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-regular);
-  color: var(--text-3);
-}
 
 .sources code {
   font-size: var(--text-xs);
@@ -394,62 +399,16 @@
   color: var(--text-3);
 }
 
-.facts {
-  list-style: none;
-  margin: 0;
-  padding: var(--space-5) 0 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-8);
-  border-top: var(--border-width) dashed var(--border);
-  font-size: var(--text-sm);
-  color: var(--text-2);
-}
 
-.facts li {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
 
-.facts li::before {
-  content: "";
-  width: var(--space-2);
-  height: var(--space-1);
-  border-left: 1.5px solid var(--text-3);
-  border-bottom: 1.5px solid var(--text-3);
-  transform: rotate(-45deg) translateY(-1px);
-}
 
-.facts code {
-  color: var(--text);
-}
 
-/* The kinds of drift Ember looks for. */
-.kinds {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
 
-.kinds li {
-  height: var(--control-sm);
-  display: inline-flex;
-  align-items: center;
-  padding: 0 var(--space-3);
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius);
-  font-size: var(--text-sm);
-  color: var(--text-2);
-}
 
 .driftStage {
   display: grid;
-  justify-items: center;
-  padding: var(--space-8) 0;
+  place-items: center;
+  padding: var(--space-8);
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius-lg);
   background:
@@ -710,9 +669,6 @@
   color: var(--text);
 }
 
-.integrations li[data-status="coming"] {
-  opacity: 0.55;
-}
 
 .term {
   font-size: var(--text-xs);
@@ -1240,6 +1196,16 @@
   height: 45%;
 }
 
+/* On a light page the fire is lifted and multiplied into the paper (as on the
+   log-in panel, auth.module.css), so it reads as warm flame rather than smoke. */
+@media (prefers-color-scheme: light) {
+  .closingFire canvas {
+    mix-blend-mode: multiply;
+    filter: brightness(1.55) saturate(1.15) drop-shadow(0 -4px 18px rgba(249, 115, 22, 0.22));
+    mask-image: linear-gradient(to top, #000 30%, transparent 80%);
+  }
+}
+
 .closingBody {
   position: relative;
   z-index: 1;
@@ -1343,14 +1309,14 @@
   }
 
   .sources {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .sources li:nth-child(4) {
+  .sources li:nth-child(3) {
     border-left: 0;
   }
 
-  .sources li:nth-child(n + 4) {
+  .sources li:nth-child(n + 3) {
     border-top: var(--border-width) solid var(--border);
   }
 
@@ -1364,11 +1330,11 @@
 }
 
 @media (max-width: 760px) {
-  .header {
-    grid-template-columns: 1fr auto;
+  .headerActions {
+    gap: var(--space-4);
   }
 
-  .headerNav {
+  .headerActions > a:first-child {
     display: none;
   }
 
@@ -1429,7 +1395,7 @@
   }
 
   .sources li,
-  .sources li:nth-child(4) {
+  .sources li:nth-child(3) {
     border-left: 0;
     border-top: var(--border-width) solid var(--border);
   }
@@ -1438,20 +1404,8 @@
     border-top: 0;
   }
 
-  /* The 440px drift drawing, scaled to fit. */
   .driftStage {
-    overflow: hidden;
-    height: 25rem;
-  }
-
-  .driftStage {
-    justify-items: start;
-  }
-
-  .driftStage > * {
-    transform: scale(0.74);
-    transform-origin: top left;
-    margin-left: calc(50% - 163px); /* half of 440px × 0.74 */
+    padding: var(--space-4);
   }
 
   .closing {

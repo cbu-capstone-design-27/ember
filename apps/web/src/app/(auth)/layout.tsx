@@ -7,7 +7,6 @@ import type { ReactNode } from "react";
 import { Wordmark } from "../../components/brand.tsx";
 import { connectStory, driftStory } from "../../components/story/data.ts";
 import { Sparks } from "../../components/story/sparks.tsx";
-import { ThemeSwitcher } from "../../components/theme.tsx";
 import styles from "./auth.module.css";
 import { AuthStory } from "./auth-story.tsx";
 import { Flame } from "./flame.tsx";
@@ -15,10 +14,10 @@ import { Flame } from "./flame.tsx";
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <div className={styles.page}>
-      <section className={`${styles.story} dark-scope`} aria-hidden="true">
+      <section className={styles.story} aria-hidden="true">
         <Flame />
         <Sparks />
-        <Link href="/" className={`${styles.storyBrand} on-dark`} tabIndex={-1}>
+        <Link href="/" className={styles.storyBrand} tabIndex={-1}>
           <Wordmark size={22} />
         </Link>
         <div className={styles.stage}>
@@ -31,7 +30,6 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           <Link href="/" className={styles.mobileBrand} aria-label="Ember home">
             <Wordmark size={20} />
           </Link>
-          <ThemeSwitcher />
         </div>
         <div className={styles.formWrap}>{children}</div>
         <p className={styles.formFoot}>

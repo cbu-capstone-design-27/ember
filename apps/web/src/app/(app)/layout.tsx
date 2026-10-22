@@ -7,7 +7,6 @@ import { Avatar } from "../../components/avatar.tsx";
 import { SourceLogo, Wordmark } from "../../components/brand.tsx";
 import { NavLinks, SignOutButton } from "../../components/nav.tsx";
 import { PreviewProvider } from "../../components/preview/store.tsx";
-import { ThemeSwitcher } from "../../components/theme.tsx";
 import { requireOnboardedUser } from "../../lib/session.ts";
 import { sourceInfo } from "../../lib/sources.ts";
 import { loadPreviewWorkspace } from "../../lib/workspace/load.ts";
@@ -49,7 +48,6 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
               <span className={styles.userName}>{user.name}</span>
             </div>
             <div className={styles.footerRow}>
-              <ThemeSwitcher />
               <SignOutButton className={`btn btn-ghost btn-sm ${styles.signOut}`} />
             </div>
           </div>
