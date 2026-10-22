@@ -1,7 +1,10 @@
 """intake (EMBER-62): the one listener for every source's webhooks, at POST /webhook/{source}.
 
     DATABASE_URL=postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable \
-        GITHUB_WEBHOOK_SECRET=... python3 intake.py
+        GITHUB_WEBHOOK_SECRET=... SLACK_SIGNING_SECRET=... python3 intake.py
+
+GitHub's secret is required. Slack is served only when SLACK_SIGNING_SECRET is set, so intake still
+runs where the Slack app isn't set up; /webhook/slack is then an unknown source (404).
 
 docs/ingestion/architecture.md, "The parent listener (intake)", is the design. The source's adapter
 answers a handshake or verifies the delivery. Intake then stores it as it arrived in raw_events,
@@ -37,6 +40,7 @@ from starlette.routing import Route
 
 from adapters import BadRequest, Delivery, SourceAdapter, Unauthorized
 from adapters.github import GitHubAdapter
+from adapters.slack import SlackAdapter
 from models import Installation, RawEvent
 
 LOG = logging.getLogger("intake")
@@ -224,10 +228,13 @@ def main() -> int:
         print("Set DATABASE_URL, e.g. postgresql://ember:...@localhost:5432/ember?sslmode=disable", file=sys.stderr)
         return 2
     try:
-        adapters = [GitHubAdapter(os.environ.get("GITHUB_WEBHOOK_SECRET", ""))]
+        adapters: list[SourceAdapter] = [GitHubAdapter(os.environ.get("GITHUB_WEBHOOK_SECRET", ""))]
+        if os.environ.get("SLACK_SIGNING_SECRET"):
+            adapters.append(SlackAdapter(os.environ["SLACK_SIGNING_SECRET"]))
     except ValueError as error:
         print(error, file=sys.stderr)
         return 2
+    LOG.info("serving /webhook/{source} for %s", ", ".join(adapter.name for adapter in adapters))
     app = create_app(create_engine(database_url), {adapter.name: adapter for adapter in adapters})
     # Not INTAKE_PORT: Kubernetes sets that name for a Service called intake
     port = int(os.environ.get("LISTEN_PORT", "8080"))

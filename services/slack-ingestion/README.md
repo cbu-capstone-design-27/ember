@@ -10,7 +10,7 @@ Requirements, architecture, and pipeline handoff: [`docs/ingestion/slack.md`](..
 
 Stub HTTP receiver for live events, a local pull for the channels the bot is in, and the `enrich:slack` worker that turns stored deliveries into `source_records` ([Enrich worker](#enrich-worker-ember-67)). The receiver checks Slack's request signature, answers the Request URL challenge, wraps the raw body, and writes the envelope to stdout. No queue yet. The receiver holds no Slack token and does not filter on a workspace or channel.
 
-Intake (EMBER-62) will take over live events once it has a Slack adapter: it stores each delivery in `raw_events`, where `enrich:slack` picks it up. Until then, `receiver.py` receives them and `enrich.py seed` stores them (see [Enrich worker](#enrich-worker-ember-67)).
+Intake (EMBER-62) receives live events with its Slack adapter ([`services/intake`, Slack adapter](../intake/README.md#slack-adapter)): it stores each delivery in `raw_events`, where `enrich:slack` picks it up. `receiver.py` stays as a stdout-only stub, and `enrich.py seed` stores deliveries without running intake (see [Enrich worker](#enrich-worker-ember-67)).
 
 ## Scope
 
@@ -257,7 +257,7 @@ export SLACK_BOT_TOKEN='xoxb-...'
 
 Or run it in compose, where it also waits for the migrations: `docker compose -f infra/docker-compose.yml --env-file .env --profile postgres --profile slack-enrich up --build slack-enrich`.
 
-Without running intake, store deliveries with `seed`. It inserts `raw_events` rows the way intake will once it has a Slack adapter (`delivery_id` = `event_id`, `event_name` = `type[:subtype]`, `occurred_at` by the [ordering rule](../../docs/ingestion/slack-webhooks.md#ordering-value-ember-63)) and the insert trigger wakes the worker:
+Without running intake, store deliveries with `seed`. It inserts `raw_events` rows the way intake's Slack adapter does (`delivery_id` = `event_id`, `event_name` = `type[:subtype]`, `occurred_at` by the [ordering rule](../../docs/ingestion/slack-webhooks.md#ordering-value-ember-63)) and the insert trigger wakes the worker:
 
 ```sh
 python3 services/slack-ingestion/enrich.py seed packages/ingestion-envelope/fixtures/slack.json --tenant dev

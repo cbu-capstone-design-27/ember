@@ -106,7 +106,7 @@ GET  /metrics               # Prometheus: intake_deliveries_total{source,result}
 
 ### Source adapters
 
-Everything source-specific about receiving is one adapter per source. Body limits, storage, enqueueing, health and metrics are written once around it. Today's `services/*-ingestion/receiver.py` and `envelope.py` become these adapters. GitHub's is `services/intake/adapters/github.py` (EMBER-62).
+Everything source-specific about receiving is one adapter per source. Body limits, storage, enqueueing, health and metrics are written once around it. Today's `services/*-ingestion/receiver.py` and `envelope.py` become these adapters. GitHub's is `services/intake/adapters/github.py` (EMBER-62), Slack's `services/intake/adapters/slack.py` (EMBER-67).
 
 ```python
 Source = Literal["github", "gitlab", "jira", "slack", "teams"]   # matches envelope v1 "type"

@@ -36,7 +36,7 @@ its gates kept in table rate_limits (pg_gates.py).
     python3 enrich.py                              # run the worker
     python3 enrich.py seed FILE --tenant TENANT    # store deliveries as raw_events rows
 
-seed stores Events API deliveries as intake will once it has a Slack adapter (EMBER-62) (a JSON
+seed stores Events API deliveries as intake's Slack adapter does (services/intake/adapters/slack.py) (a JSON
 fixture, or JSONL such as receiver.py's stdout with FILE = -), with occurred_at by the ordering rule.
 The insert trigger wakes the worker; seed also NOTIFYs RAW_EVENTS_CHANNEL, so a worker on a
 non-default channel wakes too.
