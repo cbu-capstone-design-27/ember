@@ -6,7 +6,6 @@ import Link from "next/link";
 import { Wordmark } from "../../components/brand.tsx";
 import { SignOutButton } from "../../components/nav.tsx";
 import { SourcesForm } from "../../components/source-picker.tsx";
-import { ThemeSwitcher } from "../../components/theme.tsx";
 import { requireUser } from "../../lib/session.ts";
 import { Steps } from "../(auth)/steps.tsx";
 import styles from "./onboarding.module.css";
@@ -23,7 +22,6 @@ export default async function OnboardingPage() {
           <Wordmark size={20} />
         </Link>
         <div className={styles.headerActions}>
-          <ThemeSwitcher />
           <SignOutButton />
         </div>
       </header>

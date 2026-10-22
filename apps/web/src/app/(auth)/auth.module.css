@@ -4,7 +4,7 @@
   min-height: 100vh;
 }
 
-/* --- fire side: always dark, in both themes ------------------------------ */
+/* --- fire side ------------------------------------------------------------ */
 
 .story {
   position: relative;
@@ -12,8 +12,8 @@
   flex-direction: column;
   padding: var(--space-6) var(--space-8);
   overflow: hidden;
-  color: var(--ink-text);
-  background: var(--ink);
+  color: var(--text);
+  background: var(--bg);
   border-right: var(--border-width) solid var(--border);
 }
 
@@ -32,29 +32,33 @@
   mask-image: linear-gradient(to top, #000 40%, transparent 100%);
 }
 
+/* On a light page the fire is lifted (its dark reds become orange) and
+   multiplied into the paper, and its cool tips fade sooner, so it reads as
+   warm flame rather than smoke. flame.tsx itself is unchanged. */
+@media (prefers-color-scheme: light) {
+  .story .flame {
+    mix-blend-mode: multiply;
+    filter: brightness(1.55) saturate(1.15) drop-shadow(0 -4px 18px rgba(249, 115, 22, 0.22));
+    mask-image: linear-gradient(to top, #000 30%, transparent 80%);
+  }
+}
+
 .storyBrand {
   position: relative;
   z-index: 1;
-  color: var(--ink-text);
+  color: var(--text);
   text-decoration: none;
   align-self: flex-start;
 }
 
-/* The story sits in the space above the fire. */
+/* The story sits centred in the space above the fire. */
 .stage {
   position: relative;
   z-index: 1;
   flex: 1;
   display: grid;
   place-items: center;
-  padding-bottom: 28vh;
-}
-
-@media (max-width: 1180px) {
-  .stage > * {
-    transform: scale(0.82);
-    transform-origin: center;
-  }
+  padding: var(--space-8) var(--space-4) 30vh;
 }
 
 /* --- form side ---------------------------------------------------------- */
@@ -86,8 +90,6 @@
 .topBar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-4);
   min-height: var(--control-lg);
 }
 

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { EmberMark, SourceLogo, Wordmark } from "../components/brand.tsx";
 import { DashboardIcon, GraphIcon, SettingsIcon } from "../components/icons.tsx";
-import { ClaudeLogo, CodexLogo, CursorLogo, GitHubLogo, GitLabLogo, JiraLogo, SlackLogo, TeamsLogo } from "../components/logos/index.ts";
+import { ClaudeLogo, CodexLogo, CursorLogo, GitHubLogo, GitLabLogo, JiraLogo, SlackLogo } from "../components/logos/index.ts";
 import { AgentTabs } from "../components/story/agent-tabs.tsx";
 import { agentAsks, connectStory, driftStory, featureData, miniGraph, searchPreview } from "../components/story/data.ts";
 import { DriftStory } from "../components/story/drift.tsx";
@@ -10,10 +10,8 @@ import { PauseOffscreen, WhenVisible } from "../components/story/in-view.tsx";
 import { MiniGraphView } from "../components/story/mini-graph.tsx";
 import { Sparks } from "../components/story/sparks.tsx";
 import storyStyles from "../components/story/story.module.css";
-import { ThemeSwitcher } from "../components/theme.tsx";
 import { getCurrentUser } from "../lib/session.ts";
 import { SOURCES, type SourceId } from "../lib/sources.ts";
-import { NODE_TYPES } from "../lib/workspace/graph.ts";
 import { findInsights, INSIGHT_KINDS } from "../lib/workspace/insights.ts";
 import { loadPreviewWorkspace } from "../lib/workspace/load.ts";
 import { buildModel } from "../lib/workspace/model.ts";
@@ -25,14 +23,15 @@ import styles from "./landing.module.css";
 
 const REPO = "https://github.com/cbu-capstone-design-27/ember";
 
-// What Ember reads from each source. Teams ingestion is designed (docs/ingestion/teams.md) but not built.
-const READS: Record<SourceId, { reads: string; coming?: boolean }> = {
-  github: { reads: "pull requests · reviews · checks" },
-  gitlab: { reads: "merge requests · approvals · notes" },
-  jira: { reads: "issues · status history · comments" },
-  slack: { reads: "channels · threads · decisions" },
-  teams: { reads: "not built yet", coming: true },
+// The sources with ingestion in the repo, and what Ember reads from each.
+// Teams is left out: it is designed (docs/ingestion/teams.md) but not built.
+const READS: Partial<Record<SourceId, string>> = {
+  github: "pull requests · reviews · checks",
+  gitlab: "merge requests · approvals · notes",
+  jira: "issues · status history · comments",
+  slack: "channels · threads · decisions",
 };
+const BUILT = SOURCES.filter((src) => READS[src.id]);
 
 // The tiles that drift around the headline: [Logo, left %, top %, size rem, tilt deg, seconds].
 const TILES = [
@@ -43,7 +42,6 @@ const TILES = [
   [CodexLogo, 86, 18, 3.5, 7, 14],
   [SlackLogo, 93, 54, 3, -6, 12],
   [CursorLogo, 79, 70, 3.25, 4, 16],
-  [TeamsLogo, 70, 2, 2.75, -5, 13],
 ] as const;
 
 const PREVIEW: SourceId[] = ["github", "jira", "slack"];
@@ -63,7 +61,6 @@ export default async function Home() {
   const features = featureData();
   const connect = connectStory();
   const hits = searchPreview(QUESTION);
-  const types = [...new Set(graph.nodes.map((n) => n.type))];
 
   const figures = [
     { label: "Needs attention", value: s.attention.total, hot: s.attention.high > 0 },
@@ -78,19 +75,17 @@ export default async function Home() {
         <Link href="/" className={styles.brand} aria-label="Ember home">
           <Wordmark size={22} />
         </Link>
-        <nav className={styles.headerNav} aria-label="Sections">
-          <a href="#how">How it works</a>
-          <a href="#features">Features</a>
-          <a href="#architecture">Architecture</a>
-          <a href="#faq">FAQ</a>
-        </nav>
         <nav className={styles.headerActions} aria-label="Account">
+          <Link className={styles.headerLink} href="/signup">
+            Sign up
+          </Link>
           <Link className={styles.headerLink} href="/login">
             Log in
           </Link>
-          <Link className="btn btn-primary btn-sm" href="/signup">
-            Get started
-          </Link>
+          <a className={styles.githubPill} href={REPO}>
+            <GitHubLogo size={15} />
+            GitHub
+          </a>
         </nav>
       </header>
 
@@ -138,25 +133,15 @@ export default async function Home() {
         <section id="sources" className={styles.section}>
           <h2 className={styles.sectionTitle}>Reads the tools you already use</h2>
           <ul className={styles.sources}>
-            {SOURCES.map((src) => (
-              <li key={src.id} data-coming={READS[src.id].coming}>
+            {BUILT.map((src) => (
+              <li key={src.id}>
                 <SourceLogo source={src.id} size={22} />
                 <span>
-                  <span className={styles.sourceName}>
-                    {src.name}
-                    {READS[src.id].coming && <span className={styles.coming}>Coming</span>}
-                  </span>
-                  <code>{READS[src.id].reads}</code>
+                  <span className={styles.sourceName}>{src.name}</span>
+                  <code>{READS[src.id]}</code>
                 </span>
               </li>
             ))}
-          </ul>
-          <ul className={styles.facts}>
-            <li>Only the repos, projects and channels you add</li>
-            <li>
-              One subgraph per source: <code>{model.ws.organization.tenant}_github</code>
-            </li>
-            <li>People matched across every tool</li>
           </ul>
         </section>
 
@@ -196,13 +181,6 @@ export default async function Home() {
               Slack says CHK-131 is done and the pull request merged, but Jira still says In Development. Ember links the
               three records and raises the flag, with a one-click fix.
             </p>
-            <ul className={styles.kinds}>
-              {Object.values(INSIGHT_KINDS)
-                .sort((a, b) => a.order - b.order)
-                .map((k) => (
-                  <li key={k.label}>{k.label}</li>
-                ))}
-            </ul>
           </div>
           <div className={styles.driftStage}>
             <DriftStory drift={driftStory()} />
@@ -277,13 +255,6 @@ export default async function Home() {
                 </code>
               </div>
               <MiniGraphView graph={graph} />
-              <ul className={styles.legend}>
-                {types.map((t) => (
-                  <li key={t} style={{ ["--c" as string]: `var(--node-${t.toLowerCase()})` }}>
-                    {NODE_TYPES[t].plural}
-                  </li>
-                ))}
-              </ul>
             </div>
             <div className={styles.stream}>
               <div className={styles.graphBar}>
@@ -320,7 +291,7 @@ export default async function Home() {
         </section>
       </main>
 
-      <section className={`${styles.closing} dark-scope`}>
+      <section className={styles.closing}>
         <WhenVisible className={styles.closingFire}>
           <Flame />
           <Sparks />
@@ -342,7 +313,6 @@ export default async function Home() {
       <footer className={styles.footer}>
         <div className={styles.footerBrand}>
           <Wordmark size={20} />
-          <ThemeSwitcher />
         </div>
         <nav className={styles.footerCols} aria-label="Footer">
           <div>
@@ -353,7 +323,7 @@ export default async function Home() {
           </div>
           <div>
             <h3>Sources</h3>
-            {SOURCES.map((src) => (
+            {BUILT.map((src) => (
               <span key={src.id}>{src.name}</span>
             ))}
           </div>

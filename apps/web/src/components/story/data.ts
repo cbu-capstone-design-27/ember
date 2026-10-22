@@ -49,8 +49,19 @@ export interface SearchHit {
 }
 
 export interface MiniGraph {
-  nodes: Array<{ id: string; type: NodeType; label: string; focus?: boolean }>;
-  edges: Array<{ id: string; source: string; target: string; type: EdgeType }>;
+  nodes: Array<{
+    id: string;
+    type: NodeType;
+    label: string;
+    /** Which logo to draw; null for people. */
+    source: SourceId | null;
+    /** 0 is CHK-131, 1 its neighbours, 2 one step further. */
+    depth: 0 | 1 | 2;
+    /** Position in percent of the drawing (0 to 100). */
+    x: number;
+    y: number;
+  }>;
+  edges: Array<{ id: string; source: string; target: string; type: EdgeType; focus: boolean }>;
 }
 
 function load() {
@@ -122,28 +133,76 @@ export function searchPreview(question: string, k = 3, order: SearchHit["kind"][
   return hits.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind)).slice(0, k);
 }
 
-/** The drift ticket and everything one step from it, for the landing's live graph. */
+// Ring sizes in percent of the drawing's width and height.
+const RING = { 1: { rx: 22, ry: 28 }, 2: { rx: 42, ry: 44 } };
+
+/**
+ * CHK-131 and the records around it, laid out on two rings: its neighbours,
+ * then up to two of each neighbour's own links. Each source keeps its own side,
+ * so the picture reads at a glance and labels never collide. Computed on the
+ * server, so it is the same on every render.
+ */
 export function miniGraph(): MiniGraph {
   const { model, now } = load();
   const graph = buildGraph(model, now);
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const focus = nodeId.issue(DRIFT_KEY);
-  const near = new Set([focus]);
-  for (const e of graph.edges) {
-    if (e.source === focus) near.add(e.target);
-    if (e.target === focus) near.add(e.source);
+  const sideOf = (id: string) => {
+    const n = byId.get(id)!;
+    if (n.type === "Person") return "people";
+    return n.source ?? n.subgraph?.split("_").pop() ?? "jira";
+  };
+  const linked = (id: string) =>
+    graph.edges.flatMap((e) => (e.source === id ? [e.target] : e.target === id ? [e.source] : [])).filter((x) => byId.get(x)?.type !== "Identity");
+
+  const ring1 = [...new Set(linked(focus))].slice(0, 9);
+  const seen = new Set([focus, ...ring1]);
+  // The outer ring shows who and where, not sibling tickets.
+  const OUTER = new Set(["Person", "Change", "Container", "Message", "Module", "Decision"]);
+  const ring2: Array<{ id: string; parent: string }> = [];
+  for (const p of ring1) {
+    for (const c of linked(p)) {
+      if (seen.has(c) || !OUTER.has(byId.get(c)!.type) || ring2.filter((r) => r.parent === p).length >= 2 || ring2.length >= 12) continue;
+      seen.add(c);
+      ring2.push({ id: c, parent: p });
+    }
   }
-  // One more step out from the PR and the people, so the picture has shape.
-  for (const e of graph.edges) {
-    if (near.size > 26) break;
-    const from = near.has(e.source) ? e.target : near.has(e.target) ? e.source : null;
-    const n = from && graph.nodes.find((x) => x.id === from);
-    if (n && (n.type === "Person" || n.type === "Change" || n.type === "Message")) near.add(from!);
+
+  // Ring 1: grouped by side, spread evenly around the focus, nudged toward its side.
+  const order = ["jira", "github", "slack", "people"];
+  const sorted = [...ring1].sort((a, b) => order.indexOf(sideOf(a)) - order.indexOf(sideOf(b)));
+  const angle = new Map<string, number>();
+  const start = -90 - (360 / sorted.length) * 0.5;
+  sorted.forEach((id, i) => angle.set(id, start + (360 / sorted.length) * (i + 0.5)));
+  // Ring 2: fanned out behind each parent.
+  const kids = new Map<string, string[]>();
+  for (const r of ring2) kids.set(r.parent, [...(kids.get(r.parent) ?? []), r.id]);
+  for (const [parent, list] of kids) {
+    list.forEach((id, j) => angle.set(id, angle.get(parent)! + (j - (list.length - 1) / 2) * 16));
   }
-  const nodes = graph.nodes
-    .filter((n) => near.has(n.id) && n.type !== "Identity")
-    .map((n) => ({ id: n.id, type: n.type, label: n.label, focus: n.id === focus || undefined }));
-  const ids = new Set(nodes.map((n) => n.id));
-  const edges = graph.edges.filter((e) => ids.has(e.source) && ids.has(e.target)).map((e) => ({ id: e.id, source: e.source, target: e.target, type: e.type }));
+
+  const place = (id: string, depth: 0 | 1 | 2) => {
+    const n = byId.get(id)!;
+    const a = ((angle.get(id) ?? 0) * Math.PI) / 180;
+    const r = depth === 0 ? { rx: 0, ry: 0 } : RING[depth];
+    const src = n.type === "Person" ? null : ((n.source ?? n.subgraph?.split("_").pop()) as SourceId);
+    return {
+      id,
+      type: n.type,
+      label: n.label,
+      source: src,
+      depth,
+      x: Math.round((50 + Math.cos(a) * r.rx) * 10) / 10,
+      y: Math.round((50 + Math.sin(a) * r.ry) * 10) / 10,
+    };
+  };
+  const nodes = [place(focus, 0), ...ring1.map((id) => place(id, 1)), ...ring2.map((r) => place(r.id, 2))];
+  // Only the tree's own links: focus to ring 1, each outer node to its parent. Cross-links would tangle it.
+  const tree = new Set([...ring1.map((id) => `${focus}|${id}`), ...ring2.map((r) => `${r.parent}|${r.id}`)]);
+  const edges = graph.edges
+    .filter((e) => tree.has(`${e.source}|${e.target}`) || tree.has(`${e.target}|${e.source}`))
+    .filter((e, i, all) => all.findIndex((x) => new Set([x.source, x.target, e.source, e.target]).size === 2) === i)
+    .map((e) => ({ id: e.id, source: e.source, target: e.target, type: e.type, focus: e.source === focus || e.target === focus }));
   return { nodes, edges };
 }
 
@@ -152,14 +211,14 @@ export interface ConnectStory {
   nodes: number;
   edges: number;
   /** Every launch source, in catalog order. `detail` is null where there's no data yet. */
-  sources: Array<{ id: SourceId; detail: string | null; status: "linked" | "no preview data" | "coming" }>;
+  sources: Array<{ id: SourceId; detail: string | null; status: "linked" | "no preview data" }>;
 }
 
-/** The sources linking into one graph, for the sign-up panel. Teams has no ingestion yet (docs only), so it says so. */
+/** The sources linking into one graph, for the sign-up panel. Teams has no ingestion yet (docs only), so it is left out. */
 export function connectStory(): ConnectStory {
   const { model, now } = load();
   const graph = buildGraph(model, now);
-  const all: SourceId[] = ["github", "gitlab", "jira", "slack", "teams"];
+  const all: SourceId[] = ["github", "gitlab", "jira", "slack"];
   const details = new Map(sourceSummaries(model, all).map((s) => [s.id, s.detail ?? null]));
   return {
     tenant: model.ws.organization.tenant,
@@ -168,7 +227,7 @@ export function connectStory(): ConnectStory {
     sources: all.map((id) => ({
       id,
       detail: details.get(id) ?? null,
-      status: id === "teams" ? "coming" : details.get(id) ? "linked" : "no preview data",
+      status: details.get(id) ? "linked" : "no preview data",
     })),
   };
 }

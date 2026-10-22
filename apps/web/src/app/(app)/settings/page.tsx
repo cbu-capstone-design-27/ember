@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { SourcesForm } from "../../../components/source-picker.tsx";
-import { ThemeSwitcher } from "../../../components/theme.tsx";
 import { SignOutButton } from "../../../components/nav.tsx";
 import { requireOnboardedUser } from "../../../lib/session.ts";
 import { PasswordForm, PreviewDataForm, ProfileForm } from "./forms.tsx";
@@ -39,15 +38,6 @@ export default async function SettingsPage() {
           <h2 id="preview">Preview data</h2>
         </div>
         <PreviewDataForm />
-      </section>
-
-      <section className={styles.section} aria-labelledby="appearance">
-        <div className={styles.aside}>
-          <h2 id="appearance">Appearance</h2>
-        </div>
-        <div className={styles.inline}>
-          <ThemeSwitcher showLabels />
-        </div>
       </section>
 
       <section className={styles.section} aria-labelledby="security">
