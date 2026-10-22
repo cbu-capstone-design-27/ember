@@ -109,13 +109,14 @@
   display: grid;
   justify-items: center;
   gap: var(--space-6);
-  max-width: 52rem;
+  max-width: 68rem;
   margin: 0 auto;
   padding: var(--space-24) var(--space-8) var(--space-20);
   text-align: center;
 }
 
 .title {
+  text-wrap: balance;
   font-size: var(--text-display);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
@@ -124,6 +125,7 @@
 
 .lede {
   max-width: 40rem;
+  text-wrap: balance;
   font-size: var(--text-lg);
   line-height: var(--leading-relaxed);
   color: var(--text-2);
@@ -233,6 +235,7 @@
 
 .frameFigures > span {
   display: grid;
+  grid-template-rows: 1fr auto;
   gap: var(--space-1);
   padding: var(--space-3) var(--space-4);
   border-left: var(--border-width) solid var(--border);
@@ -329,11 +332,6 @@
   color: var(--text-2);
 }
 
-.note {
-  font-size: var(--text-sm);
-  color: var(--text-3);
-}
-
 /* Text on one side, the artifact on the other. */
 .split {
   grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
@@ -361,8 +359,8 @@
 }
 
 .sources li {
-  display: flex;
-  align-items: flex-start;
+  display: grid;
+  align-content: start;
   gap: var(--space-3);
   padding: var(--space-5);
   border-left: var(--border-width) solid var(--border);
@@ -392,6 +390,11 @@
   white-space: nowrap;
 }
 
+
+/* One item per span, so a line only breaks between items. */
+.sources code span {
+  white-space: nowrap;
+}
 
 .sources code {
   font-size: var(--text-xs);
@@ -566,22 +569,30 @@
   padding: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-4);
+  gap: 0 var(--space-4);
 }
 
+/* Each step spans four rows (number, title, text, artifact) through subgrid,
+   so titles, text and artifacts start on the same lines across the row. */
 .step {
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-row: span 4;
+  grid-template-rows: subgrid;
   gap: var(--space-2);
   padding: var(--space-5);
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
+  transition: background-color var(--duration) var(--ease-out);
 }
 
+.step:hover {
+  background: var(--surface-2);
+}
+
+/* Card titles share one size across steps and features. */
 .step h3 {
-  font-size: var(--text-md);
-  letter-spacing: var(--tracking-tight);
+  font-size: var(--text-base);
 }
 
 .step p {
@@ -603,7 +614,7 @@
 
 /* The artifact at the bottom of each card. */
 .artifact {
-  align-self: end;
+  align-self: start;
   margin: var(--space-4) 0 0;
   padding: var(--space-3);
   border: var(--border-width) solid var(--border);
@@ -693,9 +704,12 @@
   overflow: hidden;
 }
 
+/* Each feature spans three rows of the grid (art, title, text) through
+   subgrid, so titles and text line up across a row. */
 .feature {
   display: grid;
-  grid-template-rows: 1fr auto auto;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
   gap: var(--space-2);
   padding: var(--space-5);
   background: var(--surface);
@@ -711,13 +725,14 @@
 }
 
 .feature p {
+  text-wrap: pretty;
   font-size: var(--text-sm);
   color: var(--text-2);
 }
 
 .featureArt {
   display: grid;
-  align-content: center;
+  align-content: start;
   min-height: 9.5rem;
   margin-bottom: var(--space-3);
   font-size: var(--text-xs);
@@ -748,7 +763,7 @@
   color: var(--text-3);
 }
 
-.decisionHead span {
+.decisionHead > span:last-child {
   margin-left: auto;
 }
 
@@ -884,7 +899,7 @@
 
 .graphRow {
   display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
   gap: var(--space-4);
 }
 
@@ -908,6 +923,16 @@
   padding: var(--space-2) var(--space-4);
   font-size: var(--text-sm);
   color: var(--text-2);
+  transition: background-color var(--duration) var(--ease-out);
+}
+
+.stream li > :first-child {
+  margin-top: 0.125rem;
+  color: var(--text);
+}
+
+.stream li:hover {
+  background: var(--surface-2);
 }
 
 .stream li > span {
@@ -922,6 +947,7 @@
 .stream code {
   font-size: var(--text-xs);
   color: var(--text);
+  white-space: nowrap;
 }
 
 .streamWhen {
@@ -929,148 +955,110 @@
   white-space: nowrap;
 }
 
-/* --- architecture -------------------------------------------------------- */
+/* --- architecture (one SVG, drawn 1:1 at desktop) ------------------------ */
 
 .arch {
-  margin: 0;
   display: grid;
-  grid-template-columns: minmax(0, 0.7fr) minmax(0, 2.6fr) minmax(0, 0.85fr);
-  gap: var(--space-8);
-  padding: var(--space-8);
+  justify-items: safe center;
+  padding: var(--space-8) var(--space-6);
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius-lg);
-  background:
-    linear-gradient(var(--grid-line) var(--border-width), transparent var(--border-width)),
-    linear-gradient(90deg, var(--grid-line) var(--border-width), transparent var(--border-width)),
-    var(--surface);
-  background-size: var(--space-6) var(--space-6), var(--space-6) var(--space-6), auto;
+  background: var(--surface);
+  overflow-x: auto;
 }
 
-.archCol {
-  display: grid;
-  align-content: center;
-  gap: var(--space-2);
+.arch svg {
+  display: block;
+  overflow: visible;
 }
 
-.archLabel {
-  margin-top: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--text-3);
+.archBox {
+  fill: var(--bg);
+  stroke: var(--border-strong);
+  stroke-width: 1;
 }
 
-.archLabel:first-child {
-  margin-top: 0;
+.archBox[data-hot="true"] {
+  stroke: var(--accent-border);
 }
 
-.archNode {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: var(--control);
-  padding: 0 var(--space-3);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-button);
-  background: var(--bg);
-  font-size: var(--text-sm);
-}
-
-.archNode code {
-  font-size: var(--text-xs);
-}
-
-.archNode[data-planned] {
-  border-style: dashed;
-  color: var(--text-3);
-}
-
-.archNode[data-hot="true"] {
-  border-color: var(--accent-border);
-}
-
-/* The pipeline: four stages in a row, joined by arrows, over the stores. */
-.archFlow {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-content: center;
-  gap: var(--space-6) var(--space-5);
-}
-
-.archStage {
-  position: relative;
-  display: grid;
-  gap: var(--space-1);
-  padding: var(--space-3);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-button);
-  background: var(--bg);
-  font-size: var(--text-xs);
-  color: var(--text-3);
-}
-
-.archStage b {
-  font-size: var(--text-sm);
+.archName {
+  font-size: 13px;
   font-weight: var(--weight-medium);
-  color: var(--text);
+  fill: var(--text);
 }
 
-.archStage code {
-  color: var(--text-2);
-  font-size: var(--text-2xs);
+.archDetail {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--text-2);
 }
 
-/* Arrows between stages, and in from the sources / out to MCP. */
-.archStage::after,
-.archStage:first-child::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  width: var(--space-5);
-  height: var(--border-width);
-  background: var(--text-3);
+.archFrom {
+  stop-color: var(--text-3);
 }
 
-.archStage::after {
-  left: 100%;
+.archTo {
+  stop-color: var(--accent);
 }
 
-.archStage:first-child::before {
-  right: 100%;
-  width: var(--space-8);
+/* Connectors draw in once the figure is on screen (PauseOffscreen holds the
+   animation until then), then a short pulse runs along each leg in order. */
+.archLink,
+.archPulse {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
 }
 
-.archStage:nth-child(4)::after {
-  width: var(--space-8);
-  background: var(--accent);
+.archLink {
+  stroke: url(#arch-flow);
+  stroke-dasharray: 1;
+  animation: arch-draw 900ms var(--ease-out) calc(var(--step) * 120ms) both;
 }
 
-.archStore {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3) var(--space-8);
-  padding: var(--space-3);
-  border: var(--border-width) dashed var(--border-strong);
-  border-radius: var(--radius-button);
-  font-size: var(--text-xs);
-  color: var(--text-2);
+.archPulse {
+  stroke: var(--accent);
+  stroke-dasharray: 0.18 1.2;
+  stroke-dashoffset: 0.18;
+  opacity: 0;
+  animation: arch-pulse 3.6s linear calc(1200ms + var(--step) * 450ms) infinite;
 }
 
-.archStore b {
-  font-weight: var(--weight-medium);
-  color: var(--text);
+.archDot {
+  fill: url(#arch-flow);
 }
 
-.archNote {
-  grid-column: 1 / -1;
-  font-size: var(--text-sm);
-  color: var(--text-3);
+@keyframes arch-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes arch-pulse {
+  0% {
+    stroke-dashoffset: 0.18;
+    opacity: 1;
+  }
+  22% {
+    stroke-dashoffset: -1;
+    opacity: 1;
+  }
+  23%,
+  100% {
+    stroke-dashoffset: -1;
+    opacity: 0;
+  }
 }
 
 /* --- before / after ----------------------------------------------------- */
 
 .compare {
   width: 100%;
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
   border: var(--border-width) solid var(--border);
@@ -1179,8 +1167,6 @@
   min-height: 34rem;
   display: grid;
   place-items: start center;
-  overflow: hidden;
-  background: var(--bg);
   border-top: var(--border-width) solid var(--border);
   border-bottom: var(--border-width) solid var(--border);
 }
@@ -1204,6 +1190,12 @@
     filter: brightness(1.55) saturate(1.15) drop-shadow(0 -4px 18px rgba(249, 115, 22, 0.22));
     mask-image: linear-gradient(to top, #000 30%, transparent 80%);
   }
+}
+
+/* The sparks climb from the band to the top of the page, behind every
+   section: z-index -1 puts them under the page content, over the body. */
+.pageEmbers {
+  z-index: -1;
 }
 
 .closingBody {
@@ -1256,7 +1248,6 @@
   display: grid;
   align-content: start;
   gap: var(--space-2);
-  color: var(--text-3);
 }
 
 .footerCols h3 {
@@ -1288,19 +1279,6 @@
 
   .features {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .arch {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .archFlow {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .archStage::after,
-  .archStage:first-child::before {
-    display: none;
   }
 
   .split {
@@ -1426,8 +1404,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .features,
-  .archFlow {
+  .features {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1441,6 +1418,7 @@
   }
 
   .arch {
-    padding: var(--space-5);
+    justify-items: start;
+    padding: var(--space-6);
   }
 }

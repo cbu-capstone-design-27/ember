@@ -3,7 +3,7 @@
 
 .graph {
   position: relative;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 16 / 10;
   margin: var(--space-6) var(--space-8);
 }
 
@@ -129,6 +129,11 @@
   pointer-events: none;
 }
 
+.node[data-up] .label {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+}
+
 .node[data-depth="0"] .label {
   font-weight: var(--weight-medium);
   color: var(--text);
@@ -142,7 +147,21 @@
 @media (max-width: 760px) {
   .graph {
     aspect-ratio: 1;
-    margin: var(--space-4);
+    margin: var(--space-6) var(--space-4);
+  }
+
+  .label {
+    font-size: var(--text-2xs);
+  }
+
+  .node[data-up] .label {
+    top: calc(100% + var(--space-1));
+    bottom: auto;
+  }
+
+  .node[data-up-alone] .label {
+    top: auto;
+    bottom: calc(100% + var(--space-1));
   }
 
   .node[data-depth="2"],

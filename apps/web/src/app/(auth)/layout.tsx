@@ -6,7 +6,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Wordmark } from "../../components/brand.tsx";
 import { connectStory, driftStory } from "../../components/story/data.ts";
-import { Sparks } from "../../components/story/sparks.tsx";
+import { Embers } from "../../components/story/embers.tsx";
 import styles from "./auth.module.css";
 import { AuthStory } from "./auth-story.tsx";
 import { Flame } from "./flame.tsx";
@@ -16,7 +16,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
     <div className={styles.page}>
       <section className={styles.story} aria-hidden="true">
         <Flame />
-        <Sparks />
+        <Embers fire={0.32} />
         <Link href="/" className={styles.storyBrand} tabIndex={-1}>
           <Wordmark size={22} />
         </Link>
