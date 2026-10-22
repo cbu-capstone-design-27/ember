@@ -12,7 +12,7 @@ import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
 import { bearer, deviceAuthorization } from "better-auth/plugins";
-import { createDatabase, DEFAULT_DATABASE_URL } from "./db.ts";
+import { closeDatabase, createDatabase, DEFAULT_DATABASE_URL } from "./db.ts";
 import { sourcesSchema } from "./sources.ts";
 
 export const MIN_PASSWORD_LENGTH = 8;
@@ -66,6 +66,10 @@ export function authOptions(settings: AuthSettings = {}) {
       minPasswordLength: MIN_PASSWORD_LENGTH,
     },
     user: { additionalFields: userFields },
+    // Count requests in the database (table rateLimit), not in this process's
+    // memory, so every copy of the app shares one count (EMBER-80). Better
+    // Auth limits only in production; sign-in and sign-up allow 3 per 10 s per IP.
+    rateLimit: { storage: "database" as const },
     plugins: [
       // Codes last 30 minutes and the CLI polls every 5 s (the plugin's defaults).
       deviceAuthorization({
@@ -129,9 +133,7 @@ export async function migrateDatabase(settings: AuthSettings = {}) {
   try {
     await migrate(options);
   } finally {
-    const db = options.database as { end?: () => Promise<void>; close?: () => void };
-    if (typeof db.end === "function") await db.end();
-    else db.close?.();
+    await closeDatabase(options.database);
   }
 }
 

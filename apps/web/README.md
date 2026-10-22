@@ -72,7 +72,51 @@ The rest is real code that keeps working when the data comes from the graph inst
 | `file:./data/ember.db` (default) | SQLite, through Node's built-in `node:sqlite` (no native module) |
 | `postgres://user:pass@host:5432/db` | Postgres |
 
-The auth tables (`user`, `session`, `account`, `verification`, and `deviceCode` for CLI sign-in) are created or updated when the server starts (`src/instrumentation.ts`). An existing database gains the `sources` column on the next start, and its users are asked to pick sources when they next log in.
+The auth tables (`user`, `session`, `account`, `verification`, `deviceCode` for CLI sign-in, and `rateLimit`) are created or updated when the server starts (`src/instrumentation.ts`), which also logs where they are, e.g. `[db] Auth database: Postgres, schema web, on hv-worker-1.tail470a31.ts.net:5432/ember`, or `SQLite file … (DATABASE_URL not set)`. The password is never logged. An existing database gains the `sources` column on the next start, and its users are asked to pick sources when they next log in.
+
+Better Auth's rate limits are counted in the `rateLimit` table, not in memory, so every copy of the app shares them. They apply in production only: sign-in and sign-up allow 3 requests per 10 seconds per client IP, then answer `429`. The IP comes from `x-forwarded-for`, which `next start` sets itself. Behind a reverse proxy that appends to it, set `advanced.ipAddress.trustedProxies` in `src/lib/auth.ts`; otherwise Better Auth logs a warning and every client shares one limit.
+
+On Postgres the tables live in their own schema, `web` (EMBER-80). The web app shares the `ember` database with ingestion, whose tables (`raw_events`, `source_records`, …) are in `public`, so their names never collide. Better Auth creates the schema on the first start and names it in every query, so the connection's `search_path` doesn't matter. Tables a pre-EMBER-80 build made in `public` are not moved; those were test accounts, so sign up again.
+
+The schema keeps names apart, not access: the web app connects as `ember`, which also owns ingestion's tables. ADR 0006 plans a role of its own for the web app on the cluster.
+
+Tables are created only when the server starts. If the database was unreachable at start, or was wiped while the app ran, requests fail (`500`) until you restart the app.
+
+### Local Postgres
+
+The compose `postgres` service runs the cluster's version (18.6). From the repo root:
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres up -d postgres
+cd apps/web
+DATABASE_URL=postgres://ember:change-me-locally@localhost:5432/ember \
+  BETTER_AUTH_SECRET=dev-secret-change-me BETTER_AUTH_URL=http://localhost:3000 npm run dev
+```
+
+The password is `POSTGRES_PASSWORD` from `.env` (default `change-me-locally`). To run the web container against it instead, point `DATABASE_URL` at the service name. The `--wait` matters: the web app creates its tables at start, and a first Postgres start takes a few seconds.
+
+```sh
+docker compose -f infra/docker-compose.yml --env-file .env --profile postgres up -d --wait postgres
+DATABASE_URL=postgres://ember:change-me-locally@postgres:5432/ember \
+  docker compose -f infra/docker-compose.yml --env-file .env --profile postgres --profile web up --build web
+```
+
+### Cluster Postgres
+
+The cluster's Postgres (`ember` on `hv-worker-2`, EMBER-61) is reachable over the cluster's Tailscale tailnet only. It is wiped and recreated now and then, so keep its URL in `.env`, never in code.
+
+1. Join the cluster's tailnet, or one the cluster's nodes are shared into. `getent hosts hv-worker-2.tail470a31.ts.net` should print an address.
+2. Print the URL, with its password: `make -C infra/ansible -s postgres-url` (needs the cluster kubeconfig; see `infra/ansible`). Put it in the root `.env` as `DATABASE_URL`. Postgres answers on port 5432 of every node (`infra/k8s/apps/postgres/service-lb.yaml`), so if `hv-worker-2` isn't shared with you, use a node that is: `make -C infra/ansible -s postgres-url POSTGRES_HOST=hv-worker-1.tail470a31.ts.net`, or change the host in `.env`.
+3. Run the app with that `.env`. `npm run dev` reads only `apps/web/.env*`, so load the root one into the shell first (`node --env-file` doesn't work here: Next passes it on to a worker through `NODE_OPTIONS`, which refuses it):
+
+   ```sh
+   cd apps/web
+   (set -a && . ../../.env && set +a && npm run dev)
+   ```
+
+   Or run the container, which gets `.env` from compose: `docker compose -f infra/docker-compose.yml --env-file .env --profile web up --build web`. If the container can't resolve the `*.ts.net` name (some Docker DNS setups can't), use the node's `100.x` address from `tailscale status` in `DATABASE_URL`.
+
+The `ember` user owns the database, so the first start can create the `web` schema.
 
 ## CLI sign-in
 
@@ -154,8 +198,10 @@ BETTER_AUTH_SECRET=dev-secret-change-me BETTER_AUTH_URL=http://localhost:3000 np
 cd apps/web
 npm run typecheck
 npm test                                            # SQLite
-TEST_POSTGRES_URL=postgres://user:pass@localhost:5432/ember npm test   # SQLite and Postgres
+TEST_POSTGRES_URL=postgres://ember:change-me-locally@localhost:5432/ember_test npm test   # SQLite and Postgres
 ```
+
+Give the tests a database of their own: they leave their test accounts behind. With the compose Postgres, create it once with `docker exec ember-postgres createdb -U ember ember_test`. Never point `TEST_POSTGRES_URL` at the cluster.
 
 - `test/auth.test.ts` drives Better Auth's real handler. It covers:
   - sign-up, which also signs in

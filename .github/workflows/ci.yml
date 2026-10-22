@@ -273,7 +273,8 @@ jobs:
         run: python services/pipeline/ontology/test_ontology.py
 
   # EMBER-51. The web app: type check, production build, and the sign-up /
-  # log-in / log-out tests on SQLite and on a real Postgres (DATABASE_URL swap).
+  # log-in / log-out tests on SQLite and on a real Postgres (DATABASE_URL swap),
+  # the version the cluster runs (EMBER-80).
   web:
     name: web
     runs-on: ubuntu-latest
@@ -281,14 +282,14 @@ jobs:
     if: needs.changes.outputs.web == 'true'
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18.6
         env:
           POSTGRES_PASSWORD: ci
           POSTGRES_DB: ember
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d ember"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d ember"
           --health-interval 2s --health-timeout 5s --health-retries 20
     defaults:
       run:

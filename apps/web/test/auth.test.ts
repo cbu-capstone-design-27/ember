@@ -9,9 +9,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
-import pg from "pg";
+import { betterAuth } from "better-auth";
 import { authOptions, CLI_CLIENT_ID, createAuth, migrate, whoami, type Auth } from "../src/lib/auth.ts";
-import { databaseKind } from "../src/lib/db.ts";
+import {
+  closeDatabase,
+  createDatabase,
+  databaseKind,
+  describeDatabase,
+  isPostgresDatabase,
+  POSTGRES_SCHEMA,
+} from "../src/lib/db.ts";
 import { decideDeviceRequest, findDeviceRequest, formatUserCode } from "../src/lib/device.ts";
 
 const BASE = "http://localhost:3000";
@@ -62,14 +69,9 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
     const email = `ada-${Date.now()}@example.com`;
     const password = "correct horse battery";
 
-    async function close(db: unknown) {
-      if (db instanceof pg.Pool) await db.end();
-      else (db as { close?: () => void } | undefined)?.close?.();
-    }
-
     after(async () => {
-      await close(migrationOptions?.database);
-      await close((auth?.options as { database?: unknown })?.database);
+      await closeDatabase(migrationOptions?.database);
+      await closeDatabase((auth?.options as { database?: unknown })?.database);
       await cleanup();
     });
 
@@ -78,6 +80,52 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       await migrate(migrationOptions);
       await migrate(migrationOptions); // a second start changes nothing
       auth = createAuth({ databaseUrl: databaseUrl(), secret: SECRET, baseURL: BASE });
+    });
+
+    // EMBER-80: on Postgres the web app shares the database with ingestion, whose tables are in public
+    test("on Postgres the tables are in their own schema", async (t) => {
+      const db = migrationOptions?.database;
+      if (!isPostgresDatabase(db)) return t.skip("SQLite has no schemas");
+      const { rows } = await db.pool.query<{ table_name: string }>(
+        "select table_name from information_schema.tables where table_schema = $1",
+        [POSTGRES_SCHEMA],
+      );
+      assert.deepEqual(rows.map((r) => r.table_name).sort(), ["account", "deviceCode", "rateLimit", "session", "user", "verification"]);
+    });
+
+    // Sign-up writes the user, then its password account; a failure between them must leave neither
+    test("a failed transaction leaves nothing behind", async () => {
+      const { adapter } = await auth.$context;
+      const rolledBack = `rolled-back-${Date.now()}@example.com`;
+      await assert.rejects(
+        adapter.transaction(async (trx) => {
+          const now = new Date();
+          await trx.create({
+            model: "user",
+            data: { name: "Rolled back", email: rolledBack, emailVerified: false, createdAt: now, updatedAt: now },
+          });
+          throw new Error("failed after the user was written");
+        }),
+        /failed after the user was written/,
+      );
+      assert.equal(await adapter.findOne({ model: "user", where: [{ field: "email", value: rolledBack }] }), null);
+    });
+
+    // Better Auth limits only in production, so this instance turns it on; the count is a database row
+    test("sign-in attempts are limited, and counted in the database", async () => {
+      const options = authOptions({ databaseUrl: databaseUrl(), secret: SECRET, baseURL: BASE });
+      const limited = betterAuth({ ...options, rateLimit: { ...options.rateLimit, enabled: true } });
+      try {
+        const attempt = () => call(limited as unknown as Auth, "/sign-in/email", { body: { email, password: "not the password" } });
+        const statuses = [];
+        for (let i = 0; i < 4; i++) statuses.push((await attempt()).status);
+        assert.equal(statuses[3], 429, `3 sign-ins per 10 s, then 429: ${statuses}`);
+        const { adapter } = await limited.$context;
+        const rows = await adapter.findMany<{ key: string; count: number }>({ model: "rateLimit" });
+        assert.ok(rows.some((r) => r.key.endsWith("/sign-in/email") && r.count >= 3), JSON.stringify(rows));
+      } finally {
+        await closeDatabase(limited.options.database);
+      }
     });
 
     test("sign up creates the account and signs in", async () => {
@@ -157,8 +205,10 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
     test("passwords are not stored in plain text", async () => {
       const db = auth.options.database as unknown;
       let stored: string;
-      if (db instanceof pg.Pool) {
-        const r = await db.query(`select password from account where "providerId" = 'credential' limit 1`);
+      if (isPostgresDatabase(db)) {
+        const r = await db.pool.query(
+          `select password from ${POSTGRES_SCHEMA}.account where "providerId" = 'credential' limit 1`,
+        );
         stored = r.rows[0].password;
       } else {
         const row = (db as { prepare: (s: string) => { get: () => { password: string } } })
@@ -324,6 +374,22 @@ if (postgresUrl) {
 test("/device shows the code in two groups of four, as the CLI prints it", () => {
   assert.equal(formatUserCode("abcdefgh"), "ABCD-EFGH");
   assert.equal(formatUserCode("ABCD-EFGH"), "ABCD-EFGH");
+});
+
+test("a Postgres connection that drops while idle doesn't crash the app", async () => {
+  const db = createDatabase("postgres://u:p@127.0.0.1:1/db"); // the pool connects lazily, so nothing is reached
+  assert.ok(isPostgresDatabase(db));
+  assert.equal(db.transaction, true);
+  assert.doesNotThrow(() => db.pool.emit("error", new Error("terminating connection due to administrator command")));
+  await closeDatabase(db);
+});
+
+test("the startup log names the database, never its password", () => {
+  const postgres = describeDatabase("postgres://ember:s3cret-pw@hv-worker-1.tail470a31.ts.net:5432/ember");
+  assert.equal(postgres, "Postgres, schema web, on hv-worker-1.tail470a31.ts.net:5432/ember");
+  assert.ok(!postgres.includes("s3cret-pw"));
+  assert.match(describeDatabase(undefined), /^SQLite file .*data\/ember\.db \(DATABASE_URL not set\)$/);
+  assert.match(describeDatabase("file:/data/ember.db"), /^SQLite file \/data\/ember\.db$/);
 });
 
 test("DATABASE_URL picks the database", () => {
