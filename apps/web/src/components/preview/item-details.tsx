@@ -9,7 +9,7 @@ import Link from "next/link";
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Avatar } from "../avatar.tsx";
 import { SourceLogo } from "../brand.tsx";
-import { CheckIcon, FlagIcon, GraphIcon, SparkIcon, XIcon } from "../icons.tsx";
+import { CheckIcon, FlagIcon, GraphIcon, XIcon } from "../icons.tsx";
 import { TYPE_COLOR, TYPE_ICON } from "../node-style.ts";
 import { slackPermalink } from "../../lib/workspace/edits.ts";
 import { NODE_TYPES } from "../../lib/workspace/graph.ts";
@@ -119,7 +119,7 @@ export function ItemDetails({ id, onOpen, inGraph = false }: { id: string; onOpe
             <GraphIcon /> Show in graph
           </Link>
         )}
-        <span className="subtle">Preview data: changes stay in this browser.</span>
+        <span className={styles.footerNote}>Preview data. Changes stay in this browser.</span>
       </div>
     </div>
   );
@@ -167,7 +167,6 @@ function InsightCallout({ insight }: { insight: Insight }) {
       <div className={styles.calloutActions}>
         {insight.actions.map((a, n) => (
           <button key={a.label} type="button" className={`btn btn-sm ${n === 0 ? "btn-primary" : "btn-secondary"}`} onClick={() => apply(a.edit, a.done)}>
-            {n === 0 && <SparkIcon />}
             {a.label}
           </button>
         ))}

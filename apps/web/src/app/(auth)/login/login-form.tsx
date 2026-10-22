@@ -36,7 +36,6 @@ export function LoginForm({ next, signupHref }: { next: string; signupHref: stri
     <>
       <div className={styles.heading}>
         <h1>Welcome back</h1>
-        <p>Log in to see what changed across your team&apos;s tools.</p>
       </div>
       <form className={styles.form} onSubmit={onSubmit}>
         <label className="field">

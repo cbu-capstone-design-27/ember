@@ -1,5 +1,11 @@
 /*
  * Ember design tokens and shared components.
+ *
+ * A calm, warm monochrome base with one accent, ember orange, used sparingly:
+ * the primary action, the current place, and what needs attention. Hierarchy
+ * comes from type and space: Instrument Serif for display, Instrument Sans for
+ * everything else (fonts.ts). Every module uses these tokens, never raw values.
+ *
  * Light is the default; [data-theme="dark"] is set before first paint by the
  * script in layout.tsx (from the saved choice, or the system setting).
  */
@@ -7,43 +13,129 @@
 :root {
   color-scheme: light;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* --- type ---------------------------------------------------------------- */
+  --font-sans: var(--font-instrument-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: var(--font-instrument-serif), "Iowan Old Style", Georgia, serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Segoe UI Mono", Consolas, monospace;
 
-  --bg: #f7f6f4;
-  --bg-subtle: #efede9;
-  --surface: #ffffff;
-  --surface-2: #faf9f7;
-  --surface-3: #f2f0ec;
-  --border: #e6e2dc;
-  --border-strong: #d4cfc7;
-  --text: #1c1917;
-  --text-2: #57534e;
-  --text-3: #857f78;
+  --text-2xs: 0.6875rem; /* 11px */
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.8125rem; /* 13px */
+  --text-base: 0.875rem; /* 14px, body */
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.5rem;
+  --text-3xl: 3.5rem;
+  --text-display: clamp(3rem, 7.2vw, 6.25rem);
 
-  --accent: #ea580c;
+  --leading-none: 1;
+  --leading-tight: 1.08;
+  --leading-snug: 1.3;
+  --leading: 1.5;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight: -0.015em;
+  --tracking-display: -0.02em;
+  --tracking-caps: 0.08em;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* --- space (4px steps) ---------------------------------------------------- */
+  --space-px: 1px;
+  --space-0-5: 0.125rem;
+  --space-1: 0.25rem;
+  --space-1-5: 0.375rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+  --space-32: 8rem;
+
+  /* --- sizes ---------------------------------------------------------------- */
+  --control-sm: 1.875rem;
+  --control: 2.25rem;
+  --control-lg: 2.75rem;
+  --sidebar-width: 15rem;
+  --topbar-height: 3.625rem; /* the shell's bar on narrow screens */
+  --page-max: 80rem;
+  --measure: 36rem;
+
+  /* --- shape ---------------------------------------------------------------- */
+  --radius-xs: 3px;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+  --border-width: 1px;
+  --rule-strong: 2px; /* severity marks and quote rules */
+
+  --icon-xs: 0.75rem;
+  --icon-sm: 0.9375rem;
+  --icon-md: 1.25rem;
+
+  /* --- motion --------------------------------------------------------------- */
+  --duration-fast: 120ms;
+  --duration: 200ms;
+  --duration-slow: 360ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --z-raised: 5;
+  --z-sticky: 20;
+  --z-overlay: 50;
+  --z-toast: 60;
+
+  /* --- color: a warm paper ground, ink, one ember accent ------------------- */
+  --bg: #f5f3ef;
+  --bg-subtle: #efece6;
+  --surface: #fdfcfa;
+  --surface-2: #f9f7f3;
+  --surface-3: #ece8e1;
+  --border: #e2ddd4;
+  --border-strong: #cdc6ba;
+  --text: #1c1916;
+  --text-2: #514b43;
+  --text-3: #6c655b;
+
+  --accent: #e2561a;
   --accent-solid: #c2410c;
-  --accent-solid-hover: #9a3412;
+  --accent-solid-hover: #a3360a;
   --on-accent: #ffffff;
-  --accent-soft: #fff3eb;
-  --accent-border: #fed7aa;
-  --accent-text: #c2410c;
-  --focus-ring: 0 0 0 3px rgba(234, 88, 12, 0.35);
+  --accent-soft: #fbede4;
+  --accent-border: #efc6ab;
+  --accent-text: #b03b0b;
 
-  --danger: #dc2626;
-  --danger-soft: #fef2f2;
-  --danger-text: #b91c1c;
-  --warning: #d97706;
-  --warning-soft: #fffbeb;
-  --warning-text: #a16207;
-  --success: #16a34a;
-  --success-soft: #f0fdf4;
-  --success-text: #15803d;
-  --info: #2563eb;
-  --info-soft: #eff6ff;
-  --info-text: #1d4ed8;
-  --merged: #8250df;
-  --merged-soft: #f5f0ff;
+  --danger: #c2392b;
+  --danger-soft: #f8e9e5;
+  --danger-text: #a12f22;
+  --warning: #b7771a;
+  --warning-soft: #f6eedc;
+  --warning-text: #835410;
+  --success: #3b7a4b;
+  --success-soft: #e7efe6;
+  --success-text: #2e663c;
+  --info: #44669a;
+  --info-soft: #e8edf4;
+  --info-text: #35568a;
+  --merged: #7458a6;
+  --merged-soft: #efeaf6;
+
+  /* Fixed colors for the always-dark log-in panel and anything on the accent. */
+  --ink: #141210;
+  --ink-text: #f3efe9;
+  --ink-text-2: #c9c1b6;
+  --ink-line: rgba(243, 239, 233, 0.14);
+  --ink-ember: #f59a63;
 
   --src-github: #24292f;
   --src-gitlab: #e24329;
@@ -51,66 +143,80 @@
   --src-slack: #611f69;
   --src-teams: #5b5fc7;
 
-  /* Ontology node types (docs/graph-schema.md). */
-  --node-workitem: #2563eb;
-  --node-change: #16a34a;
-  --node-message: #9333ea;
-  --node-person: #ea580c;
-  --node-decision: #db2777;
-  --node-conversation: #4f46e5;
-  --node-container: #475569;
-  --node-module: #0d9488;
-  --node-identity: #a8a29e;
-  --graph-edge: rgba(87, 83, 78, 0.28);
-  --graph-edge-strong: rgba(28, 25, 23, 0.7);
-  --graph-bg-dot: rgba(87, 83, 78, 0.16);
+  /* Ontology node types (docs/graph-schema.md): muted, equal-weight hues so no
+     type shouts. People carry the ember color; they are what links the rest. */
+  --node-workitem: #4a6ea4;
+  --node-change: #4b835a;
+  --node-message: #8566a4;
+  --node-person: #c2410c;
+  --node-decision: #ad5577;
+  --node-conversation: #6266a3;
+  --node-container: #6a6359;
+  --node-module: #3c8580;
+  --node-identity: #a1988b;
+  --graph-edge: rgba(81, 75, 67, 0.2);
+  --graph-edge-strong: rgba(28, 25, 22, 0.66);
+  --graph-bg-dot: rgba(81, 75, 67, 0.13);
 
-  --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.06);
-  --shadow-md: 0 1px 3px rgba(28, 25, 23, 0.06), 0 6px 16px -6px rgba(28, 25, 23, 0.12);
-  --shadow-lg: 0 2px 6px rgba(28, 25, 23, 0.06), 0 24px 48px -16px rgba(28, 25, 23, 0.22);
+  /* Avatars: one muted tone per person (components/avatar.tsx), white initials. */
+  --avatar-1: #a6431a;
+  --avatar-2: #3f5f8f;
+  --avatar-3: #3f6f4b;
+  --avatar-4: #6c5292;
+  --avatar-5: #96465f;
+  --avatar-6: #2f6e6a;
+  --avatar-7: #7a5c22;
+  --avatar-8: #55577f;
+  --avatar-text: #ffffff;
 
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 14px;
+  --shadow-sm: 0 1px 2px rgba(28, 25, 22, 0.05);
+  --shadow-md: 0 1px 2px rgba(28, 25, 22, 0.04), 0 8px 24px -12px rgba(28, 25, 22, 0.16);
+  --shadow-lg: 0 2px 4px rgba(28, 25, 22, 0.04), 0 24px 56px -20px rgba(28, 25, 22, 0.28);
+  --scrim: rgba(28, 25, 22, 0.28);
+
+  --focus-ring-color: var(--accent);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus-ring-color);
+  --selection: rgba(226, 86, 26, 0.2);
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #0e0d0c;
-  --bg-subtle: #151413;
-  --surface: #191817;
-  --surface-2: #1f1e1c;
-  --surface-3: #282624;
-  --border: #2d2b28;
-  --border-strong: #3e3b37;
-  --text: #f4f3f1;
-  --text-2: #c2bdb6;
-  --text-3: #8d877f;
+  /* Dark is its own palette: a warm charcoal, surfaces lifted by lightness,
+     borders doing the work shadows do in light. */
+  --bg: #131210;
+  --bg-subtle: #171614;
+  --surface: #1b1a17;
+  --surface-2: #201e1b;
+  --surface-3: #2a2824;
+  --border: #2c2a26;
+  --border-strong: #403c37;
+  --text: #efebe5;
+  --text-2: #bfb8ad;
+  --text-3: #9b9387;
 
-  --accent: #f97316;
-  --accent-solid: #f97316;
-  --accent-solid-hover: #fb923c;
-  --on-accent: #1a0b02;
-  --accent-soft: rgba(249, 115, 22, 0.12);
-  --accent-border: rgba(249, 115, 22, 0.35);
-  --accent-text: #fdba74;
-  --focus-ring: 0 0 0 3px rgba(249, 115, 22, 0.4);
+  --accent: #f0743c;
+  --accent-solid: #f0743c;
+  --accent-solid-hover: #f58b59;
+  --on-accent: #1b0c04;
+  --accent-soft: rgba(240, 116, 60, 0.12);
+  --accent-border: rgba(240, 116, 60, 0.34);
+  --accent-text: #f59a6b;
 
-  --danger: #f87171;
-  --danger-soft: rgba(248, 113, 113, 0.12);
-  --danger-text: #fca5a5;
-  --warning: #fbbf24;
-  --warning-soft: rgba(251, 191, 36, 0.12);
-  --warning-text: #fcd34d;
-  --success: #4ade80;
-  --success-soft: rgba(74, 222, 128, 0.12);
-  --success-text: #86efac;
-  --info: #60a5fa;
-  --info-soft: rgba(96, 165, 250, 0.12);
-  --info-text: #93c5fd;
-  --merged: #b392f0;
-  --merged-soft: rgba(179, 146, 240, 0.14);
+  --danger: #e2705f;
+  --danger-soft: rgba(226, 112, 95, 0.13);
+  --danger-text: #f0a294;
+  --warning: #d6a04c;
+  --warning-soft: rgba(214, 160, 76, 0.13);
+  --warning-text: #e5bf7e;
+  --success: #7cb287;
+  --success-soft: rgba(124, 178, 135, 0.13);
+  --success-text: #a4cdab;
+  --info: #8aa5d4;
+  --info-soft: rgba(138, 165, 212, 0.13);
+  --info-text: #adc1e4;
+  --merged: #b39ade;
+  --merged-soft: rgba(179, 154, 222, 0.14);
 
   --src-github: #e6edf3;
   --src-gitlab: #fc6d26;
@@ -118,22 +224,33 @@
   --src-slack: #e0a3e8;
   --src-teams: #8b8ff0;
 
-  --node-workitem: #60a5fa;
-  --node-change: #4ade80;
-  --node-message: #c084fc;
-  --node-person: #fb923c;
-  --node-decision: #f472b6;
-  --node-conversation: #818cf8;
-  --node-container: #94a3b8;
-  --node-module: #2dd4bf;
-  --node-identity: #78716c;
-  --graph-edge: rgba(194, 189, 182, 0.2);
-  --graph-edge-strong: rgba(244, 243, 241, 0.75);
-  --graph-bg-dot: rgba(194, 189, 182, 0.09);
+  --node-workitem: #88a4d2;
+  --node-change: #86b991;
+  --node-message: #b39ad0;
+  --node-person: #f0814a;
+  --node-decision: #d48ba7;
+  --node-conversation: #9a9dd4;
+  --node-container: #a69e92;
+  --node-module: #7cbcb6;
+  --node-identity: #6f675d;
+  --graph-edge: rgba(191, 184, 173, 0.16);
+  --graph-edge-strong: rgba(239, 235, 229, 0.7);
+  --graph-bg-dot: rgba(191, 184, 173, 0.08);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 20px -8px rgba(0, 0, 0, 0.6);
-  --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.4), 0 28px 56px -16px rgba(0, 0, 0, 0.7);
+  --avatar-1: #9a4220;
+  --avatar-2: #3c5a86;
+  --avatar-3: #3b6646;
+  --avatar-4: #64508a;
+  --avatar-5: #8a4359;
+  --avatar-6: #2d6662;
+  --avatar-7: #715626;
+  --avatar-8: #515378;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.3), 0 28px 64px -20px rgba(0, 0, 0, 0.75);
+  --scrim: rgba(0, 0, 0, 0.55);
+  --selection: rgba(240, 116, 60, 0.3);
 }
 
 /* --- base --------------------------------------------------------------- */
@@ -154,11 +271,13 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--text-base);
+  line-height: var(--leading);
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  transition: background-color var(--duration) var(--ease-out), color var(--duration) var(--ease-out);
 }
 
 h1,
@@ -169,23 +288,27 @@ p {
   margin: 0;
 }
 
+/* Page titles are set in the serif, at regular weight: size does the work. */
 h1 {
-  font-size: 1.6rem;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-  font-weight: 650;
+  font-family: var(--font-serif);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-display);
+  text-wrap: balance;
 }
 
 h2 {
-  font-size: 1rem;
-  line-height: 1.4;
-  letter-spacing: -0.01em;
-  font-weight: 620;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  letter-spacing: var(--tracking-tight);
 }
 
 h3 {
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
 }
 
 a {
@@ -195,13 +318,16 @@ a {
 a.link,
 .link {
   color: var(--accent-text);
-  text-decoration: none;
-  font-weight: 550;
+  text-decoration: underline;
+  text-decoration-color: var(--accent-border);
+  text-underline-offset: 3px;
+  font-weight: var(--weight-medium);
+  transition: text-decoration-color var(--duration-fast) var(--ease-out);
 }
 
-a.link:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+a.link:hover,
+.link:hover {
+  text-decoration-color: currentColor;
 }
 
 code,
@@ -211,13 +337,12 @@ code,
 }
 
 ::selection {
-  background: rgba(249, 115, 22, 0.25);
+  background: var(--selection);
 }
 
 :focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-  border-radius: var(--radius-sm);
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
 }
 
 .visually-hidden {
@@ -241,9 +366,18 @@ code,
 }
 
 .icon {
-  width: 1.15em;
-  height: 1.15em;
+  width: 1.1em;
+  height: 1.1em;
   flex: none;
+}
+
+/* A small uppercase label for a group of controls, never for a heading. */
+.eyebrow {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--text-3);
 }
 
 /* --- buttons ------------------------------------------------------------ */
@@ -252,31 +386,38 @@ code,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.45rem;
-  height: 2.25rem;
-  padding: 0 0.95rem;
+  gap: var(--space-2);
+  height: var(--control);
+  padding: 0 var(--space-4);
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
+  border: var(--border-width) solid transparent;
   font: inherit;
-  font-weight: 560;
-  font-size: 0.875rem;
-  line-height: 1;
+  font-weight: var(--weight-medium);
+  font-size: var(--text-base);
+  line-height: var(--leading-none);
   white-space: nowrap;
   text-decoration: none;
   cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.btn:not(:disabled):active {
+  transform: translateY(1px);
 }
 
 .btn:disabled,
 .btn[aria-disabled="true"] {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
 .btn-primary {
   background: var(--accent-solid);
   color: var(--on-accent);
-  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 .btn-primary:not(:disabled):hover {
@@ -287,7 +428,6 @@ code,
   background: var(--surface);
   color: var(--text);
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
 }
 
 .btn-secondary:not(:disabled):hover {
@@ -305,15 +445,15 @@ code,
 }
 
 .btn-sm {
-  height: 1.875rem;
-  padding: 0 0.7rem;
-  font-size: 0.8125rem;
+  height: var(--control-sm);
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
 }
 
 .btn-lg {
-  height: 2.75rem;
-  padding: 0 1.25rem;
-  font-size: 0.95rem;
+  height: var(--control-lg);
+  padding: 0 var(--space-5);
+  font-size: var(--text-base);
 }
 
 .btn-block {
@@ -321,12 +461,12 @@ code,
 }
 
 .btn-icon {
-  width: 2.25rem;
+  width: var(--control);
   padding: 0;
 }
 
 .btn-icon.btn-sm {
-  width: 1.875rem;
+  width: var(--control-sm);
 }
 
 .spinner {
@@ -348,12 +488,12 @@ code,
 
 .field {
   display: grid;
-  gap: 0.4rem;
+  gap: var(--space-1-5);
 }
 
 .field-label {
-  font-size: 0.8125rem;
-  font-weight: 560;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   color: var(--text);
 }
 
@@ -361,25 +501,27 @@ code,
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-4);
 }
 
 .field-hint {
-  font-size: 0.78rem;
+  font-size: var(--text-xs);
   color: var(--text-3);
 }
 
 .input {
   width: 100%;
-  height: 2.5rem;
-  padding: 0 0.8rem;
+  height: var(--control-lg);
+  padding: 0 var(--space-3);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
+  border: var(--border-width) solid var(--border-strong);
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: 0.9rem;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  font-size: var(--text-base);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .input::placeholder {
@@ -393,11 +535,11 @@ code,
 .input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .input[readonly] {
-  background: var(--surface-3);
+  background: var(--surface-2);
   color: var(--text-2);
 }
 
@@ -406,41 +548,46 @@ code,
 }
 
 .input-wrap .input {
-  padding-right: 2.6rem;
+  padding-right: var(--space-12);
 }
 
 .input-wrap .input-action {
   position: absolute;
-  right: 0.3rem;
+  right: var(--space-1-5);
   top: 50%;
   transform: translateY(-50%);
 }
 
 .alert {
   display: flex;
-  gap: 0.6rem;
+  gap: var(--space-2);
   align-items: flex-start;
-  padding: 0.7rem 0.85rem;
+  padding: var(--space-3) var(--space-3);
   border-radius: var(--radius-sm);
-  font-size: 0.85rem;
-  border: 1px solid;
+  font-size: var(--text-sm);
+  line-height: var(--leading);
+  border: var(--border-width) solid;
+}
+
+.alert > svg {
+  margin-top: var(--space-0-5);
 }
 
 .alert-error {
   background: var(--danger-soft);
-  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
   color: var(--danger-text);
 }
 
 .alert-info {
   background: var(--info-soft);
-  border-color: color-mix(in srgb, var(--info) 30%, transparent);
+  border-color: color-mix(in srgb, var(--info) 26%, transparent);
   color: var(--info-text);
 }
 
 .alert-success {
   background: var(--success-soft);
-  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+  border-color: color-mix(in srgb, var(--success) 26%, transparent);
   color: var(--success-text);
 }
 
@@ -448,31 +595,24 @@ code,
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: var(--border-width) solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
 }
 
 .card-header {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.15rem 0.85rem;
-}
-
-.card-header p {
-  font-size: 0.8rem;
-  color: var(--text-3);
-  margin-top: 0.1rem;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-5) var(--space-4);
 }
 
 .card-body {
-  padding: 0 1.15rem 1.15rem;
+  padding: 0 var(--space-5) var(--space-5);
 }
 
 .divider {
-  height: 1px;
+  height: var(--border-width);
   background: var(--border);
   border: 0;
   margin: 0;
@@ -483,58 +623,59 @@ code,
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-1);
   height: 1.375rem;
-  padding: 0 0.5rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  line-height: 1;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-none);
   white-space: nowrap;
   background: var(--surface-3);
   color: var(--text-2);
-  border: 1px solid var(--border);
+  border: var(--border-width) solid transparent;
+  text-decoration: none;
+}
+
+.badge .icon,
+.badge svg {
+  width: 0.85rem;
+  height: 0.85rem;
 }
 
 .badge-accent {
   background: var(--accent-soft);
   color: var(--accent-text);
-  border-color: var(--accent-border);
 }
 
 .badge-danger {
   background: var(--danger-soft);
   color: var(--danger-text);
-  border-color: transparent;
 }
 
 .badge-warning {
   background: var(--warning-soft);
   color: var(--warning-text);
-  border-color: transparent;
 }
 
 .badge-success {
   background: var(--success-soft);
   color: var(--success-text);
-  border-color: transparent;
 }
 
 .badge-info {
   background: var(--info-soft);
   color: var(--info-text);
-  border-color: transparent;
 }
 
 .badge-merged {
   background: var(--merged-soft);
   color: var(--merged);
-  border-color: transparent;
 }
 
 .dot {
-  width: 0.5rem;
-  height: 0.5rem;
+  width: var(--space-2);
+  height: var(--space-2);
   border-radius: 50%;
   background: currentColor;
   flex: none;
@@ -543,16 +684,15 @@ code,
 .kbd {
   display: inline-grid;
   place-items: center;
-  min-width: 1.35rem;
-  height: 1.35rem;
-  padding: 0 0.3rem;
-  border-radius: 4px;
-  border: 1px solid var(--border-strong);
-  border-bottom-width: 2px;
+  min-width: 1.375rem;
+  height: 1.375rem;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  border: var(--border-width) solid var(--border-strong);
   background: var(--surface-2);
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: var(--text-2xs);
 }
 
 /* --- avatars ------------------------------------------------------------ */
@@ -564,54 +704,56 @@ code,
   height: 1.75rem;
   border-radius: 50%;
   flex: none;
-  font-size: 0.68rem;
-  font-weight: 650;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
   letter-spacing: 0.02em;
-  color: #fff;
-  background: var(--avatar, #78716c);
+  color: var(--avatar-text);
+  background: var(--avatar, var(--node-container));
   user-select: none;
 }
 
 .avatar-lg {
   width: 2.5rem;
   height: 2.5rem;
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
 }
 
 .avatar-sm {
   width: 1.375rem;
   height: 1.375rem;
-  font-size: 0.6rem;
+  font-size: 0.5625rem;
 }
 
 /* --- segmented control -------------------------------------------------- */
 
 .segmented {
   display: inline-flex;
-  padding: 3px;
-  gap: 2px;
-  border-radius: 9px;
+  padding: var(--space-0-5);
+  gap: var(--space-0-5);
+  border-radius: var(--radius);
   background: var(--surface-3);
-  border: 1px solid var(--border);
 }
 
 .segmented button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
+  gap: var(--space-1-5);
   height: 1.75rem;
-  min-width: 2rem;
-  padding: 0 0.55rem;
+  min-width: 1.75rem;
+  padding: 0 var(--space-2);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-3);
   font: inherit;
-  font-size: 0.78rem;
-  font-weight: 560;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition:
+    background-color var(--duration) var(--ease-out),
+    color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out);
 }
 
 .segmented button:hover {
@@ -630,19 +772,22 @@ code,
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  height: 1.875rem;
-  padding: 0 0.7rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  gap: var(--space-1-5);
+  height: var(--control-sm);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  border: var(--border-width) solid var(--border);
+  background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: 0.8rem;
-  font-weight: 540;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .chip:hover {
@@ -659,7 +804,7 @@ code,
 .chip .count {
   font-variant-numeric: tabular-nums;
   opacity: 0.7;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -667,7 +812,9 @@ code,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

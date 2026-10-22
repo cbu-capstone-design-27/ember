@@ -1,11 +1,19 @@
-// Log-in and sign-up: the form on one side, what Ember does on the other.
+// Log-in and sign-up: the form on one side, the fire and what Ember does on the other.
 
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { SourceLogo, Wordmark } from "../../components/brand.tsx";
 import { ThemeSwitcher } from "../../components/theme.tsx";
+import type { SourceId } from "../../lib/sources.ts";
 import styles from "./auth.module.css";
 import { Flame } from "./flame.tsx";
+
+// The preview workspace's CHK-131, as each source reports it (same as the landing page).
+const EXAMPLE: Array<{ source: SourceId; where: string; says: string; odd?: boolean }> = [
+  { source: "slack", where: "#checkout-dev", says: "“Saved cards (CHK-131) is done!”" },
+  { source: "github", where: "checkout-web#219", says: "Merged 5h ago" },
+  { source: "jira", where: "CHK-131", says: "In Development", odd: true },
+];
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
@@ -13,41 +21,21 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       <section className={styles.story} aria-hidden="true">
         <Flame />
         <Link href="/" className={`${styles.storyBrand} on-dark`} tabIndex={-1}>
-          <Wordmark size={30} />
+          <Wordmark size={26} />
         </Link>
         <div className={styles.storyBody}>
-          <h2 className={styles.storyTitle}>Your team&apos;s context, connected.</h2>
-          <p className={styles.storyText}>
-            Ember reads your pull requests, tickets and conversations, links them into one knowledge graph, and
-            tells you where they disagree.
+          <p className={styles.storyTitle}>
+            Slack says it&apos;s done. <em>Jira says it isn&apos;t.</em>
           </p>
-          <div className={styles.preview}>
-            <div className={styles.previewHead}>
-              <span className={styles.previewDot} />
-              Status drift
-            </div>
-            <p className={styles.previewTitle}>CHK-131 looks done, but Jira says In Development</p>
-            <ul className={styles.previewList}>
-              <li>
-                <SourceLogo source="slack" size={16} />
-                <span>
-                  <b>#checkout-dev</b> &ldquo;Saved cards is done! #219 merged&rdquo;
-                </span>
+          <ol className={styles.ledger}>
+            {EXAMPLE.map((row) => (
+              <li key={row.source} data-odd={row.odd}>
+                <SourceLogo source={row.source} size={14} />
+                <code>{row.where}</code>
+                <span>{row.says}</span>
               </li>
-              <li>
-                <SourceLogo source="github" size={16} />
-                <span>
-                  <b>checkout-web#219</b> Merged 5h ago
-                </span>
-              </li>
-              <li>
-                <SourceLogo source="jira" size={16} />
-                <span>
-                  <b>CHK-131</b> In Development
-                </span>
-              </li>
-            </ul>
-          </div>
+            ))}
+          </ol>
         </div>
         <p className={styles.storyFoot}>GitHub · GitLab · Jira · Slack · Microsoft Teams</p>
       </section>
@@ -55,7 +43,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       <section className={styles.formSide}>
         <div className={styles.topBar}>
           <Link href="/" className={styles.mobileBrand} aria-label="Ember home">
-            <Wordmark size={24} />
+            <Wordmark size={22} />
           </Link>
           <ThemeSwitcher />
         </div>
