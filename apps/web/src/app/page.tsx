@@ -2,48 +2,64 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { EmberMark, SourceLogo, Wordmark } from "../components/brand.tsx";
 import { DashboardIcon, GraphIcon, SettingsIcon } from "../components/icons.tsx";
+import { ClaudeLogo, CodexLogo, CursorLogo, GitHubLogo, GitLabLogo, JiraLogo, SlackLogo, TeamsLogo } from "../components/logos/index.ts";
+import { AgentTabs } from "../components/story/agent-tabs.tsx";
+import { driftStory, miniGraph, searchPreview } from "../components/story/data.ts";
+import { DriftStory } from "../components/story/drift.tsx";
+import { PauseOffscreen, WhenVisible } from "../components/story/in-view.tsx";
+import { MiniGraphView } from "../components/story/mini-graph.tsx";
+import { Sparks } from "../components/story/sparks.tsx";
+import storyStyles from "../components/story/story.module.css";
 import { ThemeSwitcher } from "../components/theme.tsx";
 import { getCurrentUser } from "../lib/session.ts";
 import { SOURCES, type SourceId } from "../lib/sources.ts";
-import { buildGraph } from "../lib/workspace/graph.ts";
+import { NODE_TYPES } from "../lib/workspace/graph.ts";
 import { findInsights, INSIGHT_KINDS } from "../lib/workspace/insights.ts";
 import { loadPreviewWorkspace } from "../lib/workspace/load.ts";
-import { buildModel, nodeId } from "../lib/workspace/model.ts";
+import { buildModel } from "../lib/workspace/model.ts";
 import { sourceSummaries, stats } from "../lib/workspace/summary.ts";
 import { ago } from "../lib/workspace/time.ts";
+import { Flame } from "./(auth)/flame.tsx";
 import styles from "./landing.module.css";
 
-// What each source adds to the graph, in the ontology's node types (docs/graph-schema.md).
-const NODE_TYPES_BY_SOURCE: Record<SourceId, string> = {
-  github: "Change · Module",
-  gitlab: "Change · Module",
-  jira: "WorkItem",
-  slack: "Message · Decision",
-  teams: "Message · Decision",
+const REPO = "https://github.com/cbu-capstone-design-27/ember";
+
+// What Ember reads from each source. Teams ingestion is designed (docs/ingestion/teams.md) but not built.
+const READS: Record<SourceId, { reads: string; coming?: boolean }> = {
+  github: { reads: "pull requests · reviews · checks" },
+  gitlab: { reads: "merge requests · approvals · notes" },
+  jira: { reads: "issues · status history · comments" },
+  slack: { reads: "channels · threads · decisions" },
+  teams: { reads: "not built yet", coming: true },
 };
 
-const PREVIEW_SOURCES: SourceId[] = ["github", "jira", "slack"];
+// The tiles that drift around the headline: [Logo, left %, top %, size rem, tilt deg, seconds].
+const TILES = [
+  [ClaudeLogo, 9, 22, 3.5, -8, 13],
+  [GitHubLogo, 3, 58, 3, 5, 11],
+  [JiraLogo, 17, 68, 3.25, -4, 15],
+  [GitLabLogo, 27, 4, 2.75, 6, 12],
+  [CodexLogo, 86, 18, 3.5, 7, 14],
+  [SlackLogo, 93, 54, 3, -6, 12],
+  [CursorLogo, 79, 70, 3.25, 4, 16],
+  [TeamsLogo, 70, 2, 2.75, -5, 13],
+] as const;
+
+const PREVIEW: SourceId[] = ["github", "jira", "slack"];
+const QUESTION = "saved cards";
 
 export default async function Home() {
   const user = await getCurrentUser();
   if (user) redirect(user.sources.length ? "/dashboard" : "/onboarding");
 
-  // The hero panel and the graph excerpt render the real preview workspace.
-  const { workspace, now } = loadPreviewWorkspace(PREVIEW_SOURCES);
+  // Everything below is drawn from the real preview workspace.
+  const { workspace, now } = loadPreviewWorkspace(PREVIEW);
   const model = buildModel(workspace);
   const insights = findInsights(model, now);
   const s = stats(model, insights);
-  const summaries = sourceSummaries(model, PREVIEW_SOURCES);
-  const graph = buildGraph(model, now);
-  const focus = nodeId.issue("CHK-131");
-  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-  const edges = graph.edges
-    .filter((e) => e.source === focus || e.target === focus)
-    .map((e) => {
-      const out = e.source === focus;
-      return { id: e.id, type: e.type, out, other: byId.get(out ? e.target : e.source)! };
-    })
-    .slice(0, 7);
+  const summaries = sourceSummaries(model, PREVIEW);
+  const graph = miniGraph();
+  const types = [...new Set(graph.nodes.map((n) => n.type))];
 
   const figures = [
     { label: "Needs attention", value: s.attention.total, hot: s.attention.high > 0 },
@@ -55,7 +71,15 @@ export default async function Home() {
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <Wordmark size={22} />
+        <Link href="/" className={styles.brand} aria-label="Ember home">
+          <Wordmark size={22} />
+        </Link>
+        <nav className={styles.headerNav} aria-label="Sections">
+          <a href="#sources">Sources</a>
+          <a href="#agents">Agents</a>
+          <a href="#drift">Drift</a>
+          <a href="#graph">Graph</a>
+        </nav>
         <nav className={styles.headerActions} aria-label="Account">
           <Link className={styles.headerLink} href="/login">
             Log in
@@ -68,10 +92,31 @@ export default async function Home() {
 
       <main>
         <div className={styles.top}>
+          <PauseOffscreen className={styles.tiles}>
+            {TILES.map(([Logo, left, top, size, tilt, seconds], i) => (
+              <span
+                key={i}
+                className={storyStyles.floatTile}
+                aria-hidden="true"
+                style={{
+                  left: `${left}%`,
+                  top: `${top}%`,
+                  ["--tile" as string]: `${size}rem`,
+                  ["--tilt" as string]: `${tilt}deg`,
+                  animationDuration: `${seconds}s`,
+                  animationDelay: `${-i * 1.7}s`,
+                }}
+              >
+                <Logo size={Math.round(size * 8.5)} />
+              </span>
+            ))}
+          </PauseOffscreen>
+
           <section className={styles.hero}>
             <h1 className={styles.title}>See where GitHub, Jira and Slack disagree.</h1>
             <p className={styles.lede}>
-              Ember links pull requests, tickets and threads into one graph and flags work whose status doesn&apos;t match.
+              Ember links pull requests, tickets and threads into one graph, flags work whose status doesn&apos;t
+              match, and lets your coding agents search all of it.
             </p>
             <div className={styles.cta}>
               <Link className="btn btn-primary btn-lg" href="/signup">
@@ -139,44 +184,133 @@ export default async function Home() {
           </div>
         </div>
 
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>Connect the tools you already use</h2>
+        <section id="sources" className={styles.section}>
+          <h2 className={styles.sectionTitle}>Reads the tools you already use</h2>
           <ul className={styles.sources}>
             {SOURCES.map((src) => (
-              <li key={src.id}>
-                <SourceLogo source={src.id} size={20} />
+              <li key={src.id} data-coming={READS[src.id].coming}>
+                <SourceLogo source={src.id} size={22} />
                 <span>
-                  <span className={styles.sourceName}>{src.name}</span>
-                  <code>{NODE_TYPES_BY_SOURCE[src.id]}</code>
+                  <span className={styles.sourceName}>
+                    {src.name}
+                    {READS[src.id].coming && <span className={styles.coming}>Coming</span>}
+                  </span>
+                  <code>{READS[src.id].reads}</code>
                 </span>
               </li>
             ))}
           </ul>
+          <ul className={styles.facts}>
+            <li>Only the repos, projects and channels you add</li>
+            <li>
+              One subgraph per source: <code>{model.ws.organization.tenant}_github</code>
+            </li>
+            <li>People matched across every tool</li>
+          </ul>
         </section>
 
-        <section className={styles.section}>
+        <section id="agents" className={`${styles.section} ${styles.split}`}>
+          <div className={styles.splitText}>
+            <h2 className={styles.sectionTitle}>Works in your agent</h2>
+            <p className={styles.sectionLede}>
+              Ember&apos;s MCP server gives Claude Code, Codex and Cursor two read-only tools, <code>search</code> and{" "}
+              <code>get_record</code>, over everything Ember has ingested.
+            </p>
+            <p className={styles.note}>
+              <code>apps/mcp</code> is a prototype (EMBER-79). The hits on the right come from the preview workspace.
+            </p>
+          </div>
+          <AgentTabs question={QUESTION} hits={searchPreview(QUESTION)} />
+        </section>
+
+        <section id="drift" className={`${styles.section} ${styles.split}`}>
+          <div className={styles.splitText}>
+            <h2 className={styles.sectionTitle}>Catches the drift</h2>
+            <p className={styles.sectionLede}>
+              Slack says CHK-131 is done and the pull request merged, but Jira still says In Development. Ember links the
+              three records and raises the flag, with a one-click fix.
+            </p>
+            <ul className={styles.kinds}>
+              {Object.values(INSIGHT_KINDS)
+                .sort((a, b) => a.order - b.order)
+                .map((k) => (
+                  <li key={k.label}>{k.label}</li>
+                ))}
+            </ul>
+          </div>
+          <div className={styles.driftStage}>
+            <DriftStory drift={driftStory()} />
+          </div>
+        </section>
+
+        <section id="graph" className={styles.section}>
           <h2 className={styles.sectionTitle}>One graph under all of it</h2>
-          <div className={styles.terminal}>
-            <div className={styles.terminalBar}>
-              <code>{byId.get(focus)!.subgraph} / CHK-131</code>
+          <div className={styles.graphPanel}>
+            <div className={styles.graphBar}>
+              <code>{model.ws.organization.tenant} / CHK-131</code>
+              <span>Drag a node</span>
             </div>
-            <ol className={styles.terminalBody}>
-              {edges.map((e) => (
-                <li key={e.id}>
-                  <code className={styles.edgeDir}>{e.out ? "→" : "←"}</code>
-                  <code className={styles.edgeType}>{e.type}</code>
-                  <code className={styles.edgeType2}>{e.other.type}</code>
-                  <span className={styles.edgeLabel}>{e.other.label}</span>
+            <MiniGraphView graph={graph} />
+            <ul className={styles.legend}>
+              {types.map((t) => (
+                <li key={t} style={{ ["--c" as string]: `var(--node-${t.toLowerCase()})` }}>
+                  {NODE_TYPES[t].plural}
                 </li>
               ))}
-            </ol>
+            </ul>
           </div>
         </section>
       </main>
 
+      <section className={`${styles.closing} dark-scope`}>
+        <WhenVisible className={styles.closingFire}>
+          <Flame />
+          <Sparks />
+        </WhenVisible>
+        <div className={styles.closingBody}>
+          <h2 className={styles.closingTitle}>Find the drift before standup does.</h2>
+          <p>Try it on the preview workspace. Nothing to connect yet.</p>
+          <div className={styles.cta}>
+            <Link className="btn btn-primary btn-lg" href="/signup">
+              Create an account
+            </Link>
+            <Link className="btn btn-secondary btn-lg" href="/login">
+              Log in
+            </Link>
+          </div>
+        </div>
+      </section>
+
       <footer className={styles.footer}>
-        <span>Ember · Apache-2.0</span>
-        <ThemeSwitcher />
+        <div className={styles.footerBrand}>
+          <Wordmark size={20} />
+          <ThemeSwitcher />
+        </div>
+        <nav className={styles.footerCols} aria-label="Footer">
+          <div>
+            <h3>Product</h3>
+            <Link href="/signup">Create an account</Link>
+            <Link href="/login">Log in</Link>
+            <Link href="/device">CLI sign-in</Link>
+          </div>
+          <div>
+            <h3>Sources</h3>
+            {SOURCES.map((src) => (
+              <span key={src.id}>{src.name}</span>
+            ))}
+          </div>
+          <div>
+            <h3>Agents</h3>
+            <span>Claude Code</span>
+            <span>Codex</span>
+            <span>Cursor</span>
+          </div>
+          <div>
+            <h3>Project</h3>
+            <a href={REPO}>GitHub</a>
+            <a href={`${REPO}/blob/main/LICENSE`}>Apache-2.0</a>
+          </div>
+        </nav>
       </footer>
     </div>
   );

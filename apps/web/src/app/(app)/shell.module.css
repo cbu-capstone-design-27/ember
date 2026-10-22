@@ -87,6 +87,24 @@
   color: var(--text);
 }
 
+.sources {
+  display: grid;
+  gap: var(--space-0-5);
+  padding-top: var(--space-3);
+  border-top: var(--border-width) solid var(--border);
+}
+
+.sourcesHead {
+  padding: 0 var(--space-2) var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  text-decoration: none;
+}
+
+.sourcesHead:hover {
+  color: var(--text);
+}
+
 .footer {
   margin-top: auto;
   display: grid;
@@ -143,6 +161,7 @@
   }
 
   .workspace,
+  .sources,
   .footer {
     display: none;
   }
