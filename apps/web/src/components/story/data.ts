@@ -9,7 +9,7 @@ import { findInsights } from "../../lib/workspace/insights.ts";
 import { loadPreviewWorkspace } from "../../lib/workspace/load.ts";
 import { buildModel, changeId, nodeId, personName } from "../../lib/workspace/model.ts";
 import { plainSlackText } from "../../lib/workspace/text.ts";
-import { sourceSummaries } from "../../lib/workspace/summary.ts";
+import { activity, sourceSummaries, type ActivityItem } from "../../lib/workspace/summary.ts";
 import { ago } from "../../lib/workspace/time.ts";
 
 const SOURCES: SourceId[] = ["github", "jira", "slack"];
@@ -41,6 +41,8 @@ export interface SearchHit {
   source: SourceId;
   kind: "issue" | "pull_request" | "message";
   object_id: string;
+  /** How to show where it lives: the object id, or #channel for a message. */
+  label: string;
   title: string;
   /** With the matched words in **bold**, like ts_headline. */
   snippet: string;
@@ -99,24 +101,25 @@ export function driftStory(): Drift {
 }
 
 /** A plain word search over the preview records, shaped like the MCP server's hits. */
-export function searchPreview(question: string, k = 3): SearchHit[] {
+export function searchPreview(question: string, k = 3, order: SearchHit["kind"][] = ["issue", "pull_request", "message"]): SearchHit[] {
   const { model } = load();
   const words = question.toLowerCase().split(/\s+/).filter(Boolean);
   const bold = (text: string) => words.reduce((t, w) => t.replace(new RegExp(`(${w}\\w*)`, "ig"), "**$1**"), text);
   const has = (text: string) => words.every((w) => text.toLowerCase().includes(w));
   const hits: SearchHit[] = [];
   for (const i of model.issues.values()) {
-    const text = `${i.summary} ${i.description}`;
-    if (has(text)) hits.push({ source: "jira", kind: "issue", object_id: i.key, title: `${i.key} ${i.summary}`, snippet: bold(i.description) });
+    const text = `${i.key} ${i.summary} ${i.description}`;
+    if (has(text)) hits.push({ source: "jira", kind: "issue", object_id: i.key, label: i.key, title: `${i.key} ${i.summary}`, snippet: bold(i.description) });
   }
   for (const p of model.changes.values()) {
-    if (has(p.title)) hits.push({ source: "github", kind: "pull_request", object_id: `${model.ws.github!.org}/${changeId(p)}`, title: p.title, snippet: bold(p.title) });
+    if (has(p.title)) hits.push({ source: "github", kind: "pull_request", object_id: `${model.ws.github!.org}/${changeId(p)}`, label: changeId(p), title: p.title, snippet: bold(p.title) });
   }
   for (const m of model.messages.values()) {
     const text = plainSlackText(m.text, (uid) => model.byAccount.slack.get(uid)?.name);
-    if (has(text)) hits.push({ source: "slack", kind: "message", object_id: `${m.channel}/${m.ts}`, title: text.slice(0, 60), snippet: bold(text) });
+    const channel = model.ws.slack!.channels.find((c) => c.id === m.channel)?.name ?? m.channel;
+    if (has(text)) hits.push({ source: "slack", kind: "message", object_id: `${m.channel}/${m.ts}`, label: `#${channel}`, title: text.slice(0, 80), snippet: bold(text) });
   }
-  return hits.slice(0, k);
+  return hits.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind)).slice(0, k);
 }
 
 /** The drift ticket and everything one step from it, for the landing's live graph. */
@@ -167,5 +170,69 @@ export function connectStory(): ConnectStory {
       detail: details.get(id) ?? null,
       status: id === "teams" ? "coming" : details.get(id) ? "linked" : "no preview data",
     })),
+  };
+}
+
+/** A teammate's "why" question, as an agent answers it through Ember's MCP `search`. */
+export interface AgentAsk {
+  agent: "cursor" | "claude" | "codex";
+  who: string;
+  question: string;
+  /** What the agent passed to `search`. */
+  query: string;
+  /** How many records `search` returned (k = 8). */
+  count: number;
+  /** The best hit, as the agent would cite it. */
+  top: SearchHit;
+}
+
+export function agentAsks(): AgentAsk[] {
+  const asks: Array<Omit<AgentAsk, "count" | "top">> = [
+    { agent: "cursor", who: "Lena", question: "Why do we cap webhook retries at 8?", query: "webhook retries" },
+    { agent: "claude", who: "Priya", question: "What's blocking CHK-145?", query: "CHK-145 blocked" },
+    { agent: "codex", who: "Theo", question: "Why is checkout a single page now?", query: "single-page" },
+  ];
+  return asks.map((a) => {
+    // "Why" questions are answered by what people said, so messages rank first.
+    const hits = searchPreview(a.query, 8, ["message", "issue", "pull_request"]);
+    return { ...a, count: hits.length, top: hits[0] };
+  });
+}
+
+/** The landing's feature cards: small, real artifacts from the preview workspace. */
+export interface FeatureData {
+  timeline: Array<{ source: SourceId; when: string; text: string; hot?: boolean }>;
+  decision: { who: string; where: string; text: string; issues: string[] };
+  person: { name: string; title: string; accounts: Array<{ source: SourceId; handle: string }> };
+  activity: Array<Pick<ActivityItem, "id" | "source" | "actor" | "action" | "target"> & { when: string }>;
+  counts: { nodes: number; edges: number; subgraphs: string[] };
+}
+
+export function featureData(): FeatureData {
+  const { model, now } = load();
+  const drift = driftStory();
+  const issue = model.issues.get(DRIFT_KEY)!;
+  const moved = issue.history.at(-1)!;
+  const timeline: FeatureData["timeline"] = [
+    { source: "jira", when: ago(moved.at, now), text: `${issue.key} moved to ${moved.to}` },
+    { source: "github", when: drift.cards.github.when, text: `${drift.cards.github.where} merged` },
+    { source: "slack", when: drift.cards.slack.when, text: `${drift.cards.slack.where}: “${drift.cards.slack.text}”` },
+    { source: "jira", when: "now", text: `${issue.key} still ${issue.status}`, hot: true },
+  ];
+
+  const d = model.decisions.find((x) => x.statement.toLowerCase().includes("webhook")) ?? model.decisions[0];
+  const m = model.messages.get(d.ts)!;
+  const channel = model.ws.slack!.channels.find((c) => c.id === m.channel)!;
+
+  const p = model.people.get("priya") ?? [...model.people.values()][0];
+  const accounts = (["github", "jira", "slack"] as const).filter((src) => p.accounts[src]).map((src) => ({ source: src as SourceId, handle: p.accounts[src]! }));
+
+  const graph = buildGraph(model, now);
+  return {
+    timeline,
+    decision: { who: personName(model, "slack", m.user), where: `#${channel.name}`, text: d.statement, issues: d.issues },
+    person: { name: p.name, title: p.title, accounts },
+    activity: activity(model, 7).map((a) => ({ id: a.id, source: a.source, actor: a.actor, action: a.action, target: a.target, when: ago(a.at, now) })),
+    counts: { nodes: graph.nodes.length, edges: graph.edges.length, subgraphs: [...new Set(graph.nodes.map((n) => n.subgraph).filter((x): x is string => !!x))] },
   };
 }

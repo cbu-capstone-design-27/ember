@@ -117,7 +117,7 @@ export function AgentTabs({ question, hits }: { question: string; hits: SearchHi
                 <span className={styles.hitBody}>
                   <span className={styles.hitHead}>
                     <code>{h.kind}</code>
-                    <code className={styles.hitId}>{h.object_id}</code>
+                    <code className={styles.hitId}>{h.label}</code>
                   </span>
                   <span className={styles.hitSnippet}>
                     <Snippet text={h.snippet} />
