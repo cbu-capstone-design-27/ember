@@ -5,11 +5,13 @@ import type { ReactNode } from "react";
 import { SourceLogo, Wordmark } from "../../components/brand.tsx";
 import { ThemeSwitcher } from "../../components/theme.tsx";
 import styles from "./auth.module.css";
+import { Flame } from "./flame.tsx";
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <div className={styles.page}>
       <section className={styles.story} aria-hidden="true">
+        <Flame />
         <Link href="/" className={`${styles.storyBrand} on-dark`} tabIndex={-1}>
           <Wordmark size={30} />
         </Link>
