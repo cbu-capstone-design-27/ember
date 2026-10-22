@@ -1,51 +1,80 @@
 "use client";
 
 // The fire along the bottom of the log-in and sign-up panel, after the one on
-// ember-ai.dev: a low-res "Doom fire" where each cell copies the cell below it,
-// drifting in the wind and cooling at random, drawn pixelated on purpose.
+// ember-ai.dev: a low-res fire on a canvas, drawn pixelated on purpose.
 //
-// Kept quiet so it frames the panel instead of competing with it:
-// - more rows and color levels than the site's (64 and 32, against 40 and 20),
-//   so the pixels are smaller and the shading smoother
-// - the fuel along the bottom wanders slowly and leans to the right, so it
-//   burns as tongues of flame, not a wall, and the left stays low embers
-// - a few sparks drift up and fade above the flames
-// - the CSS adds a soft glow behind it (auth.module.css, .flame)
+// One fire across the whole width, with flame shapes in it:
+// - every column burns. Fuel is a steady bed plus a few hot spots that drift
+//   slowly across the panel and swell and fade, so the body stays continuous
+//   and the tallest flames move around
+// - each cell takes the heat of the cells below it, minus cooling read from a
+//   patchy noise map that scrolls up with the fire. Cool patches cut the heat
+//   into tongues that rise, narrow and break off at their tips. The map is
+//   fixed, not re-rolled per frame, so the motion is smooth and doesn't flicker
+// - wind is two slow waves that bend the flames left and right over time
+// - colors run deep red, orange, amber, yellow, to a pale core at the base
 
 import { useEffect, useRef } from "react";
 import styles from "./auth.module.css";
 
-const ROWS = 64;
-const LEVELS = 32;
-const FRAME_MS = 50; // ~20 fps, the site's retro cadence
-const MAX_SPARKS = 7;
-// Coal to flame tip; the panel is dark in both themes, so these don't follow the theme tokens.
+const ROWS = 80;
+const FRAME_MS = 40; // ~25 fps
+const SPOTS = 4; // drifting hot spots
+// Heat lost per row at the coolest patch of the noise map (heat runs 0..1). Sets the flame height.
+const COOLING = 0.13;
+// Cool to hottest; the panel is dark in both themes, so these don't follow the theme tokens.
+// Each stop is [heat, r, g, b, alpha]: the coolest heat fades out into the panel.
 const STOPS = [
-  [11, 8, 6],
-  [42, 10, 4],
-  [110, 20, 5],
-  [184, 50, 10],
-  [255, 106, 26],
-  [255, 168, 58],
+  [0.0, 60, 8, 2, 0],
+  [0.12, 110, 16, 4, 140],
+  [0.28, 190, 40, 8, 235],
+  [0.45, 240, 96, 16, 255],
+  [0.62, 255, 150, 34, 255],
+  [0.8, 255, 206, 84, 255],
+  [1.0, 255, 244, 200, 255],
 ];
+const LEVELS = 256;
+// Heat 0..1 to RGBA, one entry per level.
 const PALETTE = Array.from({ length: LEVELS }, (_, level) => {
-  const t = (level / (LEVELS - 1)) * (STOPS.length - 1);
-  const k = Math.min(STOPS.length - 2, Math.floor(t));
-  const f = t - k;
-  return STOPS[k].map((v, j) => Math.round(v + (STOPS[k + 1][j] - v) * f));
+  const h = level / (LEVELS - 1);
+  let k = 0;
+  while (k < STOPS.length - 2 && h > STOPS[k + 1][0]) k++;
+  const [h0, ...a] = STOPS[k];
+  const [h1, ...b] = STOPS[k + 1];
+  const f = Math.min(1, Math.max(0, (h - h0) / (h1 - h0)));
+  return a.map((v, j) => Math.round(v + (b[j] - v) * f));
 });
-// The coolest levels fade out, so the fire blends into the panel instead of sitting in a dark box.
-const ALPHA = Array.from({ length: LEVELS }, (_, level) => Math.round(255 * Math.min(1, level / 7)));
 
-interface Spark {
-  x: number;
-  y: number;
-  life: number; // frames left
+/** Smooth random patches, 0..1: white noise blurred a few times, stretched back to the full range. Tiles at the edges. */
+function noiseMap(width: number, rows: number) {
+  let map = Float32Array.from({ length: width * rows }, () => Math.random());
+  for (let pass = 0; pass < 3; pass++) {
+    const next = new Float32Array(map.length);
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < width; x++) {
+        let sum = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) sum += map[((y + dy + rows) % rows) * width + ((x + dx + width) % width)];
+        }
+        next[y * width + x] = sum / 9;
+      }
+    }
+    map = next;
+  }
+  let low = 1;
+  let high = 0;
+  for (const v of map) (low = Math.min(low, v)), (high = Math.max(high, v));
+  return map.map((v) => (v - low) / Math.max(1e-6, high - low));
 }
 
-/** How much fuel each column gets, from 0.4 at the left edge to 1 at the right. */
-function lean(x: number, width: number) {
-  return 0.4 + 0.6 * Math.pow(x / Math.max(1, width - 1), 1.4);
+/** A row's heat at fractional column x, softened with its neighbours. */
+function lerp(row: Float32Array, x: number) {
+  const n = row.length;
+  const at = (c: number) => row[Math.min(n - 1, Math.max(0, c))];
+  const c = Math.floor(x);
+  const f = x - c;
+  const blur = (c: number) => 0.25 * at(c - 1) + 0.5 * at(c) + 0.25 * at(c + 1);
+  return blur(c) * (1 - f) + blur(c + 1) * f;
 }
 
 export function Flame() {
@@ -57,10 +86,17 @@ export function Flame() {
     if (!canvas || !ctx) return;
 
     let width = 0;
-    let heat = new Uint8Array(0);
-    let fuel = new Float32Array(0);
+    let heat = new Float32Array(0);
+    let next = new Float32Array(0);
+    let noise = new Float32Array(0);
     let image: ImageData | null = null;
-    let sparks: Spark[] = [];
+    let tick = Math.floor(Math.random() * 1000); // so two page loads don't burn alike
+    // Each hot spot drifts at its own speed and swells on its own beat.
+    const spots = Array.from({ length: SPOTS }, (_, i) => ({
+      x: (i + Math.random()) / SPOTS,
+      speed: (Math.random() < 0.5 ? -1 : 1) * (0.0006 + Math.random() * 0.0008),
+      phase: Math.random() * Math.PI * 2,
+    }));
 
     function resize() {
       const { clientWidth, clientHeight } = canvas!;
@@ -70,69 +106,64 @@ export function Flame() {
       canvas!.width = width;
       canvas!.height = ROWS;
       image = ctx!.createImageData(width, ROWS);
-      heat = new Uint8Array(width * ROWS);
-      fuel = Float32Array.from({ length: width }, () => 0.6 + Math.random() * 0.4);
-      sparks = [];
+      heat = new Float32Array(width * ROWS);
+      next = new Float32Array(width * ROWS);
+      noise = noiseMap(width, ROWS);
     }
 
-    /** The bottom row is the fire's source: fuel wanders a little each frame, smoothed with its neighbours. */
+    /** The bottom two rows are the fuel: a steady bed everywhere, hotter under the drifting spots. */
     function feed() {
+      for (const s of spots) s.x = (s.x + s.speed + 1) % 1;
       for (let x = 0; x < width; x++) {
-        fuel[x] = Math.min(1, Math.max(0.35, fuel[x] + (Math.random() - 0.5) * 0.12));
+        const u = x / width;
+        let fuel = 0.56 + 0.05 * Math.sin(u * 23 + tick * 0.031);
+        for (const s of spots) {
+          const d = Math.min(Math.abs(u - s.x), 1 - Math.abs(u - s.x)); // wraps, so spots cross the edges smoothly
+          fuel += (0.32 + 0.12 * Math.sin(tick * 0.02 + s.phase)) * Math.exp(-(d * d) / 0.006);
+        }
+        heat[(ROWS - 1) * width + x] = heat[(ROWS - 2) * width + x] = Math.min(1, fuel);
       }
-      for (let x = 1; x < width - 1; x++) fuel[x] = (fuel[x - 1] + 2 * fuel[x] + fuel[x + 1]) / 4;
-      const base = (ROWS - 1) * width;
-      for (let x = 0; x < width; x++) heat[base + x] = Math.round((LEVELS - 1) * fuel[x] * lean(x, width));
     }
 
     function step() {
+      tick += 1;
       feed();
-      for (let i = width; i < width * ROWS; i++) {
-        const r = Math.floor(Math.random() * 4);
-        const to = i - width - r + 1;
-        if (to >= 0) heat[to] = Math.max(0, heat[i] - (r & 1));
+      // Wind, in cells per row: a slow sway plus a slower drift.
+      const wind = 0.22 * Math.sin(tick * 0.011) + 0.12 * Math.sin(tick * 0.0043 + 1.7);
+      const scroll = tick % ROWS; // the noise map moves up one row per frame, with the flames
+      for (let y = 0; y < ROWS - 2; y++) {
+        const ny = ((y + scroll) % ROWS) * width;
+        const row = heat.subarray((y + 1) * width, (y + 2) * width);
+        const two = heat.subarray((y + 2) * width, (y + 3) * width);
+        for (let x = 0; x < width; x++) {
+          // Heat from the two rows below, each shifted by the wind.
+          const h = 0.55 * lerp(row, x - wind) + 0.45 * lerp(two, x - 2 * wind);
+          const n = noise[ny + x];
+          next[y * width + x] = Math.max(0, h - COOLING * n * n);
+        }
       }
-      // Sparks leave the flames' upper edge, mostly where the fire is strongest, and drift up.
-      if (sparks.length < MAX_SPARKS && Math.random() < 0.18) {
-        const x = Math.floor(width * (0.3 + 0.7 * Math.sqrt(Math.random())));
-        sparks.push({ x, y: Math.floor(ROWS * (0.45 + Math.random() * 0.2)), life: 18 + Math.floor(Math.random() * 18) });
-      }
-      for (const spark of sparks) {
-        spark.y -= 1;
-        spark.x += Math.random() < 0.5 ? -1 : Math.random() < 0.3 ? 1 : 0; // the same leftward wind as the fire
-        spark.life -= 1;
-      }
-      sparks = sparks.filter((s) => s.life > 0 && s.y >= 0 && s.x >= 0 && s.x < width);
+      for (let i = 0; i < (ROWS - 2) * width; i++) heat[i] = next[i];
     }
 
     function draw() {
       if (!image) return;
       const data = image.data;
       for (let i = 0; i < heat.length; i++) {
-        const [r, g, b] = PALETTE[heat[i]];
+        const c = PALETTE[Math.round(heat[i] * (LEVELS - 1))];
         const o = i * 4;
-        data[o] = r;
-        data[o + 1] = g;
-        data[o + 2] = b;
-        data[o + 3] = ALPHA[heat[i]];
-      }
-      for (const spark of sparks) {
-        const o = (spark.y * width + spark.x) * 4;
-        const [r, g, b] = PALETTE[LEVELS - 1];
-        data[o] = r;
-        data[o + 1] = g;
-        data[o + 2] = b;
-        data[o + 3] = Math.round(255 * Math.min(1, spark.life / 12)); // fade out as it dies
+        data[o] = c[0];
+        data[o + 1] = c[1];
+        data[o + 2] = c[2];
+        data[o + 3] = c[3];
       }
       ctx!.putImageData(image, 0, 0);
     }
 
-    // Reduced motion: let the fire rise once, then draw one still frame (no sparks).
+    // Reduced motion: let the fire rise once, then draw one still frame.
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
     function still() {
       if (!width) return;
       for (let i = 0; i < ROWS * 2; i++) step();
-      sparks = [];
       draw();
     }
 
@@ -144,23 +175,30 @@ export function Flame() {
     observer.observe(canvas);
 
     let frame = 0;
+    let last = 0;
+    const loop = (t: number) => {
+      if (width && t - last > FRAME_MS) {
+        step();
+        draw();
+        last = t;
+      }
+      frame = requestAnimationFrame(loop);
+    };
+    // Paused while the tab is hidden.
+    const onVisibility = () => {
+      cancelAnimationFrame(frame);
+      if (document.visibilityState === "visible") frame = requestAnimationFrame(loop);
+    };
     if (reduced) {
       still();
     } else {
-      let last = 0;
-      const loop = (t: number) => {
-        if (width && t - last > FRAME_MS) {
-          step();
-          draw();
-          last = t;
-        }
-        frame = requestAnimationFrame(loop);
-      };
-      frame = requestAnimationFrame(loop);
+      onVisibility();
+      document.addEventListener("visibilitychange", onVisibility);
     }
 
     return () => {
       cancelAnimationFrame(frame);
+      document.removeEventListener("visibilitychange", onVisibility);
       observer.disconnect();
     };
   }, []);
