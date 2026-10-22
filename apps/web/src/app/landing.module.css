@@ -1,5 +1,6 @@
-/* Landing: a short centered hero, the product itself in a frame, then two
-   sections that each show one concrete thing. */
+/* Landing: a centred hero with logo tiles drifting around it, the product in
+   a frame, then one concrete artifact per section, a closing band over the
+   fire, and a real footer. */
 
 .page {
   min-height: 100vh;
@@ -17,19 +18,26 @@
 
 .header {
   position: relative;
-  z-index: 1;
-  display: flex;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   height: var(--space-16);
 }
 
-.headerActions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
+.brand {
+  justify-self: start;
+  color: var(--text);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
 }
 
+.headerNav {
+  display: flex;
+  gap: var(--space-6);
+}
+
+.headerNav a,
 .headerLink {
   font-size: var(--text-sm);
   color: var(--text-2);
@@ -37,8 +45,16 @@
   transition: color var(--duration-fast) var(--ease-out);
 }
 
+.headerNav a:hover,
 .headerLink:hover {
   color: var(--text);
+}
+
+.headerActions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
 }
 
 /* --- hero --------------------------------------------------------------- */
@@ -61,6 +77,17 @@
   pointer-events: none;
 }
 
+/* The drifting logo tiles: a box the size of the hero, behind its text. */
+.tiles {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: min(100%, var(--page-max));
+  height: 38rem;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
 .hero {
   position: relative;
   display: grid;
@@ -68,7 +95,7 @@
   gap: var(--space-6);
   max-width: 52rem;
   margin: 0 auto;
-  padding: var(--space-24) var(--space-8) var(--space-16);
+  padding: var(--space-24) var(--space-8) var(--space-20);
   text-align: center;
 }
 
@@ -80,7 +107,7 @@
 }
 
 .lede {
-  max-width: 38rem;
+  max-width: 40rem;
   font-size: var(--text-lg);
   line-height: var(--leading-relaxed);
   color: var(--text-2);
@@ -117,7 +144,6 @@
   padding: 0 var(--space-4);
   border-bottom: var(--border-width) solid var(--border);
   background: var(--surface);
-  color: var(--text);
   font-weight: var(--weight-medium);
 }
 
@@ -246,7 +272,6 @@
 }
 
 .frameTitle {
-  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -271,6 +296,7 @@
   display: grid;
   gap: var(--space-8);
   padding-top: var(--space-32);
+  scroll-margin-top: var(--space-8);
 }
 
 .sectionTitle {
@@ -278,6 +304,31 @@
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   letter-spacing: var(--tracking-heading);
+}
+
+.sectionLede {
+  max-width: var(--measure);
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  color: var(--text-2);
+}
+
+.note {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+
+/* Text on one side, the artifact on the other. */
+.split {
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  align-items: center;
+  gap: var(--space-16);
+}
+
+.splitText {
+  display: grid;
+  gap: var(--space-5);
+  align-content: center;
 }
 
 /* The sources, one cell each. */
@@ -290,102 +341,272 @@
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
+  overflow: hidden;
 }
 
 .sources li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-3);
   padding: var(--space-5);
   border-left: var(--border-width) solid var(--border);
+  transition: background-color var(--duration) var(--ease-out);
 }
 
 .sources li:first-child {
   border-left: 0;
 }
 
+.sources li:hover {
+  background: var(--surface-2);
+}
+
+.sources li[data-coming="true"] > span:first-child {
+  opacity: 0.55;
+}
+
 .sources li > span:last-child {
   display: grid;
-  gap: var(--space-0-5);
+  gap: var(--space-1);
   min-width: 0;
 }
 
 .sourceName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.coming {
+  padding: 0 var(--space-1-5);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-regular);
+  color: var(--text-3);
 }
 
 .sources code {
   font-size: var(--text-xs);
+  line-height: var(--leading-snug);
   color: var(--text-3);
-  white-space: nowrap;
 }
 
-/* A terminal-style panel of one ticket's edges in the graph. */
-.terminal {
-  max-width: 48rem;
+.facts {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-5) 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-8);
+  border-top: var(--border-width) dashed var(--border);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.facts li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.facts li::before {
+  content: "";
+  width: var(--space-2);
+  height: var(--space-1);
+  border-left: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(-45deg) translateY(-1px);
+}
+
+.facts code {
+  color: var(--text);
+}
+
+/* The kinds of drift Ember looks for. */
+.kinds {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.kinds li {
+  height: var(--control-sm);
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.driftStage {
+  display: grid;
+  justify-items: center;
+  padding: var(--space-8) 0;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(60% 50% at 50% 100%, var(--accent-soft), transparent 70%),
+    var(--surface);
+}
+
+/* The live graph. */
+.graphPanel {
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
   overflow: hidden;
 }
 
-.terminalBar {
+.graphBar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   height: var(--control);
   padding: 0 var(--space-4);
   border-bottom: var(--border-width) solid var(--border);
-  color: var(--text-3);
   font-size: var(--text-xs);
+  color: var(--text-3);
 }
 
-.terminalBody {
+.legend {
   list-style: none;
   margin: 0;
-  padding: var(--space-3) 0;
-  font-size: var(--text-sm);
-}
-
-.terminalBody li {
-  display: grid;
-  grid-template-columns: var(--space-4) 9rem 7rem minmax(0, 1fr);
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-1-5) var(--space-4);
-}
-
-.edgeDir,
-.edgeType2 {
-  color: var(--text-3);
-}
-
-.edgeType {
-  color: var(--text);
-}
-
-.edgeLabel {
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  border-top: var(--border-width) solid var(--border);
+  font-size: var(--text-xs);
   color: var(--text-2);
-  white-space: nowrap;
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.legend li::before {
+  content: "";
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  border: 1.5px solid var(--c);
+}
+
+/* --- closing band over the fire ---------------------------------------- */
+
+.closing {
+  position: relative;
+  margin-top: var(--space-32);
+  min-height: 34rem;
+  display: grid;
+  place-items: start center;
   overflow: hidden;
-  text-overflow: ellipsis;
+  background: var(--bg);
+  border-top: var(--border-width) solid var(--border);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+/* The fire canvas positions itself at the bottom of this box (auth.module.css .flame). */
+.closingFire {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.closingFire canvas {
+  height: 45%;
+}
+
+.closingBody {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-5);
+  padding: var(--space-20) var(--space-8) 0;
+  text-align: center;
+}
+
+.closingTitle {
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-heading);
+}
+
+.closingBody p {
+  font-size: var(--text-md);
+  color: var(--text-2);
 }
 
 /* --- footer ------------------------------------------------------------- */
 
 .footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-top: var(--space-32);
-  padding-top: var(--space-5);
-  padding-bottom: var(--space-5);
-  border-top: var(--border-width) solid var(--border);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--space-12);
+  padding-top: var(--space-12);
+  padding-bottom: var(--space-16);
   font-size: var(--text-sm);
+}
+
+.footerBrand {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: var(--space-5);
+}
+
+.footerCols {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-8);
+}
+
+.footerCols > div {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
   color: var(--text-3);
 }
 
-@media (max-width: 1024px) {
+.footerCols h3 {
+  margin-bottom: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.footerCols a {
+  color: var(--text-2);
+  text-decoration: none;
+  justify-self: start;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.footerCols a:hover {
+  color: var(--text);
+}
+
+@media (max-width: 1100px) {
+  .tiles {
+    display: none;
+  }
+
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-8);
+  }
+
   .sources {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -407,7 +628,15 @@
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 760px) {
+  .header {
+    grid-template-columns: 1fr auto;
+  }
+
+  .headerNav {
+    display: none;
+  }
+
   .header,
   .section,
   .footer {
@@ -455,7 +684,8 @@
     padding-top: var(--space-20);
   }
 
-  .sectionTitle {
+  .sectionTitle,
+  .closingTitle {
     font-size: var(--text-2xl);
   }
 
@@ -473,19 +703,37 @@
     border-top: 0;
   }
 
-  .terminalBody li {
-    grid-template-columns: var(--space-4) minmax(0, 1fr);
+  /* The 440px drift drawing, scaled to fit. */
+  .driftStage {
+    overflow: hidden;
+    height: 25rem;
   }
 
-  .edgeType2 {
-    display: none;
+  .driftStage {
+    justify-items: start;
   }
 
-  .edgeLabel {
-    grid-column: 2;
+  .driftStage > * {
+    transform: scale(0.74);
+    transform-origin: top left;
+    margin-left: calc(50% - 163px); /* half of 440px × 0.74 */
+  }
+
+  .closing {
+    margin-top: var(--space-20);
+    min-height: 28rem;
+  }
+
+  .closingBody {
+    padding-top: var(--space-16);
   }
 
   .footer {
-    margin-top: var(--space-20);
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-8);
+  }
+
+  .footerCols {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

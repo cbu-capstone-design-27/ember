@@ -1,0 +1,365 @@
+/* The animated stories: the drift (landing, log-in), the sources linking up
+   (sign-up), sparks over the fire, floating logo tiles. Motion is slow and
+   eased; reduced motion turns it off (globals.css), and PauseOffscreen pauses
+   CSS animations off screen (globals.css). */
+
+/* --- canvases: a fixed 440×400 drawing that scales with its box ----------- */
+
+.drift,
+.connect {
+  position: relative;
+  width: 440px;
+  height: 400px;
+  transform-origin: top left;
+}
+
+.links {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.link,
+.linkIdle {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 900ms var(--ease-out);
+}
+
+.link[data-on="true"] {
+  stroke-dashoffset: 0;
+}
+
+.linkHot {
+  stroke: var(--accent);
+}
+
+.linkIdle {
+  stroke-dasharray: 0.02 0.02;
+  stroke-dashoffset: 0;
+  opacity: 0.6;
+}
+
+.drift {
+  height: 460px;
+}
+
+/* Everything fades out together when a loop restarts. */
+.slot {
+  position: absolute;
+  width: 270px;
+  opacity: 0;
+  transform: translateY(var(--space-2));
+  transition:
+    opacity 700ms var(--ease-out),
+    transform 700ms var(--ease-out);
+}
+
+.slot[data-on="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+.flagSlot {
+  width: 300px;
+}
+
+/* --- a record card ----------------------------------------------------- */
+
+.card {
+  display: grid;
+  gap: var(--space-1-5);
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  transition: border-color 700ms var(--ease-out);
+}
+
+.card[data-hot="true"] {
+  border-color: var(--accent-border);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+
+.cardWhen {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.cardText {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cardText b {
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.cardState {
+  justify-self: start;
+  padding: 0 var(--space-2);
+  height: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  transition:
+    color 700ms var(--ease-out),
+    border-color 700ms var(--ease-out);
+}
+
+.card[data-hot="true"] .cardState {
+  color: var(--accent-text);
+  border-color: var(--accent-border);
+}
+
+/* The insight Ember raises. */
+.flag {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--accent-border);
+  border-radius: var(--radius-button);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  box-shadow: 0 0 0 var(--space-1) var(--accent-soft), var(--shadow-lg);
+}
+
+.flag p {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.flag span {
+  font-size: var(--text-xs);
+  color: var(--accent-text);
+}
+
+/* --- sources linking up (sign-up) -------------------------------------- */
+
+.tile,
+.hub {
+  position: absolute;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  transform: translate(-50%, -50%);
+}
+
+.tile > span:first-child,
+.hub > svg {
+  box-sizing: content-box;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  transition:
+    border-color 700ms var(--ease-out),
+    opacity 700ms var(--ease-out);
+}
+
+.tile code,
+.hub code {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  transition: color 700ms var(--ease-out);
+}
+
+.tile[data-idle="true"] {
+  opacity: 0.45;
+}
+
+.tile[data-on="true"] > span:first-child {
+  border-color: var(--border-strong);
+}
+
+.tile[data-on="true"] code {
+  color: var(--text-2);
+}
+
+.hub > svg {
+  padding: var(--space-4);
+}
+
+.hub[data-on="true"] > svg {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 var(--space-1) var(--accent-soft);
+}
+
+.hub[data-on="true"] code {
+  color: var(--text);
+}
+
+/* --- sparks over the fire ---------------------------------------------- */
+
+.sparks {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sparks span {
+  position: absolute;
+  bottom: 18%;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px 1px rgba(249, 116, 50, 0.6);
+  opacity: 0;
+  animation: rise linear infinite;
+}
+
+@keyframes rise {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  12% {
+    opacity: 0.9;
+  }
+  70% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--drift), -70vh);
+  }
+}
+
+/* --- floating logo tiles (landing hero) ------------------------------- */
+
+.floatTile {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: var(--tile, 3.5rem);
+  height: var(--tile, 3.5rem);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  animation: drift-y 12s var(--ease-in-out) infinite alternate;
+}
+
+@keyframes drift-y {
+  from {
+    transform: translate3d(0, calc(-1 * var(--space-2)), 0) rotate(var(--tilt, 0deg));
+  }
+  to {
+    transform: translate3d(0, var(--space-2), 0) rotate(calc(var(--tilt, 0deg) * -0.6));
+  }
+}
+
+/* --- the landing's live graph -------------------------------------------- */
+
+.miniGraph {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1160 / 460;
+  touch-action: none;
+  user-select: none;
+}
+
+.miniEdge {
+  stroke: var(--graph-edge);
+  stroke-width: 1;
+  transition: stroke var(--duration) var(--ease-out), opacity var(--duration) var(--ease-out);
+}
+
+.miniEdge[data-lit] {
+  stroke: var(--graph-edge-strong);
+}
+
+.miniEdge[data-dim] {
+  opacity: 0.35;
+}
+
+.miniNode {
+  cursor: grab;
+  transition: opacity var(--duration) var(--ease-out);
+}
+
+.miniNode:active {
+  cursor: grabbing;
+}
+
+.miniNode circle:nth-of-type(2) {
+  fill: var(--surface);
+  stroke: var(--c);
+  stroke-width: 1.5;
+}
+
+.miniNode[data-focus="true"] circle:nth-of-type(2) {
+  fill: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.miniHalo {
+  fill: none;
+  stroke: var(--c);
+  opacity: 0;
+  transition: opacity var(--duration) var(--ease-out);
+}
+
+.miniNode:hover .miniHalo,
+.miniNode[data-focus="true"] .miniHalo {
+  opacity: 0.4;
+}
+
+.miniNode[data-focus="true"] .miniHalo {
+  stroke: var(--accent);
+}
+
+.miniNode[data-dim] {
+  opacity: 0.25;
+}
+
+.miniNode text {
+  font-size: var(--text-2xs);
+  fill: var(--text-2);
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.miniNode[data-focus="true"] text {
+  fill: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+/* On a phone the graph keeps a readable height and crops its sides. */
+@media (max-width: 760px) {
+  .miniGraph {
+    aspect-ratio: auto;
+    height: 24rem;
+  }
+}

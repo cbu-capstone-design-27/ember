@@ -4,11 +4,12 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Avatar } from "../../components/avatar.tsx";
-import { Wordmark } from "../../components/brand.tsx";
+import { SourceLogo, Wordmark } from "../../components/brand.tsx";
 import { NavLinks, SignOutButton } from "../../components/nav.tsx";
 import { PreviewProvider } from "../../components/preview/store.tsx";
 import { ThemeSwitcher } from "../../components/theme.tsx";
 import { requireOnboardedUser } from "../../lib/session.ts";
+import { sourceInfo } from "../../lib/sources.ts";
 import { loadPreviewWorkspace } from "../../lib/workspace/load.ts";
 import styles from "./shell.module.css";
 
@@ -29,6 +30,18 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           </p>
 
           <NavLinks className={styles.nav} linkClassName={styles.navLink} />
+
+          <div className={styles.sources}>
+            <Link href="/settings#sources" className={styles.sourcesHead}>
+              Sources
+            </Link>
+            {user.sources.map((id) => (
+              <Link key={id} href="/settings#sources" className={styles.navLink}>
+                <SourceLogo source={id} size={14} />
+                <span>{sourceInfo(id).name}</span>
+              </Link>
+            ))}
+          </div>
 
           <div className={styles.footer}>
             <div className={styles.user} title={user.email}>

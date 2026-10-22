@@ -85,6 +85,7 @@
   --duration: 180ms;
   --duration-slow: 280ms;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
 
   --z-raised: 5;
   --z-sticky: 20;
@@ -119,12 +120,6 @@
   --ink-text: #fafafa;
   --ink-text-2: #a1a1aa;
   --ink-line: #1d1d20;
-
-  --src-github: #e6edf3;
-  --src-gitlab: #fc6d26;
-  --src-jira: #579dff;
-  --src-slack: #e0a3e8;
-  --src-teams: #8b8ff0;
 
   /* Ontology node types (docs/graph-schema.md): small, muted identifying
      colors, used in the graph only. */
@@ -183,11 +178,6 @@
   --accent-border: rgba(226, 90, 22, 0.3);
   --on-accent: #ffffff;
 
-  --src-github: #24292f;
-  --src-jira: #0c66e4;
-  --src-slack: #611f69;
-  --src-teams: #5b5fc7;
-
   --node-workitem: #4f6a9c;
   --node-change: #4f7d5b;
   --node-message: #7563a0;
@@ -215,6 +205,29 @@
   --shadow-lg: 0 24px 64px -24px rgba(9, 9, 11, 0.18);
   --scrim: rgba(9, 9, 11, 0.24);
   --selection: rgba(226, 90, 22, 0.2);
+}
+
+/* Always dark, whatever the theme: the log-in panel and the landing's fire band. */
+.dark-scope {
+  color-scheme: dark;
+  --bg: #09090b;
+  --surface: #0f0f12;
+  --surface-2: #141417;
+  --surface-3: #1b1b1f;
+  --border: #1d1d20;
+  --border-strong: #2a2a2f;
+  --text: #fafafa;
+  --text-2: #a1a1aa;
+  --text-3: #82828c;
+  --primary: #fafafa;
+  --primary-hover: #e4e4e7;
+  --on-primary: #09090b;
+  --accent: #f97432;
+  --accent-text: #fb8a52;
+  --accent-soft: rgba(249, 116, 50, 0.1);
+  --accent-border: rgba(249, 116, 50, 0.32);
+  --shadow-lg: 0 24px 64px -24px rgba(0, 0, 0, 0.8);
+  color: var(--text);
 }
 
 /* --- base --------------------------------------------------------------- */
@@ -691,6 +704,13 @@ code,
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   color: var(--text-3);
+}
+
+/* Set by PauseOffscreen (components/story/in-view.tsx) while out of view. */
+[data-paused="true"] *,
+[data-paused="true"] *::before,
+[data-paused="true"] *::after {
+  animation-play-state: paused !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
