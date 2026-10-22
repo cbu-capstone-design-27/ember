@@ -341,7 +341,7 @@
 }
 
 .miniNode text {
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
   fill: var(--text-2);
   text-anchor: middle;
   paint-order: stroke;

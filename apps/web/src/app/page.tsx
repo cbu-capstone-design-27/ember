@@ -4,7 +4,7 @@ import { EmberMark, SourceLogo, Wordmark } from "../components/brand.tsx";
 import { DashboardIcon, GraphIcon, SettingsIcon } from "../components/icons.tsx";
 import { ClaudeLogo, CodexLogo, CursorLogo, GitHubLogo, GitLabLogo, JiraLogo, SlackLogo, TeamsLogo } from "../components/logos/index.ts";
 import { AgentTabs } from "../components/story/agent-tabs.tsx";
-import { driftStory, miniGraph, searchPreview } from "../components/story/data.ts";
+import { agentAsks, connectStory, driftStory, featureData, miniGraph, searchPreview } from "../components/story/data.ts";
 import { DriftStory } from "../components/story/drift.tsx";
 import { PauseOffscreen, WhenVisible } from "../components/story/in-view.tsx";
 import { MiniGraphView } from "../components/story/mini-graph.tsx";
@@ -20,6 +20,7 @@ import { buildModel } from "../lib/workspace/model.ts";
 import { sourceSummaries, stats } from "../lib/workspace/summary.ts";
 import { ago } from "../lib/workspace/time.ts";
 import { Flame } from "./(auth)/flame.tsx";
+import { AgentStack, Architecture, BeforeAfter, Faq, FeatureGrid, HowItWorks } from "./landing-sections.tsx";
 import styles from "./landing.module.css";
 
 const REPO = "https://github.com/cbu-capstone-design-27/ember";
@@ -59,6 +60,9 @@ export default async function Home() {
   const s = stats(model, insights);
   const summaries = sourceSummaries(model, PREVIEW);
   const graph = miniGraph();
+  const features = featureData();
+  const connect = connectStory();
+  const hits = searchPreview(QUESTION);
   const types = [...new Set(graph.nodes.map((n) => n.type))];
 
   const figures = [
@@ -75,10 +79,10 @@ export default async function Home() {
           <Wordmark size={22} />
         </Link>
         <nav className={styles.headerNav} aria-label="Sections">
-          <a href="#sources">Sources</a>
-          <a href="#agents">Agents</a>
-          <a href="#drift">Drift</a>
-          <a href="#graph">Graph</a>
+          <a href="#how">How it works</a>
+          <a href="#features">Features</a>
+          <a href="#architecture">Architecture</a>
+          <a href="#faq">FAQ</a>
         </nav>
         <nav className={styles.headerActions} aria-label="Account">
           <Link className={styles.headerLink} href="/login">
@@ -113,10 +117,10 @@ export default async function Home() {
           </PauseOffscreen>
 
           <section className={styles.hero}>
-            <h1 className={styles.title}>See where GitHub, Jira and Slack disagree.</h1>
+            <h1 className={styles.title}>The why behind your code, for every coding agent.</h1>
             <p className={styles.lede}>
-              Ember links pull requests, tickets and threads into one graph, flags work whose status doesn&apos;t
-              match, and lets your coding agents search all of it.
+              Ember turns your team&apos;s GitHub, Jira and Slack history into a knowledge graph of decisions, tickets,
+              people and code, and serves it to Claude Code, Codex and Cursor over MCP.
             </p>
             <div className={styles.cta}>
               <Link className="btn btn-primary btn-lg" href="/signup">
@@ -128,60 +132,7 @@ export default async function Home() {
             </div>
           </section>
 
-          {/* The dashboard, drawn from the preview workspace. Decorative here: the real one is behind sign-in. */}
-          <div className={styles.frame} aria-hidden="true">
-            <div className={styles.frameBar}>
-              <EmberMark size={14} />
-              <span>{model.ws.organization.name}</span>
-              <code>/dashboard</code>
-            </div>
-            <div className={styles.frameBody}>
-              <div className={styles.frameSide}>
-                <span className={styles.frameNav} data-active="true">
-                  <DashboardIcon /> Dashboard
-                </span>
-                <span className={styles.frameNav}>
-                  <GraphIcon /> Knowledge graph
-                </span>
-                <span className={styles.frameNav}>
-                  <SettingsIcon /> Settings
-                </span>
-                <span className={styles.frameSources}>
-                  {summaries.map((src) => (
-                    <span key={src.id}>
-                      <SourceLogo source={src.id} size={13} />
-                      {SOURCES.find((x) => x.id === src.id)!.name}
-                    </span>
-                  ))}
-                </span>
-              </div>
-              <div className={styles.frameMain}>
-                <div className={styles.frameFigures}>
-                  {figures.map((f) => (
-                    <span key={f.label} data-hot={f.hot}>
-                      <span>{f.label}</span>
-                      <b>{f.value}</b>
-                    </span>
-                  ))}
-                </div>
-                <ol className={styles.frameList}>
-                  {insights.slice(0, 6).map((i) => (
-                    <li key={i.id} data-severity={i.severity}>
-                      <span className={styles.frameKind}>{INSIGHT_KINDS[i.kind].label}</span>
-                      <span className={styles.frameTitle}>{i.title}</span>
-                      <code className={styles.frameKeys}>
-                        {i.evidence
-                          .slice(0, 2)
-                          .map((e) => e.label)
-                          .join("  ")}
-                      </code>
-                      <code className={styles.frameTime}>{ago(i.at, now)}</code>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            </div>
-          </div>
+          <AgentStack asks={agentAsks()} />
         </div>
 
         <section id="sources" className={styles.section}>
@@ -209,6 +160,16 @@ export default async function Home() {
           </ul>
         </section>
 
+        <section id="how" className={styles.section}>
+          <h2 className={styles.sectionTitle}>Running in three steps</h2>
+          <HowItWorks
+            org={model.ws.organization.name}
+            tenant={model.ws.organization.tenant}
+            people={model.ws.people.map((p) => p.name)}
+            sources={connect.sources.map((src) => ({ id: src.id, name: SOURCES.find((x) => x.id === src.id)!.name, status: src.status }))}
+          />
+        </section>
+
         <section id="agents" className={`${styles.section} ${styles.split}`}>
           <div className={styles.splitText}>
             <h2 className={styles.sectionTitle}>Works in your agent</h2>
@@ -220,7 +181,12 @@ export default async function Home() {
               <code>apps/mcp</code> is a prototype (EMBER-79). The hits on the right come from the preview workspace.
             </p>
           </div>
-          <AgentTabs question={QUESTION} hits={searchPreview(QUESTION)} />
+          <AgentTabs question={QUESTION} hits={hits} />
+        </section>
+
+        <section id="features" className={styles.section}>
+          <h2 className={styles.sectionTitle}>Context your agent can actually use</h2>
+          <FeatureGrid data={features} hit={hits[0]} />
         </section>
 
         <section id="drift" className={`${styles.section} ${styles.split}`}>
@@ -243,22 +209,114 @@ export default async function Home() {
           </div>
         </section>
 
+        <div className={styles.frameWrap}>
+            {/* The dashboard, drawn from the preview workspace. Decorative here: the real one is behind sign-in. */}
+            <div className={styles.frame} aria-hidden="true">
+              <div className={styles.frameBar}>
+                <EmberMark size={14} />
+                <span>{model.ws.organization.name}</span>
+                <code>/dashboard</code>
+              </div>
+              <div className={styles.frameBody}>
+                <div className={styles.frameSide}>
+                  <span className={styles.frameNav} data-active="true">
+                    <DashboardIcon /> Dashboard
+                  </span>
+                  <span className={styles.frameNav}>
+                    <GraphIcon /> Knowledge graph
+                  </span>
+                  <span className={styles.frameNav}>
+                    <SettingsIcon /> Settings
+                  </span>
+                  <span className={styles.frameSources}>
+                    {summaries.map((src) => (
+                      <span key={src.id}>
+                        <SourceLogo source={src.id} size={13} />
+                        {SOURCES.find((x) => x.id === src.id)!.name}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+                <div className={styles.frameMain}>
+                  <div className={styles.frameFigures}>
+                    {figures.map((f) => (
+                      <span key={f.label} data-hot={f.hot}>
+                        <span>{f.label}</span>
+                        <b>{f.value}</b>
+                      </span>
+                    ))}
+                  </div>
+                  <ol className={styles.frameList}>
+                    {insights.slice(0, 6).map((i) => (
+                      <li key={i.id} data-severity={i.severity}>
+                        <span className={styles.frameKind}>{INSIGHT_KINDS[i.kind].label}</span>
+                        <span className={styles.frameTitle}>{i.title}</span>
+                        <code className={styles.frameKeys}>
+                          {i.evidence
+                            .slice(0, 2)
+                            .map((e) => e.label)
+                            .join("  ")}
+                        </code>
+                        <code className={styles.frameTime}>{ago(i.at, now)}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+            </div>
+        </div>
+
         <section id="graph" className={styles.section}>
           <h2 className={styles.sectionTitle}>One graph under all of it</h2>
-          <div className={styles.graphPanel}>
-            <div className={styles.graphBar}>
-              <code>{model.ws.organization.tenant} / CHK-131</code>
-              <span>Drag a node</span>
+          <div className={styles.graphRow}>
+            <div className={styles.graphPanel}>
+              <div className={styles.graphBar}>
+                <code>{model.ws.organization.tenant} / CHK-131</code>
+                <code>
+                  {features.counts.nodes} nodes · {features.counts.edges} edges
+                </code>
+              </div>
+              <MiniGraphView graph={graph} />
+              <ul className={styles.legend}>
+                {types.map((t) => (
+                  <li key={t} style={{ ["--c" as string]: `var(--node-${t.toLowerCase()})` }}>
+                    {NODE_TYPES[t].plural}
+                  </li>
+                ))}
+              </ul>
             </div>
-            <MiniGraphView graph={graph} />
-            <ul className={styles.legend}>
-              {types.map((t) => (
-                <li key={t} style={{ ["--c" as string]: `var(--node-${t.toLowerCase()})` }}>
-                  {NODE_TYPES[t].plural}
-                </li>
-              ))}
-            </ul>
+            <div className={styles.stream}>
+              <div className={styles.graphBar}>
+                <span>Activity</span>
+              </div>
+              <ol>
+                {features.activity.map((a) => (
+                  <li key={a.id}>
+                    <SourceLogo source={a.source} size={13} />
+                    <span>
+                      <b>{a.actor}</b> {a.action} <code>{a.target}</code>
+                    </span>
+                    <code className={styles.streamWhen}>{a.when}</code>
+                  </li>
+                ))}
+              </ol>
+            </div>
           </div>
+        </section>
+
+        <section id="architecture" className={styles.section}>
+          <h2 className={styles.sectionTitle}>How the graph is built</h2>
+          <Architecture />
+        </section>
+
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>What changes</h2>
+          <BeforeAfter />
+        </section>
+
+        <section id="faq" className={styles.section}>
+          <h2 className={styles.sectionTitle}>Questions</h2>
+          <Faq />
         </section>
       </main>
 
@@ -268,7 +326,7 @@ export default async function Home() {
           <Sparks />
         </WhenVisible>
         <div className={styles.closingBody}>
-          <h2 className={styles.closingTitle}>Find the drift before standup does.</h2>
+          <h2 className={styles.closingTitle}>Give your agent the why.</h2>
           <p>Try it on the preview workspace. Nothing to connect yet.</p>
           <div className={styles.cta}>
             <Link className="btn btn-primary btn-lg" href="/signup">
