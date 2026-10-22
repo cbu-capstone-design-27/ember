@@ -34,4 +34,5 @@ export function passwordScore(password: string, minLength = 8): number {
 }
 
 export const SCORE_LABELS = ["Too short", "Weak", "Fair", "Good", "Strong"];
-export const SCORE_COLORS = ["var(--surface-3)", "var(--danger)", "var(--warning)", "var(--success)", "var(--success)"];
+// Neutral steps up to full ink; only "Weak" takes the accent.
+export const SCORE_COLORS = ["var(--surface-3)", "var(--accent)", "var(--text-3)", "var(--text-2)", "var(--text)"];

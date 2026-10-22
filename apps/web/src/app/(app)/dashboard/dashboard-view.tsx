@@ -26,31 +26,28 @@ function scrollTo(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-export function DashboardView({ firstName, sources }: { firstName: string; sources: SourceId[] }) {
+export function DashboardView({ sources }: { sources: SourceId[] }) {
   const { model, insights, editCount, reset } = usePreview();
   const withData = model.sources;
 
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h1>Welcome back, {firstName}</h1>
+        <h1>Dashboard</h1>
         <p className={styles.note}>
+          <Link className="link" href="/settings#preview-data" title="About preview data">
+            Preview data
+          </Link>
           <span>
-            You&apos;re looking at{" "}
-            <Link className="link" href="/settings#preview-data" title="About preview data">
-              preview data
-            </Link>
-            . {model.ws.organization.name} is a made-up team, so you can try Ember before anything is connected. Open any
-            item or take a suggested action.{" "}
-            {editCount > 0 ? (
+            {model.ws.organization.name} is a made-up team. Changes stay in this browser.
+            {editCount > 0 && (
               <>
-                You&apos;ve made {editCount} change{editCount === 1 ? "" : "s"}, saved in this browser.{" "}
+                {" "}
+                {editCount} change{editCount === 1 ? "" : "s"} made.{" "}
                 <button type="button" className={styles.inlineLink} onClick={reset}>
                   Start over
                 </button>
               </>
-            ) : (
-              "Changes stay in this browser."
             )}
           </span>
         </p>

@@ -29,7 +29,9 @@ export default async function SettingsPage() {
         <div className={styles.aside}>
           <h2 id="sources">Sources</h2>
         </div>
-        <SourcesForm initial={user.sources} mode="settings" />
+        <div className={styles.sources}>
+          <SourcesForm initial={user.sources} mode="settings" />
+        </div>
       </section>
 
       <section id="preview-data" className={styles.section} aria-labelledby="preview">

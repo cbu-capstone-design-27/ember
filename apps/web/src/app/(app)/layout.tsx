@@ -20,12 +20,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <div className={styles.shell}>
         <aside className={styles.sidebar}>
           <Link href="/dashboard" className={styles.brand} aria-label="Ember home">
-            <Wordmark size={26} />
+            <Wordmark size={20} />
           </Link>
 
           <p className={styles.workspace}>
             <span className={styles.workspaceName}>Kestrel Labs</span>
-            <span className="badge badge-accent">Preview</span>
+            <code>preview</code>
           </p>
 
           <NavLinks className={styles.nav} linkClassName={styles.navLink} />

@@ -1,225 +1,373 @@
-/* The landing page: a 12-column grid, the headline set large in the serif,
-   and the drift example typeset as a ledger instead of a screenshot. */
+/* Landing: a short centered hero, the product itself in a frame, then two
+   sections that each show one concrete thing. */
 
 .page {
   min-height: 100vh;
-  display: flex;
-  flex-direction: column;
 }
 
 .header,
-.main,
+.section,
 .footer {
   width: 100%;
   max-width: var(--page-max);
   margin: 0 auto;
-  padding-left: var(--space-10);
-  padding-right: var(--space-10);
+  padding-left: var(--space-8);
+  padding-right: var(--space-8);
 }
 
 .header {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-4);
-  padding-top: var(--space-6);
-  padding-bottom: var(--space-6);
+  height: var(--space-16);
 }
 
 .headerActions {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-5);
 }
 
-.headerActions :global(.segmented) {
-  margin-right: var(--space-2);
+.headerLink {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-out);
 }
 
-.main {
-  flex: 1;
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  column-gap: var(--space-6);
-  align-content: start;
+.headerLink:hover {
+  color: var(--text);
 }
 
 /* --- hero --------------------------------------------------------------- */
 
+.top {
+  position: relative;
+}
+
+/* A faint grid behind the hero and the top of the frame, fading at the edges. */
+.top::before {
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--space-16)) 0 0;
+  background-image:
+    linear-gradient(var(--grid-line) var(--border-width), transparent var(--border-width)),
+    linear-gradient(90deg, var(--grid-line) var(--border-width), transparent var(--border-width));
+  background-size: var(--space-12) var(--space-12);
+  background-position: center top;
+  mask-image: radial-gradient(70% 60% at 50% 30%, #000 30%, transparent 100%);
+  pointer-events: none;
+}
+
 .hero {
-  grid-column: 1 / -1;
+  position: relative;
   display: grid;
-  grid-template-columns: subgrid;
-  row-gap: var(--space-10);
-  padding: var(--space-24) 0 var(--space-20);
+  justify-items: center;
+  gap: var(--space-6);
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: var(--space-24) var(--space-8) var(--space-16);
+  text-align: center;
 }
 
 .title {
-  grid-column: 1 / span 8;
   font-size: var(--text-display);
-  line-height: 0.98;
-  letter-spacing: var(--tracking-display);
-}
-
-/* One sentence per line; the second, the disagreement, carries the heat. */
-.title em {
-  display: block;
-  font-style: italic;
-  color: var(--accent-text);
-}
-
-.heroSide {
-  grid-column: 9 / span 4;
-  align-self: end;
-  display: grid;
-  gap: var(--space-6);
-  padding-bottom: var(--space-3);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-heading);
 }
 
 .lede {
-  font-size: var(--text-md);
+  max-width: 38rem;
+  font-size: var(--text-lg);
   line-height: var(--leading-relaxed);
   color: var(--text-2);
-  max-width: var(--measure);
 }
 
 .cta {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  margin-top: var(--space-2);
   flex-wrap: wrap;
+  justify-content: center;
 }
 
-/* --- the example ledger ------------------------------------------------- */
+/* --- the product frame -------------------------------------------------- */
 
-.example {
-  grid-column: 1 / -1;
-  margin: 0;
-  border-top: var(--border-width) solid var(--text);
-}
-
-.exampleHead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1) var(--space-4);
-  padding: var(--space-4) 0;
-  border-bottom: var(--border-width) solid var(--border);
-}
-
-.exampleHead :global(.eyebrow) {
-  white-space: nowrap;
-}
-
-.exampleKey {
+.frame {
+  position: relative;
+  max-width: calc(var(--page-max) - var(--space-16));
+  margin: 0 auto;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
   font-size: var(--text-sm);
+  user-select: none;
+}
+
+.frameBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control);
+  padding: 0 var(--space-4);
+  border-bottom: var(--border-width) solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.frameBar code {
+  color: var(--text-3);
+  font-weight: var(--weight-regular);
+}
+
+.frameBody {
+  display: grid;
+  grid-template-columns: 13rem minmax(0, 1fr);
+}
+
+.frameSide {
+  display: grid;
+  align-content: start;
+  gap: var(--space-0-5);
+  padding: var(--space-3);
+  border-right: var(--border-width) solid var(--border);
+  background: var(--surface);
+}
+
+.frameNav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
   color: var(--text-2);
 }
 
-.ledger {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.frameNav svg {
+  color: var(--text-3);
 }
 
-.ledgerRow {
-  position: relative;
+.frameNav[data-active="true"] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.frameSources {
   display: grid;
-  grid-template-columns: 9rem 11rem minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: var(--space-6);
-  padding: var(--space-4) 0;
-  border-bottom: var(--border-width) solid var(--border);
-  font-size: var(--text-base);
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-2) 0;
+  border-top: var(--border-width) solid var(--border);
+  color: var(--text-2);
 }
 
-/* The record that disagrees with the other two. */
-.ledgerRow[data-odd="true"] {
+.frameSources > span {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.frameMain {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+
+.frameFigures {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+}
+
+.frameFigures > span {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-left: var(--border-width) solid var(--border);
+  color: var(--text-2);
+}
+
+.frameFigures > span:first-child {
+  border-left: 0;
+}
+
+.frameFigures b {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.frameFigures > span[data-hot="true"] b {
   color: var(--accent-text);
 }
 
-.ledgerRow[data-odd="true"]::before {
-  content: "";
-  position: absolute;
-  left: calc(-1 * var(--space-4));
-  top: var(--space-3);
-  bottom: var(--space-3);
-  width: var(--rule-strong);
-  background: var(--accent);
+.frameList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--surface);
 }
 
-.ledgerSource {
-  display: inline-flex;
+.frameList li {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(0, 1fr) 13rem 4rem;
   align-items: center;
-  gap: var(--space-2);
-  align-self: center;
-  font-weight: var(--weight-medium);
-  color: var(--text);
+  gap: var(--space-4);
+  height: var(--control-lg);
+  padding: 0 var(--space-4);
+  border-top: var(--border-width) solid var(--border);
 }
 
-.ledgerWhere {
-  color: var(--text-2);
-  font-size: var(--text-sm);
+.frameList li:first-child {
+  border-top: 0;
 }
 
-.ledgerSays {
-  font-weight: var(--weight-medium);
-}
-
-.ledgerQuote {
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: var(--text-lg);
-  line-height: var(--leading-snug);
-}
-
-.ledgerWhen {
-  font-size: var(--text-sm);
+.frameKind {
   color: var(--text-3);
-  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.ledgerRow[data-odd="true"] .ledgerWhen {
-  color: inherit;
+.frameList li[data-severity="high"] .frameKind {
+  color: var(--accent-text);
 }
 
-.exampleFix {
+.frameTitle {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.frameKeys,
+.frameTime {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.frameTime {
+  text-align: right;
+}
+
+/* --- sections ----------------------------------------------------------- */
+
+.section {
+  display: grid;
+  gap: var(--space-8);
+  padding-top: var(--space-32);
+}
+
+.sectionTitle {
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-heading);
+}
+
+/* The sources, one cell each. */
+.sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.sources li {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  padding: var(--space-4) 0;
-  font-size: var(--text-sm);
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border-left: var(--border-width) solid var(--border);
+}
+
+.sources li:first-child {
+  border-left: 0;
+}
+
+.sources li > span:last-child {
+  display: grid;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.sourceName {
   font-weight: var(--weight-medium);
+}
+
+.sources code {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* A terminal-style panel of one ticket's edges in the graph. */
+.terminal {
+  max-width: 48rem;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.terminalBar {
+  display: flex;
+  align-items: center;
+  height: var(--control);
+  padding: 0 var(--space-4);
+  border-bottom: var(--border-width) solid var(--border);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.terminalBody {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3) 0;
+  font-size: var(--text-sm);
+}
+
+.terminalBody li {
+  display: grid;
+  grid-template-columns: var(--space-4) 9rem 7rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-1-5) var(--space-4);
+}
+
+.edgeDir,
+.edgeType2 {
+  color: var(--text-3);
+}
+
+.edgeType {
   color: var(--text);
 }
 
-.fixIcon {
-  color: var(--accent);
-}
-
-/* --- what it does ------------------------------------------------------- */
-
-.points {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-6);
-  padding: var(--space-20) 0 var(--space-24);
-}
-
-.point {
-  display: grid;
-  gap: var(--space-3);
-  align-content: start;
-  padding-top: var(--space-4);
-  border-top: var(--border-width) solid var(--border-strong);
-}
-
-.point p {
+.edgeLabel {
   color: var(--text-2);
-  line-height: var(--leading-relaxed);
-  max-width: 34ch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* --- footer ------------------------------------------------------------- */
@@ -229,77 +377,115 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  flex-wrap: wrap;
-  padding-top: var(--space-6);
-  padding-bottom: var(--space-8);
-  color: var(--text-2);
-}
-
-.sources {
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-5);
-  margin: 0;
-  padding: 0;
+  margin-top: var(--space-32);
+  padding-top: var(--space-5);
+  padding-bottom: var(--space-5);
+  border-top: var(--border-width) solid var(--border);
   font-size: var(--text-sm);
   color: var(--text-3);
 }
 
 @media (max-width: 1024px) {
-  .title,
-  .heroSide {
-    grid-column: 1 / -1;
+  .sources {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .hero {
-    padding: var(--space-16) 0 var(--space-12);
+  .sources li:nth-child(4) {
+    border-left: 0;
   }
 
-  .ledgerRow {
-    grid-template-columns: 8rem minmax(0, 1fr) auto;
+  .sources li:nth-child(n + 4) {
+    border-top: var(--border-width) solid var(--border);
   }
 
-  .ledgerWhere {
+  .frameList li {
+    grid-template-columns: 7.5rem minmax(0, 1fr) 4rem;
+  }
+
+  .frameKeys {
     display: none;
   }
 }
 
 @media (max-width: 720px) {
   .header,
-  .main,
+  .section,
   .footer {
     padding-left: var(--space-5);
     padding-right: var(--space-5);
   }
 
-  .headerActions :global(.btn-ghost),
-  .headerActions :global(.segmented) {
+  .hero {
+    padding: var(--space-16) var(--space-5) var(--space-12);
+  }
+
+  .frame {
+    margin: 0 var(--space-5);
+  }
+
+  .frameBody {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .frameSide {
     display: none;
   }
 
-  .hero {
-    padding: var(--space-12) 0 var(--space-10);
-    row-gap: var(--space-8);
+  .frameFigures {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .ledgerRow {
+  .frameFigures > span:nth-child(3) {
+    border-left: 0;
+  }
+
+  .frameFigures > span:nth-child(n + 3) {
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .frameList li {
     grid-template-columns: minmax(0, 1fr) auto;
-    row-gap: var(--space-1);
   }
 
-  .ledgerSays,
-  .ledgerQuote {
-    grid-column: 1 / -1;
-    grid-row: 2;
+  .frameKind {
+    display: none;
   }
 
-  .ledgerRow[data-odd="true"]::before {
-    left: calc(-1 * var(--space-3));
+  .section {
+    padding-top: var(--space-20);
   }
 
-  .points {
+  .sectionTitle {
+    font-size: var(--text-2xl);
+  }
+
+  .sources {
     grid-template-columns: minmax(0, 1fr);
-    padding: var(--space-12) 0 var(--space-16);
+  }
+
+  .sources li,
+  .sources li:nth-child(4) {
+    border-left: 0;
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .sources li:first-child {
+    border-top: 0;
+  }
+
+  .terminalBody li {
+    grid-template-columns: var(--space-4) minmax(0, 1fr);
+  }
+
+  .edgeType2 {
+    display: none;
+  }
+
+  .edgeLabel {
+    grid-column: 2;
+  }
+
+  .footer {
+    margin-top: var(--space-20);
   }
 }

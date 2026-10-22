@@ -40,24 +40,19 @@
   pointer-events: none;
 }
 
-/* Each source's region: the same faint wash of ink, so the nodes carry the color. */
+/* Each source's region: the same faint wash, so the nodes carry the color. */
 .hull {
   fill: var(--text);
   stroke: var(--text);
   stroke-linejoin: round;
-  opacity: 0.035;
+  opacity: 0.02;
 }
 
-:global([data-theme="dark"]) .hull {
-  opacity: 0.045;
-}
-
-/* Region names are set like captions in a book: serif italic, quiet. */
+/* Region names: small, plain, quiet. */
 .hullLabel {
-  fill: var(--text);
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: var(--text-xl);
+  fill: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   text-anchor: middle;
   paint-order: stroke;
   stroke: var(--bg);
@@ -68,7 +63,7 @@
 .hullSub {
   fill: var(--text-3);
   font-family: var(--font-mono);
-  font-style: normal;
+  font-weight: var(--weight-regular);
   font-size: var(--text-2xs);
   letter-spacing: 0;
 }
@@ -218,7 +213,7 @@
 .flag {
   stroke: var(--bg);
   stroke-width: 2;
-  fill: var(--info);
+  fill: var(--text-3);
 }
 
 .flag[data-severity="high"] {
@@ -226,10 +221,10 @@
 }
 
 .flag[data-severity="medium"] {
-  fill: var(--warning);
+  fill: var(--text-2);
 }
 
-/* --- floating controls: solid paper, one hairline, a soft shadow ---------- */
+/* --- floating controls: raised panels with one hairline border ---------- */
 
 .searchBox,
 .filters,
@@ -237,7 +232,6 @@
 .results {
   border: var(--border-width) solid var(--border);
   background: var(--surface);
-  box-shadow: var(--shadow-md);
 }
 
 .searchBox {
@@ -394,11 +388,9 @@
 
 .fieldset legend {
   padding: 0 0 var(--space-1-5);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-caps);
-  color: var(--text-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text);
 }
 
 .check {
@@ -419,7 +411,7 @@
 
 .check input,
 .switchRow input {
-  accent-color: var(--accent-solid);
+  accent-color: var(--text);
   margin: 0;
 }
 
@@ -455,7 +447,6 @@
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: var(--shadow-md);
   overflow: hidden;
   transition: right var(--duration) var(--ease-out);
 }

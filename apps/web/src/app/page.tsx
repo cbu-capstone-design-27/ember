@@ -1,117 +1,182 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { SourceLogo, Wordmark } from "../components/brand.tsx";
-import { ArrowRightIcon } from "../components/icons.tsx";
+import { EmberMark, SourceLogo, Wordmark } from "../components/brand.tsx";
+import { DashboardIcon, GraphIcon, SettingsIcon } from "../components/icons.tsx";
 import { ThemeSwitcher } from "../components/theme.tsx";
 import { getCurrentUser } from "../lib/session.ts";
 import { SOURCES, type SourceId } from "../lib/sources.ts";
+import { buildGraph } from "../lib/workspace/graph.ts";
+import { findInsights, INSIGHT_KINDS } from "../lib/workspace/insights.ts";
+import { loadPreviewWorkspace } from "../lib/workspace/load.ts";
+import { buildModel, nodeId } from "../lib/workspace/model.ts";
+import { sourceSummaries, stats } from "../lib/workspace/summary.ts";
+import { ago } from "../lib/workspace/time.ts";
 import styles from "./landing.module.css";
 
-const POINTS = [
-  {
-    title: "Pick your sources",
-    text: "GitHub, GitLab, Jira, Slack or Teams. Ember reads pull requests, tickets and conversations, and nothing else.",
-  },
-  {
-    title: "See what's drifting",
-    text: "A PR merged but the ticket still says In Progress. Someone said it's blocked and Jira doesn't know. Each one comes with its evidence and a fix.",
-  },
-  {
-    title: "Explore the graph",
-    text: "Every person, ticket, change, message and decision, linked across tools. Your AI coding agents read the same graph.",
-  },
-];
+// What each source adds to the graph, in the ontology's node types (docs/graph-schema.md).
+const NODE_TYPES_BY_SOURCE: Record<SourceId, string> = {
+  github: "Change · Module",
+  gitlab: "Change · Module",
+  jira: "WorkItem",
+  slack: "Message · Decision",
+  teams: "Message · Decision",
+};
 
-// The preview workspace's status-drift example (CHK-131), as each source reports it.
-const EXAMPLE: Array<{ source: SourceId; where: string; says: string; quote?: boolean; when: string; odd?: boolean }> = [
-  { source: "slack", where: "#checkout-dev", says: "Saved cards (CHK-131) is done! checkout-web#219 merged", quote: true, when: "4h ago" },
-  { source: "github", where: "checkout-web#219", says: "Merged", when: "5h ago" },
-  { source: "jira", where: "CHK-131", says: "In Development", when: "Since 6 days ago", odd: true },
-];
+const PREVIEW_SOURCES: SourceId[] = ["github", "jira", "slack"];
 
 export default async function Home() {
   const user = await getCurrentUser();
   if (user) redirect(user.sources.length ? "/dashboard" : "/onboarding");
 
+  // The hero panel and the graph excerpt render the real preview workspace.
+  const { workspace, now } = loadPreviewWorkspace(PREVIEW_SOURCES);
+  const model = buildModel(workspace);
+  const insights = findInsights(model, now);
+  const s = stats(model, insights);
+  const summaries = sourceSummaries(model, PREVIEW_SOURCES);
+  const graph = buildGraph(model, now);
+  const focus = nodeId.issue("CHK-131");
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const edges = graph.edges
+    .filter((e) => e.source === focus || e.target === focus)
+    .map((e) => {
+      const out = e.source === focus;
+      return { id: e.id, type: e.type, out, other: byId.get(out ? e.target : e.source)! };
+    })
+    .slice(0, 7);
+
+  const figures = [
+    { label: "Needs attention", value: s.attention.total, hot: s.attention.high > 0 },
+    { label: "Open pull requests", value: s.pullRequests?.open ?? 0 },
+    { label: "Tickets in flight", value: s.inFlight?.total ?? 0 },
+    { label: "Messages about work", value: s.conversations?.linked ?? 0 },
+  ];
+
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <Wordmark size={26} />
-        <div className={styles.headerActions}>
-          <ThemeSwitcher />
-          <Link className="btn btn-ghost" href="/login">
+        <Wordmark size={22} />
+        <nav className={styles.headerActions} aria-label="Account">
+          <Link className={styles.headerLink} href="/login">
             Log in
           </Link>
-          <Link className="btn btn-primary" href="/signup">
+          <Link className="btn btn-primary btn-sm" href="/signup">
             Get started
           </Link>
-        </div>
+        </nav>
       </header>
 
-      <main className={styles.main}>
-        <section className={styles.hero}>
-          <h1 className={styles.title}>
-            Slack says it&apos;s done. <em>Jira says it isn&apos;t.</em>
-          </h1>
-          <div className={styles.heroSide}>
+      <main>
+        <div className={styles.top}>
+          <section className={styles.hero}>
+            <h1 className={styles.title}>See where GitHub, Jira and Slack disagree.</h1>
             <p className={styles.lede}>
-              Ember reads GitHub, Jira and Slack, links what each one says about the same work, and shows you where they
-              disagree. Your AI coding agents read the same graph.
+              Ember links pull requests, tickets and threads into one graph and flags work whose status doesn&apos;t match.
             </p>
             <div className={styles.cta}>
               <Link className="btn btn-primary btn-lg" href="/signup">
-                Create an account <ArrowRightIcon />
+                Create an account
               </Link>
               <Link className="btn btn-secondary btn-lg" href="/login">
                 Log in
               </Link>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <figure className={styles.example}>
-          <figcaption className={styles.exampleHead}>
-            <span className="eyebrow">Status drift</span>
-            <span className={styles.exampleKey}>CHK-131 Save cards for returning customers</span>
-          </figcaption>
-          <ol className={styles.ledger}>
-            {EXAMPLE.map((row) => (
-              <li key={row.source} className={styles.ledgerRow} data-odd={row.odd}>
-                <span className={styles.ledgerSource}>
-                  <SourceLogo source={row.source} size={16} />
-                  {SOURCES.find((s) => s.id === row.source)!.name}
+          {/* The dashboard, drawn from the preview workspace. Decorative here: the real one is behind sign-in. */}
+          <div className={styles.frame} aria-hidden="true">
+            <div className={styles.frameBar}>
+              <EmberMark size={14} />
+              <span>{model.ws.organization.name}</span>
+              <code>/dashboard</code>
+            </div>
+            <div className={styles.frameBody}>
+              <div className={styles.frameSide}>
+                <span className={styles.frameNav} data-active="true">
+                  <DashboardIcon /> Dashboard
                 </span>
-                <code className={styles.ledgerWhere}>{row.where}</code>
-                <span className={row.quote ? styles.ledgerQuote : styles.ledgerSays}>
-                  {row.quote ? `“${row.says}”` : row.says}
+                <span className={styles.frameNav}>
+                  <GraphIcon /> Knowledge graph
                 </span>
-                <span className={styles.ledgerWhen}>{row.when}</span>
+                <span className={styles.frameNav}>
+                  <SettingsIcon /> Settings
+                </span>
+                <span className={styles.frameSources}>
+                  {summaries.map((src) => (
+                    <span key={src.id}>
+                      <SourceLogo source={src.id} size={13} />
+                      {SOURCES.find((x) => x.id === src.id)!.name}
+                    </span>
+                  ))}
+                </span>
+              </div>
+              <div className={styles.frameMain}>
+                <div className={styles.frameFigures}>
+                  {figures.map((f) => (
+                    <span key={f.label} data-hot={f.hot}>
+                      <span>{f.label}</span>
+                      <b>{f.value}</b>
+                    </span>
+                  ))}
+                </div>
+                <ol className={styles.frameList}>
+                  {insights.slice(0, 6).map((i) => (
+                    <li key={i.id} data-severity={i.severity}>
+                      <span className={styles.frameKind}>{INSIGHT_KINDS[i.kind].label}</span>
+                      <span className={styles.frameTitle}>{i.title}</span>
+                      <code className={styles.frameKeys}>
+                        {i.evidence
+                          .slice(0, 2)
+                          .map((e) => e.label)
+                          .join("  ")}
+                      </code>
+                      <code className={styles.frameTime}>{ago(i.at, now)}</code>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Connect the tools you already use</h2>
+          <ul className={styles.sources}>
+            {SOURCES.map((src) => (
+              <li key={src.id}>
+                <SourceLogo source={src.id} size={20} />
+                <span>
+                  <span className={styles.sourceName}>{src.name}</span>
+                  <code>{NODE_TYPES_BY_SOURCE[src.id]}</code>
+                </span>
               </li>
             ))}
-          </ol>
-          <p className={styles.exampleFix}>
-            <ArrowRightIcon className={`icon ${styles.fixIcon}`} />
-            Move CHK-131 to Done
-          </p>
-        </figure>
+          </ul>
+        </section>
 
-        <section className={styles.points} aria-label="What Ember does">
-          {POINTS.map(({ title, text }) => (
-            <article key={title} className={styles.point}>
-              <h2>{title}</h2>
-              <p>{text}</p>
-            </article>
-          ))}
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>One graph under all of it</h2>
+          <div className={styles.terminal}>
+            <div className={styles.terminalBar}>
+              <code>{byId.get(focus)!.subgraph} / CHK-131</code>
+            </div>
+            <ol className={styles.terminalBody}>
+              {edges.map((e) => (
+                <li key={e.id}>
+                  <code className={styles.edgeDir}>{e.out ? "→" : "←"}</code>
+                  <code className={styles.edgeType}>{e.type}</code>
+                  <code className={styles.edgeType2}>{e.other.type}</code>
+                  <span className={styles.edgeLabel}>{e.other.label}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
         </section>
       </main>
 
       <footer className={styles.footer}>
-        <Wordmark size={18} />
-        <ul className={styles.sources} aria-label="Sources Ember connects to">
-          {SOURCES.map((s) => (
-            <li key={s.id}>{s.name}</li>
-          ))}
-        </ul>
+        <span>Ember · Apache-2.0</span>
+        <ThemeSwitcher />
       </footer>
     </div>
   );
