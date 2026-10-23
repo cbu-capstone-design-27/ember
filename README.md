@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/ember-logo-transparent.png" alt="Ember logo: a flame with graph nodes" width="120">
+  <img src=".github/assets/ember-logo.png" alt="Ember logo: a flame with graph nodes" width="120">
 </p>
 
 <h1 align="center">Ember</h1>
