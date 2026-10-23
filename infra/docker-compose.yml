@@ -57,6 +57,7 @@ services:
 
   # EMBER-62. Every source's webhooks into the postgres profile's raw_events. Not part of the
   # default `up` (see profiles). Refuses to start until GITHUB_WEBHOOK_SECRET is set in .env.
+  # Serves /webhook/slack too when SLACK_SIGNING_SECRET is set.
   intake:
     profiles: ["intake"]
     build:
@@ -68,6 +69,7 @@ services:
     environment:
       DATABASE_URL: "postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable"
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+      SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET:-}"
 
   # EMBER-36. Not part of the default `up` (see profiles).
   slack-ingestion:

@@ -1,4 +1,4 @@
-"""intake against a real Postgres (EMBER-62). Nothing here calls GitHub.
+"""intake against a real Postgres (EMBER-62). Nothing here calls GitHub or Slack.
 
 Needs psql, dbmate, the packages in requirements.txt, and a Postgres server it may create and drop
 a database on:
@@ -43,6 +43,7 @@ sys.path.insert(0, str(REPO / "packages" / "ingestion-envelope"))
 import intake  # noqa: E402
 from adapters import Delivery, Unauthorized  # noqa: E402
 from adapters.github import RECOMMENDED_WEBHOOK_EVENTS, GitHubAdapter  # noqa: E402
+from adapters.slack import SlackAdapter  # noqa: E402
 from models import Installation, RawEvent  # noqa: E402
 from validate import assert_valid  # noqa: E402
 
@@ -51,6 +52,8 @@ DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_intake"
 SECRET = "test-webhook-secret"
 FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "github.json").read_text())["body"]
+SLACK_SECRET = "test-signing-secret"
+SLACK_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "slack.json").read_text())["body"]
 
 
 def database_url() -> str:
@@ -78,6 +81,16 @@ def github(event: str, payload: dict, delivery_id: str, secret: str = SECRET) ->
     body = json.dumps(payload).encode()
     return body, {"X-GitHub-Event": event, "X-GitHub-Delivery": delivery_id, "X-Hub-Signature-256": sign(body, secret),
                   "Content-Type": "application/json"}
+
+
+def slack(payload: dict | bytes, secret: str = SLACK_SECRET, timestamp: int | None = None,
+          **headers: str) -> tuple[bytes, dict]:
+    """A delivery as Slack signs it: v0=HMAC-SHA256 of "v0:<timestamp>:<body>"."""
+    body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+    sent = str(int(time.time()) if timestamp is None else timestamp)
+    signature = "v0=" + hmac.new(secret.encode(), f"v0:{sent}:".encode() + body, hashlib.sha256).hexdigest()
+    return body, {"X-Slack-Request-Timestamp": sent, "X-Slack-Signature": signature,
+                  "Content-Type": "application/json", **headers}
 
 
 def request(url: str, body: bytes | None = None, headers: dict | None = None) -> tuple[int, str]:
@@ -124,7 +137,8 @@ class Server:
                  deadline: float = intake.STORE_DEADLINE) -> None:
         self.port = free_port()
         self.base = f"http://127.0.0.1:{self.port}"
-        app = intake.create_app(intake.create_engine(url, timeout), {"github": GitHubAdapter(SECRET), "teams": FakeTeams()},
+        app = intake.create_app(intake.create_engine(url, timeout), {"github": GitHubAdapter(SECRET), "slack": SlackAdapter(SLACK_SECRET),
+                                                                    "teams": FakeTeams()},
                                 registry, deadline=deadline)
         self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning"))
 
@@ -160,7 +174,8 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
         self.db = await asyncpg.connect(database_url())
         await self.db.execute("truncate raw_events, installations restart identity cascade")
         await self.db.execute("insert into installations (source, account_id, tenant)"
-                              " values ('github', '77', 'acme'), ('gitlab', '77', 'not-this-one')")
+                              " values ('github', '77', 'acme'), ('gitlab', '77', 'not-this-one'),"
+                              " ('slack', 'T012WORKSPACE', 'acme')")
         self.registry = CollectorRegistry()
         self.intake = await Server(database_url(), self.registry).__aenter__()
 
@@ -408,6 +423,112 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.counts(), {("github", "stored"): 1, ("github", "duplicate"): 1, ("github", "unauthorized"): 1,
                                   ("unknown", "unknown_source"): 1, ("teams", "handshake"): 1})
 
+    async def deliver_slack(self, payload: dict | bytes, **kwargs) -> tuple[int, str]:
+        return await self.intake.post("/webhook/slack", *slack(payload, **kwargs))
+
+    async def test_slack_url_verification_is_answered_and_not_stored(self):
+        check = {"token": "t", "challenge": "3eZbrw1aBm2rZgRNFdxV2595E9CY3gmdALWMmHkvFXO7tYXAYM8P", "type": "url_verification"}
+        self.assertEqual(await self.deliver_slack(check),
+                         (200, '{"challenge":"3eZbrw1aBm2rZgRNFdxV2595E9CY3gmdALWMmHkvFXO7tYXAYM8P"}'))
+        # Slack signs the check too, so an unsigned one is refused rather than echoed
+        self.assertEqual((await self.deliver_slack(check, secret="other"))[0], 401)
+        self.assertEqual((await self.deliver_slack({"type": "url_verification"}))[0], 400)
+        self.assertEqual(await self.rows(), [])
+        self.assertEqual(await self.counts(), {("slack", "handshake"): 1, ("slack", "unauthorized"): 1,
+                                               ("slack", "bad_request"): 1})
+
+    async def test_signed_slack_event_is_stored_as_it_arrived(self):
+        self.assertEqual(await self.deliver_slack(SLACK_FIXTURE), (200, '{"status":"stored"}'))
+
+        (row,) = await self.rows()
+        self.assertEqual(
+            (row["source"], row["delivery_id"], row["account_id"], row["tenant"], row["event_name"], row["origin"]),
+            ("slack", "Ev012EVENT", "T012WORKSPACE", "acme", "message", "webhook"))
+        # event_ts to the microsecond, as the ts string has it
+        self.assertEqual(row["occurred_at"], datetime(2024, 5, 29, 16, 26, 41, 200, tzinfo=timezone.utc))
+        envelope = json.loads(row["envelope"])
+        self.assertEqual(envelope, {"type": "slack", "body": SLACK_FIXTURE})
+        assert_valid(envelope)
+        self.assertIsNone(row["enriched_at"])
+
+    async def test_slack_retry_is_a_no_op_and_an_unmapped_workspace_waits(self):
+        self.assertEqual(await self.deliver_slack(SLACK_FIXTURE), (200, '{"status":"stored"}'))
+        # Slack retries with the same event_id after 0 s, 1 and 5 minutes when it got no 200 in 3 s
+        self.assertEqual(await self.deliver_slack(SLACK_FIXTURE, **{"X-Slack-Retry-Num": "1",
+                                                                     "X-Slack-Retry-Reason": "http_timeout"}),
+                         (200, '{"status":"duplicate"}'))
+        await self.deliver_slack({**SLACK_FIXTURE, "team_id": "T0OTHER", "event_id": "Ev0OTHER"})
+        self.assertEqual([(r["delivery_id"], r["tenant"]) for r in await self.rows()],
+                         [("Ev012EVENT", "acme"), ("Ev0OTHER", None)])
+
+    async def test_slack_throttle_notice_is_stored_once_per_minute(self):
+        notice = {"token": "t", "type": "app_rate_limited", "team_id": "T012WORKSPACE",
+                  "minute_rate_limited": 1717000020, "api_app_id": "A012APP"}
+        self.assertEqual(await self.deliver_slack(notice), (200, '{"status":"stored"}'))
+        self.assertEqual(await self.deliver_slack(notice), (200, '{"status":"duplicate"}'))
+        (row,) = await self.rows()
+        self.assertEqual((row["delivery_id"], row["account_id"], row["tenant"], row["event_name"], row["occurred_at"]),
+                         ("rate_limited:T012WORKSPACE:1717000020", "T012WORKSPACE", "acme", "app_rate_limited",
+                          datetime(2024, 5, 29, 16, 27, tzinfo=timezone.utc)))
+
+    async def test_occurred_at_follows_slacks_ordering_rule(self):
+        # slack-webhooks.md, "Ordering value": event_ts, then ts, then event_time. None: received_at
+        def event(n: int, inner: dict, **wrapper) -> dict:
+            return {"type": "event_callback", "team_id": "T012WORKSPACE", "event_id": f"Ev{n}", **wrapper, "event": inner}
+
+        cases = [
+            ({"type": "message", "subtype": "message_changed", "ts": "1717000009.000001", "event_ts": "1717000010.123456"},
+             {"event_time": 1717000099}, "message:message_changed", "2024-05-29T16:26:50.123456+00:00"),
+            ({"type": "message", "subtype": "message_deleted", "ts": "1717000011.5"}, {"event_time": 1717000099},
+             "message:message_deleted", "2024-05-29T16:26:51.500000+00:00"),
+            ({"type": "channel_rename", "channel": {"id": "C1", "name": "new"}}, {"event_time": 1717000012},
+             "channel_rename", "2024-05-29T16:26:52+00:00"),
+            ({"type": "member_joined_channel", "user": "U1", "channel": "C1"}, {}, "member_joined_channel", None),
+            ({"type": "message", "event_ts": "not a ts", "ts": "1717000013.000000"}, {}, "message",
+             "2024-05-29T16:26:53+00:00"),
+            ({"type": "message", "event_ts": " 1717000015.0", "ts": "nope"}, {"event_time": 1717000016}, "message",
+             "2024-05-29T16:26:56+00:00"),
+            ({"type": "message", "event_ts": "99999999999999999999.0"}, {}, "message", None),
+            ({"type": "message", "event_ts": True, "ts": "1717000014.000000"}, {}, "message",
+             "2024-05-29T16:26:54+00:00"),
+        ]
+        for n, (inner, wrapper, _name, _expected) in enumerate(cases):
+            self.assertEqual((await self.deliver_slack(event(n, inner, **wrapper)))[0], 200)
+        rows = await self.rows()
+        for (_inner, _wrapper, name, expected), row in zip(cases, rows, strict=True):
+            with self.subTest(event=row["delivery_id"]):
+                self.assertEqual(row["event_name"], name)
+                want = row["received_at"] if expected is None else datetime.fromisoformat(expected)
+                self.assertEqual(row["occurred_at"], want)
+
+    async def test_rejected_slack_deliveries_store_nothing(self):
+        body, headers = slack(SLACK_FIXTURE)
+        now = int(time.time())
+        no_id = {k: v for k, v in SLACK_FIXTURE.items() if k != "event_id"}
+        cases = [
+            ("bad signature", body, {**headers, "X-Slack-Signature": "v0=" + "0" * 64}, 401),
+            ("no signature", body, {k: v for k, v in headers.items() if k != "X-Slack-Signature"}, 401),
+            ("no timestamp", body, {k: v for k, v in headers.items() if k != "X-Slack-Request-Timestamp"}, 401),
+            ("another secret", *slack(SLACK_FIXTURE, secret="other"), 401),
+            ("signed for another body", body + b" ", headers, 401),
+            ("replayed after 5 minutes", *slack(SLACK_FIXTURE, timestamp=now - 301), 401),
+            ("from the future", *slack(SLACK_FIXTURE, timestamp=now + 301), 401),
+            ("timestamp not a number", body, {**headers, "X-Slack-Request-Timestamp": "-1"}, 401),
+            ("timestamp a superscript digit", body, {**headers, "X-Slack-Request-Timestamp": "\u00b2"}, 401),
+            ("timestamp too long", body, {**headers, "X-Slack-Request-Timestamp": "9" * 5000}, 401),
+            ("signed with GitHub's scheme", body, {**headers, "X-Slack-Signature": sign(body)}, 401),
+            ("not an object", *slack(b"[]"), 400),
+            ("not json", *slack(b"{"), 400),
+            ("no event_id", *slack(no_id), 400),
+            ("long event_id", *slack({**SLACK_FIXTURE, "event_id": "E" * 8000}), 400),
+            ("not an Events API body", *slack({"type": "block_actions", "team_id": "T012WORKSPACE"}), 400),
+            ("throttle notice without its minute", *slack({"type": "app_rate_limited", "team_id": "T012WORKSPACE"}), 400),
+        ]
+        for name, case_body, case_headers, status in cases:
+            with self.subTest(name):
+                self.assertEqual((await self.intake.post("/webhook/slack", case_body, case_headers))[0], status)
+        self.assertEqual(await self.rows(), [])
+
     async def test_adding_a_source_is_adding_an_adapter(self):
         self.assertEqual(await self.intake.post("/webhook/teams?validationToken=abc", b"", {}), (200, "abc"))
         body = json.dumps({"clientState": "expected", "tenantId": "t-1", "changeType": "created"}).encode()
@@ -429,7 +550,8 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
     """`python3 intake.py` as the container runs it."""
 
     def env(self, **extra: str) -> dict:
-        env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_WEBHOOK_SECRET", "DATABASE_URL")}
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("GITHUB_WEBHOOK_SECRET", "SLACK_SIGNING_SECRET", "DATABASE_URL")}
         return {**env, "DATABASE_URL": database_url(), **extra}
 
     def test_refuses_to_start_without_a_usable_webhook_secret(self):
@@ -440,6 +562,41 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
                                         text=True, timeout=30)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn(f"GITHUB_WEBHOOK_SECRET {message}", result.stderr)
+
+    def test_refuses_to_start_with_an_unusable_slack_secret(self):
+        for secret, message in (("  ", "is required"), ("secret\n", "has leading or trailing")):
+            with self.subTest(repr(secret)):
+                result = subprocess.run([sys.executable, str(HERE / "intake.py")],
+                                        env=self.env(GITHUB_WEBHOOK_SECRET=SECRET, SLACK_SIGNING_SECRET=secret),
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(f"SLACK_SIGNING_SECRET {message}", result.stderr)
+
+    async def test_slack_is_served_only_with_its_secret(self):
+        # Without it intake still runs for GitHub, so a rollout before the Slack app is set up is safe
+        for slack_secret, sources, status in ((None, "github", 404), (SLACK_SECRET, "github, slack", 200)):
+            with self.subTest(sources):
+                port = free_port()
+                extra = {"SLACK_SIGNING_SECRET": slack_secret} if slack_secret else {}
+                process = subprocess.Popen(
+                    [sys.executable, str(HERE / "intake.py")],
+                    env=self.env(GITHUB_WEBHOOK_SECRET=SECRET, LISTEN_PORT=str(port), **extra),
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                try:
+                    for _ in range(300):
+                        try:
+                            if request(f"http://127.0.0.1:{port}/health")[0] == 200:
+                                break
+                        except OSError:
+                            pass
+                        await asyncio.sleep(0.05)
+                    check = {"type": "url_verification", "challenge": "c"}
+                    reply = await asyncio.to_thread(request, f"http://127.0.0.1:{port}/webhook/slack", *slack(check))
+                    self.assertEqual(reply[0], status)
+                finally:
+                    process.send_signal(signal.SIGINT)
+                    output = (await asyncio.to_thread(process.communicate, timeout=30))[0]
+                self.assertIn(f"serving /webhook/{{source}} for {sources}", output)
 
     async def test_signal_finishes_the_request_in_flight_then_exits(self):
         # uvicorn re-raises SIGTERM once it has drained (as PID 1 in a container that exits 0 instead),

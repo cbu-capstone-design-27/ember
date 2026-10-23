@@ -2,7 +2,7 @@
 
 The one listener for every source's webhooks (EMBER-62). It verifies each delivery, stores it as it arrived in Postgres `raw_events`, and answers. It never calls a source API: the per-source enrich workers fetch what a payload lacks. The design is [`docs/ingestion/architecture.md`, "The parent listener (intake)"](../../docs/ingestion/architecture.md#the-parent-listener-intake).
 
-GitHub is the only adapter so far. Adding a source means adding an adapter under `adapters/` and listing it in `intake.py`'s `main`, not a new listener.
+GitHub and Slack have adapters so far. Adding a source means adding an adapter under `adapters/` and listing it in `intake.py`'s `main`, not a new listener.
 
 ## Contract
 
@@ -33,6 +33,7 @@ SIGINT or SIGTERM stops accepting connections and lets requests in flight finish
 | --- | --- |
 | `DATABASE_URL` | Postgres, e.g. `postgresql://ember:...@localhost:5432/ember?sslmode=disable`. On the cluster, Secret `postgres-app`, key `uri` |
 | `GITHUB_WEBHOOK_SECRET` | The GitHub App's webhook secret. Required: intake refuses to start without it, so it never stores an unsigned delivery. It also refuses one with leading or trailing whitespace, which no signature would match |
+| `SLACK_SIGNING_SECRET` | The Slack app's signing secret (Basic Information, App Credentials). Optional: without it intake serves GitHub only and `/webhook/slack` is an unknown source (404), so intake runs where the Slack app isn't set up. When set, the same whitespace rule as GitHub's applies. The startup log names the sources served |
 | `LISTEN_PORT` | Defaults to `8080`. Not `INTAKE_PORT`, which Kubernetes sets for a Service called `intake` |
 
 ## GitHub adapter
@@ -51,6 +52,19 @@ Subscribe the App to these. Intake does not filter on them, and with the App's c
 
 `installation`, `installation_repositories`, `repository`, `push`, `create`, `delete`, `issues`, `issue_comment`, `pull_request`, `pull_request_review`, `pull_request_review_comment`, `commit_comment`, `release`, `milestone`, `label`, `status`, `check_run`, `check_suite`, `workflow_run`, `workflow_job`, `deployment`, `deployment_status`, `discussion`, `discussion_comment`
 
+## Slack adapter
+
+[`docs/ingestion/slack-webhooks.md`](../../docs/ingestion/slack-webhooks.md) is the spec. `enrich:slack` (`services/slack-ingestion/enrich.py`) reads the rows.
+
+- **Verification:** `X-Slack-Signature`, `v0=` and the HMAC-SHA256 of `v0:<X-Slack-Request-Timestamp>:<raw body>` with the signing secret. A timestamp more than 5 minutes from now is refused, so a captured request can't be replayed.
+- **Handshake:** the Request URL check (`url_verification`) is signed too. Intake verifies it, answers `{"challenge": …}` and stores nothing.
+- **`delivery_id`:** `event_id`, which Slack repeats on its retries (`X-Slack-Retry-Num`, logged). The `app_rate_limited` notice has none, so it is `rate_limited:<team_id>:<minute_rate_limited>`. Any other body is a 400.
+- **`account_id`:** `team_id`, the workspace.
+- **`event_name`:** the inner `event.type`, plus `:<subtype>` when there is one, e.g. `message:message_deleted`; `app_rate_limited` for the notice.
+- **`occurred_at`:** the [ordering value](../../docs/ingestion/slack-webhooks.md#ordering-value-ember-63): `event.event_ts`, then `event.ts`, then the wrapper's `event_time`, to the microsecond; `minute_rate_limited` for the notice. One that is unreadable gets `received_at`.
+
+The app's scopes and events are in `services/slack-ingestion/slack-app-manifest.json`. Set its Event Subscriptions Request URL to `https://ember.tail470a31.ts.net/webhook/slack` once intake has the secret: Slack sends the URL check straight away.
+
 ## Run
 
 Against the local Postgres, from the repo root:
@@ -66,12 +80,13 @@ Or without the container:
 ```sh
 pip install -r services/intake/requirements.txt
 DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable' \
-  GITHUB_WEBHOOK_SECRET=throwaway-local-secret python3 services/intake/intake.py
+  GITHUB_WEBHOOK_SECRET=throwaway-local-secret SLACK_SIGNING_SECRET=throwaway-local-secret \
+  python3 services/intake/intake.py
 ```
 
 On the cluster it runs from `infra/k8s/apps/intake`, behind nginx at `https://ember.tail470a31.ts.net/webhook/{source}`. [`infra/k8s/README.md`, "intake"](../../infra/k8s/README.md#intake) covers the Deployment, its logs and metrics, and setting the webhook secret.
 
-To send real deliveries to a local intake instead, point a tunnel at the port (`cloudflared tunnel --url http://127.0.0.1:8080`) and set the App's webhook URL to `https://<tunnel-host>/webhook/github` with the same secret.
+To send real deliveries to a local intake instead, point a tunnel at the port (`cloudflared tunnel --url http://127.0.0.1:8080`) and set the App's webhook URL to `https://<tunnel-host>/webhook/github` with the same secret, or the Slack app's Request URL to `https://<tunnel-host>/webhook/slack` with its signing secret in `SLACK_SIGNING_SECRET`.
 
 ## Test
 
