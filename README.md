@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/ember-logo.png">
-    <img src=".github/assets/ember-logo-transparent.png" alt="Ember logo: a flame with graph nodes" width="120">
-  </picture>
+  <img src=".github/assets/ember-logo-transparent.png" alt="Ember logo: a flame with graph nodes" width="120">
 </p>
 
 <h1 align="center">Ember</h1>
@@ -34,9 +31,8 @@ Ember collects that record from GitHub, GitLab, Jira and Slack as it happens. It
 
 ```mermaid
 flowchart LR
-  S["GitHub, GitLab,<br/>Jira, Slack"] -->|webhooks| I["intake<br/>verify and store"]
-  I --> R[("raw_events")]
-  R --> E["enrich<br/>one worker per source"]
+  S["GitHub, GitLab,<br/>Jira, Slack"] -->|webhooks| I["intake<br/>verify, store raw_events"]
+  I --> E["enrich<br/>one worker per source"]
   E --> SR[("source_records<br/>+ pgvector embeddings")]
   SR --> M["MCP server<br/>search"]
   M --> A["Claude Code, Codex,<br/>Cursor"]
