@@ -21,6 +21,7 @@ LOG = logging.getLogger("intake.slack")
 
 SIGNATURE_VERSION = "v0"  # the only scheme Slack documents
 MAX_TIMESTAMP_SKEW = 5 * 60  # Slack's replay window, in seconds
+MAX_TIMESTAMP_DIGITS = 12  # X-Slack-Request-Timestamp is epoch seconds; anything longer is stale anyway
 MAX_DELIVERY_ID = 255  # event_id is short. A body is signed but its fields aren't checked, so cap what reaches the unique index
 
 
@@ -81,7 +82,8 @@ class SlackAdapter:
         signature = delivery.headers.get("x-slack-signature", "")
         if not timestamp or not signature:
             raise Unauthorized("missing signature")
-        if not timestamp.isdigit():
+        # isdigit alone accepts "²" (a latin-1 header byte), which int() rejects. Epoch seconds are 10 digits
+        if not (timestamp.isascii() and timestamp.isdigit()) or len(timestamp) > MAX_TIMESTAMP_DIGITS:
             raise Unauthorized("invalid timestamp")
         # A captured request can't be replayed later: Slack's own window, either side of now
         if abs(self._clock() - int(timestamp)) > MAX_TIMESTAMP_SKEW:
@@ -141,9 +143,9 @@ class SlackAdapter:
             try:
                 when = slack_time(value)
             except (TypeError, ValueError, OverflowError, OSError) as exc:
-                # Store the delivery anyway, ordered by arrival, rather than lose it
+                # Try the next field. With none readable, the delivery is stored anyway, ordered by arrival
                 LOG.warning("unreadable %s on event_id=%s: %s", field, _str(body.get("event_id")), type(exc).__name__)
-                return None
+                continue
             if when is not None:
                 return when
         return None
