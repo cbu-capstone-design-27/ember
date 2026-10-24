@@ -4,11 +4,11 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Avatar } from "../../components/avatar.tsx";
-import { Wordmark } from "../../components/brand.tsx";
+import { SourceLogo, Wordmark } from "../../components/brand.tsx";
 import { NavLinks, SignOutButton } from "../../components/nav.tsx";
 import { PreviewProvider } from "../../components/preview/store.tsx";
-import { ThemeSwitcher } from "../../components/theme.tsx";
 import { requireOnboardedUser } from "../../lib/session.ts";
+import { sourceInfo } from "../../lib/sources.ts";
 import { loadPreviewWorkspace } from "../../lib/workspace/load.ts";
 import styles from "./shell.module.css";
 
@@ -20,29 +20,36 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <div className={styles.shell}>
         <aside className={styles.sidebar}>
           <Link href="/dashboard" className={styles.brand} aria-label="Ember home">
-            <Wordmark size={26} />
+            <Wordmark size={20} />
           </Link>
 
-          <div className={styles.workspace}>
-            <span className={styles.workspaceIcon} aria-hidden="true">K</span>
-            <span className={styles.workspaceText}>
-              <span className={styles.workspaceName}>Kestrel Labs</span>
-              <span className={styles.workspaceMeta}>Preview workspace</span>
-            </span>
-          </div>
+          <p className={styles.workspace}>
+            <span className={styles.workspaceName}>Kestrel Labs</span>
+            <code>preview</code>
+          </p>
 
           <NavLinks className={styles.nav} linkClassName={styles.navLink} />
 
+          <div className={styles.sources}>
+            <Link href="/settings#sources" className={styles.sourcesHead}>
+              Sources
+            </Link>
+            {user.sources.map((id) => (
+              <Link key={id} href="/settings#sources" className={styles.navLink}>
+                <SourceLogo source={id} size={14} />
+                <span>{sourceInfo(id).name}</span>
+              </Link>
+            ))}
+          </div>
+
           <div className={styles.footer}>
-            <ThemeSwitcher />
-            <div className={styles.user}>
+            <div className={styles.user} title={user.email}>
               <Avatar name={user.name} />
-              <span className={styles.userText}>
-                <span className={styles.userName}>{user.name}</span>
-                <span className={styles.userEmail}>{user.email}</span>
-              </span>
+              <span className={styles.userName}>{user.name}</span>
             </div>
-            <SignOutButton className={`btn btn-ghost btn-sm ${styles.signOut}`} />
+            <div className={styles.footerRow}>
+              <SignOutButton className={`btn btn-ghost btn-sm ${styles.signOut}`} />
+            </div>
           </div>
         </aside>
         <main className={styles.main}>{children}</main>

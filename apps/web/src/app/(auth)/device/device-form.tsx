@@ -51,7 +51,9 @@ export function DeviceCodeForm() {
     <>
       <div className={styles.heading}>
         <h1>Sign in to the Ember CLI</h1>
-        <p>Enter the code shown in your terminal after running ember auth login.</p>
+        <p>
+          Enter the code <code>ember auth login</code> printed in your terminal.
+        </p>
       </div>
       <CodeInput />
     </>

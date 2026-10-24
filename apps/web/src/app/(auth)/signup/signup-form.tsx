@@ -50,7 +50,7 @@ export function SignupForm({ next, loginHref }: { next: string; loginHref: strin
       {onboardingNext && <Steps current={1} />}
       <div className={styles.heading}>
         <h1>Create your account</h1>
-        <p>{onboardingNext ? "Then tell us which tools your team uses. It takes a minute." : "Then you'll go back to where you left off."}</p>
+        {!onboardingNext && <p>Then you&apos;ll go back to where you left off.</p>}
       </div>
       <form className={styles.form} onSubmit={onSubmit}>
         <label className="field">
@@ -82,7 +82,7 @@ export function SignupForm({ next, loginHref }: { next: string; loginHref: strin
             <span className={styles.strengthLabel}>{password ? SCORE_LABELS[score] : ""}</span>
           </div>
           <span id="password-hint" className="field-hint">
-            At least {MIN_PASSWORD_LENGTH} characters. A longer passphrase is stronger than symbols.
+            At least {MIN_PASSWORD_LENGTH} characters. Length beats symbols.
           </span>
         </div>
         {error && (

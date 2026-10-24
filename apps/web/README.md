@@ -14,12 +14,12 @@ Next.js (App Router, TypeScript) serves the pages and the auth API from one Node
 | `/login` | Email and password. Goes back to `?next=` (same-site paths only). |
 | `/dashboard` | **Needs attention** (where the sources disagree, with the evidence from each, and a one-click fix), summary numbers, **work in flight** (each ticket with its PR and where it was last discussed), your sources, and recent activity. Everything is clickable: cards, evidence, rows, numbers and activity open a detail drawer. |
 | `/graph` | The knowledge graph, one shaded region per source (GitHub, Jira, Slack) with people in the middle and the cross-source links between them. Drag, zoom, search, filter by subgraph and node type. Click a node for the same details and actions as the drawer. `?focus=<node id>` opens on one node, and every "Show in graph" link uses it. |
-| `/settings` | Name, sources, preview data (reset), theme (light, dark, system), password, log out. |
+| `/settings` | Name, sources, preview data (reset), password, log out. |
 | `/device` | Where `ember auth login` sends the browser: check the code matches the terminal, then approve or deny ([CLI sign-in](#cli-sign-in)). Signed-out users log in or sign up first and come back. |
 | `/api/auth/*` | Better Auth's endpoints (`sign-up/email`, `sign-in/email`, `sign-out`, `get-session`, `update-user`, `change-password`, `device/*`, …). |
 | `/api/whoami` | The name and email a CLI token belongs to ([CLI sign-in](#cli-sign-in)). |
 
-Light and dark mode follow the system until the user picks one. The choice is saved in the browser and applied before the first paint, so there's no flash.
+Light and dark mode follow the system setting (`prefers-color-scheme`), in CSS only, so there's no flash.
 
 ## Sources
 
@@ -226,6 +226,6 @@ CI runs both against a Postgres service container.
 ## Conventions
 
 - Owns only the UI and the web app's auth. Shared logic that a second consumer needs moves to `packages/` (see `packages/README.md`).
-- API calls are same-origin and relative, and nothing loads from a CDN (icons and source marks are inline SVG, fonts are the system's), so the future Electron shell can load the app unchanged and offline.
-- Styling is plain CSS: design tokens and shared pieces in `src/app/globals.css`, one CSS module per page or component. Colors always come from the tokens, so both themes stay in step.
+- API calls are same-origin and relative, and nothing loads from a CDN (icons and source marks are inline SVG, and the fonts, Geist and Geist Mono, are files in `src/app/fonts/` served through `next/font/local`), so the future Electron shell can load the app unchanged and offline.
+- Styling is plain CSS: design tokens (color for both themes, type and spacing scales, radii, shadows, motion) and shared pieces in `src/app/globals.css`, one CSS module per page or component. Modules use the tokens, not raw values, so both themes stay in step.
 - The graph layout uses `d3-force`. Everything else on the page is React and SVG.

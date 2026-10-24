@@ -1,166 +1,96 @@
 .page {
   display: grid;
-  grid-template-columns: minmax(380px, 0.95fr) minmax(0, 1.05fr);
+  grid-template-columns: minmax(380px, 1fr) minmax(0, 1fr);
   min-height: 100vh;
 }
 
-/* --- story side --------------------------------------------------------- */
+/* --- fire side ------------------------------------------------------------ */
 
 .story {
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: 2rem 2.5rem;
+  padding: var(--space-6) var(--space-8);
   overflow: hidden;
-  color: #fafaf9;
-  background:
-    radial-gradient(80% 60% at 0% 0%, rgba(251, 191, 36, 0.12), transparent 60%),
-    linear-gradient(160deg, #1c1917 0%, #0c0a09 100%);
+  color: var(--text);
+  background: var(--bg);
+  border-right: var(--border-width) solid var(--border);
 }
 
 /* The fire along the bottom (flame.tsx), drawn low-res and scaled up pixelated, as on ember-ai.dev.
-   The drop shadow is a soft glow around the pixels, so they read as embers, not blocks. It runs
-   past the right edge (the panel clips it): the fire drifts left, so its last columns burn thin. */
+   The drop shadow is a warm glow above the flames. The mask fades their tips into the panel. */
 .flame {
   position: absolute;
   left: 0;
   bottom: 0;
-  width: 112%;
-  height: 34%;
+  width: 100%;
+  height: 32%;
   image-rendering: pixelated;
-  opacity: 0.8;
+  opacity: 0.85;
   pointer-events: none;
-  filter: drop-shadow(0 -6px 22px rgba(249, 115, 22, 0.35));
-  mask-image: linear-gradient(to top, #000 25%, transparent 95%);
+  filter: drop-shadow(0 -4px 18px rgba(249, 115, 22, 0.4));
+  mask-image: linear-gradient(to top, #000 40%, transparent 100%);
 }
 
-.story::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
-  background-size: 22px 22px;
-  mask-image: linear-gradient(180deg, transparent, #000 30%, #000 70%, transparent);
-  pointer-events: none;
+/* On a light page the fire is lifted (its dark reds become orange) and
+   multiplied into the paper, and its cool tips fade sooner, so it reads as
+   warm flame rather than smoke. flame.tsx itself is unchanged. */
+@media (prefers-color-scheme: light) {
+  .story .flame {
+    mix-blend-mode: multiply;
+    filter: brightness(1.55) saturate(1.15) drop-shadow(0 -4px 18px rgba(249, 115, 22, 0.22));
+    mask-image: linear-gradient(to top, #000 30%, transparent 80%);
+  }
 }
 
 .storyBrand {
   position: relative;
   z-index: 1;
-  color: #fafaf9;
+  color: var(--text);
   text-decoration: none;
   align-self: flex-start;
 }
 
-.storyBody {
+/* The story sits centred in the space above the fire. */
+.stage {
   position: relative;
   z-index: 1;
-  margin: auto 0;
-  max-width: 30rem;
+  flex: 1;
   display: grid;
-  gap: 1.1rem;
-}
-
-.storyTitle {
-  font-size: 2.1rem;
-  line-height: 1.12;
-  letter-spacing: -0.03em;
-  font-weight: 680;
-}
-
-.storyText {
-  color: #d6d3d1;
-  font-size: 1rem;
-  line-height: 1.6;
-}
-
-.preview {
-  margin-top: 0.8rem;
-  padding: 1rem 1.1rem;
-  border-radius: 14px;
-  background: rgba(28, 25, 23, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(8px);
-}
-
-.previewHead {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #fdba74;
-}
-
-.previewDot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: #fb923c;
-  box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.2);
-}
-
-.previewTitle {
-  margin: 0.45rem 0 0.75rem;
-  font-weight: 620;
-  font-size: 0.95rem;
-}
-
-.previewList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.45rem;
-  font-size: 0.82rem;
-  color: #d6d3d1;
-}
-
-.previewList li {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.45rem 0.55rem;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  /* The GitHub mark follows the theme; on this dark panel it must be light. */
-  --src-github: #e6edf3;
-}
-
-.previewList b {
-  color: #fafaf9;
-  font-weight: 600;
-  margin-right: 0.3rem;
-}
-
-.storyFoot {
-  position: relative;
-  z-index: 1;
-  font-size: 0.78rem;
-  color: #f5f5f4;
-  letter-spacing: 0.01em;
-  /* It sits on the brightest part of the fire */
-  text-shadow:
-    0 1px 2px rgba(12, 10, 9, 0.9),
-    0 0 12px rgba(12, 10, 9, 0.7);
+  place-items: center;
+  padding: var(--space-8) var(--space-4) 30vh;
 }
 
 /* --- form side ---------------------------------------------------------- */
 
 .formSide {
+  position: relative;
   display: flex;
   flex-direction: column;
-  padding: 1.25rem 1.5rem 2rem;
+  padding: var(--space-4) var(--space-6) var(--space-8);
+}
+
+/* The landing's faint grid, fading down from the top of the form side. */
+.formSide::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 50%;
+  background-image:
+    linear-gradient(var(--grid-line) var(--border-width), transparent var(--border-width)),
+    linear-gradient(90deg, var(--grid-line) var(--border-width), transparent var(--border-width));
+  background-size: var(--space-12) var(--space-12);
+  mask-image: radial-gradient(80% 100% at 50% 0%, #000 20%, transparent 100%);
+  pointer-events: none;
+}
+
+.formSide > * {
+  position: relative;
 }
 
 .topBar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 1rem;
+  min-height: var(--control-lg);
 }
 
 .mobileBrand {
@@ -172,97 +102,105 @@
 
 .formWrap {
   width: 100%;
-  max-width: 25rem;
+  max-width: 22rem;
   margin: auto;
-  padding: 2rem 0;
+  padding: var(--space-8) 0;
+}
+
+.formFoot {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+.formFoot a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.formFoot a:hover {
+  color: var(--text);
 }
 
 /* --- shared pieces used by the pages ------------------------------------ */
 
 .heading {
   display: grid;
-  gap: 0.4rem;
-  margin-bottom: 1.6rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
 }
 
 .heading p {
+  font-size: var(--text-sm);
   color: var(--text-2);
 }
 
 .form {
   display: grid;
-  gap: 1rem;
+  gap: var(--space-4);
+}
+
+.form > button[type="submit"],
+.form > button:last-child {
+  margin-top: var(--space-2);
 }
 
 .switch {
-  margin-top: 1.4rem;
-  text-align: center;
+  margin-top: var(--space-6);
+  font-size: var(--text-sm);
   color: var(--text-2);
-  font-size: 0.875rem;
 }
 
 /* CLI sign-in (/device): the code to compare with the terminal. */
 .deviceCode {
-  margin-bottom: 1.6rem;
-  padding: 1rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface-2);
+  margin-bottom: var(--space-6);
+  padding: var(--space-5);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
   font-family: var(--font-mono);
-  font-size: 1.75rem;
-  font-weight: 600;
-  letter-spacing: 0.15em;
+  font-size: var(--text-xl);
+  letter-spacing: 0.16em;
   text-align: center;
 }
 
 .codeInput {
   font-family: var(--font-mono);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .steps {
   list-style: none;
   padding: 0;
-  margin: 0;
+  margin: 0 0 var(--space-6);
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1.4rem;
-  font-size: 0.78rem;
-  font-weight: 560;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
   color: var(--text-3);
 }
 
 .step {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-2);
 }
 
 .stepNum {
-  display: grid;
-  place-items: center;
-  width: 1.3rem;
-  height: 1.3rem;
-  border-radius: 50%;
-  border: 1px solid var(--border-strong);
-  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
 .stepActive {
   color: var(--text);
 }
 
-.stepActive .stepNum {
-  background: var(--accent-solid);
-  border-color: var(--accent-solid);
-  color: var(--on-accent);
-}
-
 .stepLine {
-  flex: 0 0 2rem;
-  height: 1px;
+  flex: 0 0 var(--space-6);
+  height: var(--border-width);
   background: var(--border-strong);
 }
 
@@ -270,20 +208,20 @@
   display: grid;
   grid-template-columns: repeat(4, 1fr) auto;
   align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.15rem;
+  gap: var(--space-1);
+  margin-top: var(--space-0-5);
 }
 
 .strengthBar {
-  height: 4px;
-  border-radius: 2px;
+  height: var(--space-0-5);
+  border-radius: var(--radius-full);
   background: var(--surface-3);
-  transition: background-color 160ms ease;
+  transition: background-color var(--duration) var(--ease-out);
 }
 
 .strengthLabel {
-  margin-left: 0.4rem;
-  font-size: 0.74rem;
+  margin-left: var(--space-2);
+  font-size: var(--text-xs);
   color: var(--text-3);
   min-width: 4.5rem;
   text-align: right;
@@ -300,5 +238,9 @@
 
   .mobileBrand {
     display: inline-flex;
+  }
+
+  .formSide {
+    padding: var(--space-3) var(--space-5) var(--space-8);
   }
 }
