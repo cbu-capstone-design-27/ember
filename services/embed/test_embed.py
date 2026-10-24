@@ -69,13 +69,15 @@ class StubEmbeddings:
         self.dimension = dimension
         self.statuses: list[int] = []
         self.requests: list[list[str]] = []
+        self.auth: list[str | None] = []
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 stub.requests.append(body["input"])
-                assert self.path == "/v1/embeddings" and self.headers["Authorization"] == "Bearer test-key"
+                stub.auth.append(self.headers.get("Authorization"))
+                assert self.path == "/v1/embeddings"
                 if stub.statuses:
                     self.send_response(stub.statuses.pop(0))
                     self.send_header("Retry-After", "0")
@@ -167,8 +169,8 @@ class EmbedTest(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
         await asyncio.to_thread(self.stub.close)
 
-    def worker(self, **kwargs) -> embed.Worker:
-        client = embed.EmbeddingClient(self.stub.url, "test-key", base_delay=0.01)
+    def worker(self, api_key: str | None = "test-key", **kwargs) -> embed.Worker:
+        client = embed.EmbeddingClient(self.stub.url, api_key, base_delay=0.01)
         return embed.Worker(database_url(), client, **kwargs)
 
     async def insert(self, source: str, kind: str, record: dict) -> int:
@@ -198,6 +200,7 @@ class EmbedTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(row["dims"], 1024)
             first[row_id] = row["embedded_at"]
         self.assertEqual(len(self.stub.requests), 3, "one request per batch of 4")
+        self.assertEqual(set(self.stub.auth), {"Bearer test-key"})
 
         await self.drain(self.worker())
         self.assertEqual(len(self.stub.requests), 3, "a second run embedded something again")
@@ -241,6 +244,12 @@ class EmbedTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.embedded(also_good))["embed_text"], "also fine")
         self.assertIsNone((await self.embedded(bad))["embedded_at"])
         self.assertEqual(worker.failed, {bad})
+
+    async def test_without_an_api_key_no_authorization_header_is_sent(self):
+        row = await self.insert("slack", "message", {"payload": {"text": "no auth"}})
+        await self.drain(self.worker(api_key=None))
+        self.assertEqual((await self.embedded(row))["dims"], 1024)
+        self.assertEqual(self.stub.auth, [None])
 
     async def test_refuses_to_start_on_a_wrong_dimension(self):
         self.stub.dimension = 768
