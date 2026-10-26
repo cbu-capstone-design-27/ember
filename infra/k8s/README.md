@@ -25,8 +25,9 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make sync` | Fetch `develop` and apply it now instead of within the next minute |
 | `make apps-diff` | Shows what this checkout's `infrastructure/`, `apps/` and `monitoring/` would change on the cluster. Deploys nothing |
 | `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Also checks each enrich worker logged that it is listening. Deploys nothing |
-| `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret in the vault ([The webhook secret](#the-webhook-secret)). Commit the result |
+| `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret and the Slack app's signing secret in the vault ([The webhook secret](#the-webhook-secret), [The Slack signing secret](#the-slack-signing-secret)). Commit the result |
 | `make enrich-github-secret` | Writes `apps/enrich-github/github-app.sops.yaml`, encrypted, from the GitHub App's private key in the vault ([enrich-github](#enrich-github)). Commit the result |
+| `make enrich-slack-secret` | Writes `apps/enrich-slack/slack-bot.sops.yaml`, encrypted, from the Slack app's bot token in the vault ([enrich-slack](#enrich-slack)). Commit the result |
 | `make llm-tunnel-secret` | Temporary (EMBER-49). Writes `apps/llm-tunnel/ssh.sops.yaml` and `model-keys.sops.yaml`, encrypted, from the tunnel key and the Spark's API keys in the vault, and prints the `authorized_keys` line for the Spark ([llm-tunnel](#llm-tunnel)). Commit the result |
 | `make map-tenant SOURCE=… ACCOUNT=… TENANT=…` | Maps a source account to a tenant and hands the deliveries already stored for it to the enrich workers ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
 | `make grafana-secret` | Writes the collector's and the Grafana Operator's Secrets, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud tokens](#the-grafana-cloud-tokens)). Commit the result |
@@ -124,6 +125,18 @@ GitHub signs each delivery with the App's webhook secret, and intake checks it. 
 
 Between steps 4 and 5 GitHub's deliveries are refused with 401. GitHub doesn't retry them, but each one can be redelivered from the App's Advanced tab, Recent Deliveries, for 3 days.
 
+#### The Slack signing secret
+
+Slack signs each delivery with the Slack app's signing secret, and intake checks it before serving `/webhook/slack` (`services/intake/README.md`, Slack adapter). Slack generates the secret; it lives in the Slack app's settings, the vault, and `apps/intake/webhooks.sops.yaml`, next to GitHub's. To set or rotate it:
+
+1. Copy it from the Slack app's **Basic Information → App Credentials → Signing Secret** (regenerate it there to rotate).
+2. Keep it in the vault as `vault_slack_signing_secret`.
+3. `make intake-secret`, which writes both intake secrets into the same file and needs both in the vault.
+4. Commit and merge the file, then `kubectl --context homelab -n ember rollout restart deploy/intake`.
+5. In the Slack app's **Event Subscriptions**, set the Request URL to `https://ember.tail470a31.ts.net/webhook/slack`. Slack sends a signed `url_verification` straight away, and intake answers it.
+
+After a rotation, deliveries are refused with 401 until intake restarts. Slack retries each one three times, the last about five minutes after the first, then drops it.
+
 ### enrich-github
 
 `enrich:github` (EMBER-65, `services/github-ingestion`): turns the GitHub rows intake stores in `raw_events` into `source_records`. One replica in namespace `ember` from `apps/enrich-github/`, with no Service, because it serves nothing. It claims rows with `FOR UPDATE SKIP LOCKED`, so a rollout's overlap never enriches a row twice.
@@ -140,6 +153,24 @@ kubectl --context homelab -n ember logs deploy/enrich-github
 It logs `enrich:github listening on raw_events` once connected, and one line per row with how many `source_records` it wrote, never the payload.
 
 To set or rotate the key: generate a private key in the App's settings (`ember-ingest`, Private keys), put the whole `.pem` in the vault as `vault_github_app_private_key` (a YAML block scalar, `|`), run `make enrich-github-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-github`. Delete the old key on GitHub once the new pod is listening.
+
+### enrich-slack
+
+`enrich:slack` (EMBER-67, `services/slack-ingestion/enrich.py`): turns the Slack rows intake stores in `raw_events` into `source_records`. One replica in namespace `ember` from `apps/enrich-slack/`, with no Service, because it serves nothing. It claims rows with `FOR UPDATE SKIP LOCKED`, as `enrich-github` does.
+
+- **Image.** `deployment.yaml` pins a `develop-<run>-<sha>` tag of `ghcr.io/cbu-capstone-design-27/ember/slack-ingestion` and runs `python3 enrich.py`. The image's default command is `receiver.py`, a stdout-only stub that is never deployed; intake receives Slack's events.
+- **Credentials.** `DATABASE_URL` comes from Secret `postgres-app`. The bot token is Secret `enrich-slack-bot` (`SLACK_BOT_TOKEN`), used for the lookups the Events API payload lacks. Intake never sees the token, and this worker never sees the signing secret.
+- **Rate limits.** `SLACK_RATE_MODE=internal`, since the Slack app is one the workspace created itself. The gates live in Postgres table `rate_limits`, so every worker shares one workspace's quota.
+- **Tenants.** Intake stores a delivery with `tenant` null until its workspace is in `installations`. Map it with `make map-tenant SOURCE=slack ACCOUNT=<team_id> TENANT=<tenant>` ([Mapping a tenant](#mapping-a-tenant)). The `team_id` (`T…`) is in every delivery, and in the waiting-accounts query.
+- **Stopping.** On SIGTERM it stops claiming and finishes the rows in flight, for up to 60 s. A row that would wait on a Slack rate limit for more than 10 s more rolls back instead and stays pending for the next pod.
+
+```bash
+kubectl --context homelab -n ember logs deploy/enrich-slack
+```
+
+It logs `enrich:slack listening on raw_events` once connected, which `make apps-health` waits for.
+
+To set or rotate the token: copy **OAuth & Permissions → Bot User OAuth Token** (`xoxb-…`) from the Slack app, put it in the vault as `vault_slack_bot_token`, run `make enrich-slack-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-slack`.
 
 ### llm-tunnel
 

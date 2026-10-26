@@ -48,7 +48,7 @@ spec:
       containers:
         - name: intake
           # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
-          image: ghcr.io/cbu-capstone-design-27/ember/intake:develop-124-749cda5
+          image: ghcr.io/cbu-capstone-design-27/ember/intake:develop-194-6b72048
           env:
             # The pod stays in CreateContainerConfigError until both Secrets exist
             - name: DATABASE_URL
@@ -61,6 +61,12 @@ spec:
                 secretKeyRef:
                   name: intake-webhooks
                   key: GITHUB_WEBHOOK_SECRET
+            # Serves /webhook/slack (services/intake/README.md, Slack adapter)
+            - name: SLACK_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: intake-webhooks
+                  key: SLACK_SIGNING_SECRET
             - name: LISTEN_PORT
               value: "8080"
           ports:
