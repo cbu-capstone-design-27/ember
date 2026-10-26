@@ -1,8 +1,9 @@
 ---
 # Writes k8s/apps/intake/webhooks.sops.yaml, Secret intake-webhooks, from the vault, encrypted with
 # the public key in .sops.yaml. vault_github_webhook_secret is the GitHub App's webhook secret
-# (k8s/README.md, "The webhook secret"). The value is never printed. Commit the file it writes.
-# Use make intake-secret.
+# (k8s/README.md, "The webhook secret"); vault_slack_signing_secret is the Slack app's signing secret
+# (k8s/README.md, "The Slack signing secret"). The values are never printed. Commit the file it
+# writes. Use make intake-secret.
 - name: Intake
   hosts: localhost
   gather_facts: false
@@ -17,6 +18,7 @@
         namespace: ember
       stringData:
         GITHUB_WEBHOOK_SECRET: "{{ vault_github_webhook_secret }}"
+        SLACK_SIGNING_SECRET: "{{ vault_slack_signing_secret }}"
   tasks:
     - name: Secret
       tags: [secret]
@@ -35,10 +37,23 @@
             quiet: true
           no_log: true
 
+        - name: Require the Slack signing secret in the vault
+          ansible.builtin.assert:
+            that:
+              - vault_slack_signing_secret is defined
+              - vault_slack_signing_secret is string
+              - vault_slack_signing_secret | length > 0
+              - vault_slack_signing_secret == vault_slack_signing_secret | trim
+            fail_msg: >-
+              Add vault_slack_signing_secret, the Slack app's Signing Secret (Basic Information, App
+              Credentials), with .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
         # Encrypting again gives new ciphertext every time, so only write when the value changed
-        - name: Read the secret the file holds now
+        - name: Read the secrets the file holds now
           ansible.builtin.command:
-            argv: [sops, --decrypt, --extract, '["stringData"]["GITHUB_WEBHOOK_SECRET"]', "{{ secret_file }}"]
+            argv: [sops, --decrypt, --extract, '["stringData"]', --output-type, json, "{{ secret_file }}"]
             chdir: "{{ repo_dir }}"
           environment:
             SOPS_AGE_KEY: "{{ vault_sops_age_key | default('') }}"
@@ -54,7 +69,7 @@
             chdir: "{{ repo_dir }}"
             stdin: "{{ intake_secret | to_json }}"
           register: encrypted
-          when: current.rc != 0 or current.stdout != vault_github_webhook_secret
+          when: current.rc != 0 or (current.stdout | from_json) != intake_secret.stringData
           changed_when: false
           no_log: true
 

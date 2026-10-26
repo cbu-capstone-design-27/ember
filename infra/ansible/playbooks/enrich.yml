@@ -2,7 +2,10 @@
 # Writes the enrich workers' source credentials as Secrets, encrypted with the public key in .sops.yaml.
 # GitHub: k8s/apps/enrich-github/github-app.sops.yaml, Secret enrich-github-app, from
 # vault_github_app_private_key, the PEM of the GitHub App's private key (k8s/README.md, enrich-github).
-# The value is never printed. Commit the file it writes. Use make enrich-github-secret.
+# Use make enrich-github-secret.
+# Slack: k8s/apps/enrich-slack/slack-bot.sops.yaml, Secret enrich-slack-bot, from vault_slack_bot_token,
+# the Slack app's Bot User OAuth Token (k8s/README.md, enrich-slack). Use make enrich-slack-secret.
+# The values are never printed. Commit the file it writes.
 - name: Enrich
   hosts: localhost
   gather_facts: false
@@ -19,6 +22,15 @@
         namespace: ember
       stringData:
         private-key.pem: "{{ github_app_key }}"
+    slack_secret_file: infra/k8s/apps/enrich-slack/slack-bot.sops.yaml
+    slack_secret:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: enrich-slack-bot
+        namespace: ember
+      stringData:
+        SLACK_BOT_TOKEN: "{{ vault_slack_bot_token | default('') | trim }}"
   tasks:
     - name: GitHub
       tags: [secret-github]
@@ -71,3 +83,55 @@
             msg: >-
               {{ github_secret_file ~ ' is written. Commit and merge it, then restart the worker: kubectl --context homelab -n ember rollout restart deploy/enrich-github'
                  if encrypted is not skipped else github_secret_file ~ ' already holds the vault value; nothing to do' }}
+
+    - name: Slack
+      tags: [secret-slack]
+      block:
+        # The worker refuses user (xoxp-) and app-level (xapp-) tokens (pull_test.bot_token)
+        - name: Require the bot token in the vault
+          ansible.builtin.assert:
+            that:
+              - vault_slack_bot_token is defined
+              - vault_slack_bot_token is string
+              - vault_slack_bot_token | trim is match('(xoxb-|xoxe\\.xoxb-)')
+            fail_msg: >-
+              Add vault_slack_bot_token, the Slack app's Bot User OAuth Token (xoxb-..., from OAuth &
+              Permissions), with .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
+        # Encrypting again gives new ciphertext every time, so only write when the value changed
+        - name: Read the token the file holds now
+          ansible.builtin.command:
+            argv: [sops, --decrypt, --extract, '["stringData"]["SLACK_BOT_TOKEN"]', "{{ slack_secret_file }}"]
+            chdir: "{{ repo_dir }}"
+          environment:
+            SOPS_AGE_KEY: "{{ vault_sops_age_key | default('') }}"
+          register: current
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Encrypt the Secret
+          ansible.builtin.command:
+            argv: [sops, --encrypt, --filename-override, "{{ slack_secret_file }}",
+                   --input-type, json, --output-type, yaml, /dev/stdin]
+            chdir: "{{ repo_dir }}"
+            stdin: "{{ slack_secret | to_json }}"
+          register: encrypted
+          when: current.rc != 0 or current.stdout != slack_secret.stringData.SLACK_BOT_TOKEN
+          changed_when: false
+          no_log: true
+
+        - name: Write it to {{ slack_secret_file }}
+          ansible.builtin.copy:
+            content: "{{ encrypted.stdout }}\n"
+            dest: "{{ repo_dir }}/{{ slack_secret_file }}"
+            mode: "0644"
+          when: encrypted is not skipped
+
+        - name: Say what to do next
+          ansible.builtin.debug:
+            msg: >-
+              {{ slack_secret_file ~ ' is written. Commit and merge it, then restart the worker: kubectl --context homelab -n ember rollout restart deploy/enrich-slack'
+                 if encrypted is not skipped else slack_secret_file ~ ' already holds the vault value; nothing to do' }}

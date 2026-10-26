@@ -5,6 +5,7 @@ resources:
   - nginx
   - intake
   - enrich-github
+  - enrich-slack
   # TEMPORARY (EMBER-49): SSH tunnel to the Spark's chat model
   - llm-tunnel
   - neo4j
