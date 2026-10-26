@@ -4,19 +4,20 @@ metadata:
     name: intake-webhooks
     namespace: ember
 stringData:
-    GITHUB_WEBHOOK_SECRET: ENC[AES256_GCM,data:avrO+3OI/LRxkUZTGB2IaVs6pOvCf5WaNOwaTCjcxEdwXscZWH0UcirjKXustxGMnmkJARSKMuuk/BIt0Gl9xw==,iv:I9vUoNhQg+08pSVSOoAj+nwuwgXanDr0VFZdwHW6xlA=,tag:9HqxzJA993WHFq2bLiiliA==,type:str]
+    GITHUB_WEBHOOK_SECRET: ENC[AES256_GCM,data:fMnG+gqp6EIIK3rbNnX4KsL2jA/KVNoMNiKuVjLO0TcOCZi6cmpQzrUitdbv7Zgi8Fxayj3z3Dn1RPidVT90hw==,iv:xVtfCd4RLHyRxTas+K7p38+MTeccvBBoEq15I+1Ag6k=,tag:MNKbrrA2dcjR3F9FlPn6nA==,type:str]
+    SLACK_SIGNING_SECRET: ENC[AES256_GCM,data:VcFDYjdBJi0Fm0L2UcsLnwGHIcOLKNHbMvoeO1CNRXU=,iv:xnU4dg20Xvb7ArB15APnEVX/0lHcsSjboy0cSJcFKyQ=,tag:93SioU5EboM5kDNjKCD2Rg==,type:str]
 sops:
     age:
         - enc: |
             -----BEGIN AGE ENCRYPTED FILE-----
-            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBoWTJTYi9vT2RIK1VJS2xi
-            VGNxNHFvN0d0bVp4aGF2WnZ3TVovMUhKeWswCm5TUHhWRW1pN20yL0RXNEpMWjlY
-            ZjBVRkgvQk8weXhRVFh6djVwSkV4c2cKLS0tIFRyeE14bXV1QjB2UGw4RXpQdE1W
-            Y2VpZHJLd0R6ZnlIaEs0VXFibDhDd0kKAaIK0KaudlcSbUUF/CHMs7X5EEG62rnc
-            LXbWOjDIRDBI5kX4JlT4qgt9bTv4lRopXaOINY7f3o+vOhAw+tY6hg==
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB0UUhtc1RaVWlGdnBSS1dF
+            NlBEUE9UemtrZXRZNGVPSXhCOGlneG1sM0FrCko1T2xPUFZZK3pVTEFEcVpCeTU0
+            UWhkaU5XWitGNFp4YkVhZVpobzZsVXMKLS0tIGRjMmJrWnM1Vmx3SmlTRWhkK093
+            NXdCU0htRFh2cGdQYVlZQzdraVIwcnMKKk7PXc+j3hZn8U6CsodaMvWZwmNJuvW2
+            Q59jShLfNK3yg4uHktS66lr1ax6bb+pAr2+bPdPJJSz/6mAFuqPw3w==
             -----END AGE ENCRYPTED FILE-----
           recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-10-15T03:34:46Z"
-    mac: ENC[AES256_GCM,data:30Penq1v2UYaweiGKOOF92hkOiVZL0lvwbqx1xUB4vqOwlil2nmaCgBJcyc8HQyUSEpslM+eauj23AmQ6pTsmSuqireBVOLOmwUoSdUosP+RVi97cI5aiFZEK0sPt5A7Y3pswoQtH60mrDqxNqj62RM7H3C2yrUHQU+6fWK/wYw=,iv:wUS3rGvDNBQ4PcYnge4JfovZoDUa9Jzl79RjvxCNP4I=,tag:Cg6DW1i0e89zpKUnGrnl9w==,type:str]
+    lastmodified: "2026-10-26T16:57:06Z"
+    mac: ENC[AES256_GCM,data:hjvBVOgtET2ssVWW9cX+V8Dz/6ajCD3lGZ2k4CRxWyUdjI1S9VySqwmYc5guIBrHkNHyXhEtmfJqQ5V3tqMpY6b8ZiZSR8QF7VEIvGN7aHu68vFRFXPgfebquhXEVu3Fibr27fPTmIoBDzBp3iCLYKwzHee51ErNyylvCLe/piI=,iv:5yNbDlwprtM6XVGK1ljTtWk0ExPLwOt9zPyjeaGr8tk=,tag:rnaVLGakDQ15s+d1vik1ow==,type:str]
     version: 3.13.3
