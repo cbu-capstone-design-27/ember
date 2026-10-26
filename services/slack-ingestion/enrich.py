@@ -846,6 +846,8 @@ class Worker:
                 async with conn:
                     await conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(self.channel)))
                     self.listening.set()
+                    # make apps-health waits for this line: the worker is connected and taking work
+                    LOG.info("enrich:slack listening on %s", self.channel)
                     self._kick_all()  # rows that arrived while nothing was listening
                     delay = 1.0
                     # Any notification wakes the runners, whose claim filters by source. The payload
