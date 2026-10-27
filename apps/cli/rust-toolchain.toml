@@ -1,0 +1,5 @@
+# rustup reads this, so everyone and CI build with the same compiler, rustfmt and clippy.
+[toolchain]
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

@@ -34,7 +34,7 @@ jobs:
       pull-requests: read   # on a PR, the filter lists its files through the API
     outputs:
       web: ${{ steps.paths.outputs.web }}
-      cli: ${{ steps.filter.outputs.cli }}
+      cli: ${{ steps.paths.outputs.cli }}
       mcp: ${{ steps.filter.outputs.mcp }}
       pipeline: ${{ steps.filter.outputs.pipeline }}
       packages: ${{ steps.filter.outputs.packages }}
@@ -47,6 +47,9 @@ jobs:
       # previous commit (`base` is ignored on PRs). This file counts as a web change,
       # so editing the web job or the image build still runs them. apps/web uses
       # nothing from packages/, so packages/ doesn't count.
+      # EMBER-82: likewise the cli job, which also runs when the migrations change,
+      # because `ember status` reads the schema they build. It uses nothing from
+      # packages/ either.
       - name: Path filter
         id: paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -56,9 +59,12 @@ jobs:
             web:
               - 'apps/web/**'
               - '.github/workflows/ci.yml'
+            cli:
+              - 'apps/cli/**'
+              - 'infra/k8s/apps/postgres/migrations/**'
+              - '.github/workflows/ci.yml'
       # TODO(EMBER-28 follow-up): move each area into the path filter above as its
       # jobs land, e.g.
-      #   cli:      ['apps/cli/**', 'packages/**']
       #   mcp:      ['apps/mcp/**', 'packages/**']
       #   pipeline: ['services/pipeline/**', 'packages/**']
       #   packages: ['packages/**']
@@ -66,7 +72,7 @@ jobs:
       - name: Stub path filter for the other areas (marked changed)
         id: filter
         run: |
-          for area in cli mcp pipeline packages infra; do
+          for area in mcp pipeline packages infra; do
             echo "$area=true" >> "$GITHUB_OUTPUT"
           done
 
@@ -314,6 +320,58 @@ jobs:
           TEST_POSTGRES_URL: postgres://postgres:ci@localhost:5432/ember
         run: npm test
 
+  # EMBER-82. The CLI (apps/cli, Rust, ADR 0007): format, lint, build, and every test,
+  # including `ember status` against the cluster's Postgres version with the repo
+  # migrations applied by the dbmate the migrate Job runs. pgvector's image, as in
+  # sanity, because the migrations create the vector extension (EMBER-77).
+  cli:
+    name: cli
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg18-trixie
+        env:
+          POSTGRES_PASSWORD: ci-local
+        ports:
+          - 5432:5432
+        # TCP, not the socket: the first start runs initdb on a socket-only server
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
+          --health-interval 2s --health-timeout 5s --health-retries 20
+    defaults:
+      run:
+        working-directory: apps/cli
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      # The version, rustfmt and clippy come from apps/cli/rust-toolchain.toml
+      - name: Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/cli
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: dbmate
+        env:
+          # As in sanity: the dbmate the migrate Job runs (apps/postgres/migrate-job.yaml)
+          DBMATE_VERSION: v2.36.0
+          DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
+        run: |
+          set -euo pipefail
+          curl -fsSLo "$RUNNER_TEMP/dbmate" "https://github.com/amacneil/dbmate/releases/download/$DBMATE_VERSION/dbmate-linux-amd64"
+          echo "$DBMATE_SHA256  $RUNNER_TEMP/dbmate" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/dbmate"
+      - name: Tests, including those that need Postgres
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@localhost:5432/postgres?sslmode=disable
+        run: DBMATE="$RUNNER_TEMP/dbmate" cargo test --locked -- --include-ignored
+
   # EMBER-42. Every services/<name>/Dockerfile and apps/<name>/Dockerfile is an
   # image target named <name>. Adding a Dockerfile is all it takes to enroll a
   # service; see docs/container-images.md. The web image is left out when
@@ -419,6 +477,7 @@ jobs:
       - sanity
       - pipeline
       - web
+      - cli
       - image-targets
       - images
     steps:

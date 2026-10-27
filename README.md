@@ -75,6 +75,7 @@ Each component's README covers running it and its tests:
 - [`services/intake`](services/intake/README.md): receiving webhooks locally (Compose profile `intake`)
 - [`services/embed`](services/embed/README.md): embedding `source_records`
 - [`apps/mcp`](apps/mcp/README.md): the MCP server
+- [`apps/cli`](apps/cli/README.md): the `ember` command, starting with `ember status`
 
 ## Status
 
