@@ -39,7 +39,7 @@ enum AuthCommand {
         #[arg(long)]
         no_browser: bool,
     },
-    /// Show who you are signed in as
+    /// Show who you are logged in as
     Status,
     /// Sign out and delete the stored token
     Logout,

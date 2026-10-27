@@ -163,10 +163,10 @@ async fn wait_for_token(client: &Client, url: &str, code: &DeviceCode) -> Result
 
 pub async fn status() -> Result<(), Error> {
     let Some(credentials) = load()? else {
-        return Err(not_signed_in());
+        return Err(not_logged_in());
     };
     let email = who_am_i(&client()?, &credentials.url, &credentials.token).await?;
-    println!("Signed in to {} as {email}", credentials.url);
+    println!("Logged in to {} as {email}", credentials.url);
     Ok(())
 }
 
@@ -174,7 +174,7 @@ pub async fn logout() -> Result<(), Error> {
     let credentials = match load() {
         Ok(Some(credentials)) => credentials,
         Ok(None) => {
-            println!("Not signed in");
+            println!("Not logged in");
             return Ok(());
         }
         Err(Error::Auth(problem)) => {
@@ -213,7 +213,7 @@ pub async fn logout() -> Result<(), Error> {
     Ok(())
 }
 
-/// Asks the web app who owns `token`. A 401 means it expired or was revoked.
+/// Asks the web app who owns `token`. A 401 means it expired or was revoked, so we are not logged in.
 async fn who_am_i(client: &Client, url: &str, token: &str) -> Result<String, Error> {
     let response = client
         .get(format!("{url}/api/whoami"))
@@ -222,9 +222,7 @@ async fn who_am_i(client: &Client, url: &str, token: &str) -> Result<String, Err
         .await
         .map_err(|error| unreachable(url, &error))?;
     if response.status() == StatusCode::UNAUTHORIZED {
-        return Err(Error::Auth(format!(
-            "The sign-in has expired or was revoked. {LOGIN_AGAIN}"
-        )));
+        return Err(not_logged_in());
     }
     if !response.status().is_success() {
         return Err(unexpected("the whoami request", response).await);
@@ -369,8 +367,8 @@ fn client() -> Result<Client, Error> {
         .map_err(|error| Error::Auth(format!("Cannot set up HTTP: {error}")))
 }
 
-fn not_signed_in() -> Error {
-    Error::Auth(format!("Not signed in. {LOGIN_AGAIN}"))
+fn not_logged_in() -> Error {
+    Error::Auth(format!("Not logged in. {LOGIN_AGAIN}."))
 }
 
 /// "WDJBMJHT" as "WDJB-MJHT", the way the web app's page shows it.

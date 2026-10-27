@@ -442,7 +442,7 @@ fn status_names_the_account_and_server() {
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(
         stdout(&output),
-        format!("Signed in to {} as {EMAIL}\n", app.url)
+        format!("Logged in to {} as {EMAIL}\n", app.url)
     );
     assert_no_token(&output);
 }
@@ -454,12 +454,10 @@ fn status_with_a_rejected_token_keeps_the_file() {
     sign_in_with(dir.path(), &app.url, "revoked-token");
     let output = ember(dir.path(), &["auth", "status"]);
     assert_eq!(output.status.code(), Some(1));
-    assert!(
-        stderr(&output).contains("expired or was revoked"),
-        "{}",
-        stderr(&output)
+    assert_eq!(
+        stderr(&output),
+        "error: Not logged in. Run `ember auth login`.\n"
     );
-    assert!(stderr(&output).contains("ember auth login"));
     assert!(!stderr(&output).contains("revoked-token"));
     assert!(credentials_path(dir.path()).exists());
 }
@@ -471,7 +469,7 @@ fn status_when_not_signed_in() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr(&output),
-        "error: Not signed in. Run `ember auth login`\n"
+        "error: Not logged in. Run `ember auth login`.\n"
     );
 }
 
@@ -544,5 +542,5 @@ fn logout_when_not_signed_in_succeeds() {
     let dir = tempfile::tempdir().unwrap();
     let output = ember(dir.path(), &["auth", "logout"]);
     assert!(output.status.success());
-    assert_eq!(stdout(&output), "Not signed in\n");
+    assert_eq!(stdout(&output), "Not logged in\n");
 }
