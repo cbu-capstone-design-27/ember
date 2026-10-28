@@ -149,8 +149,58 @@ class WriterTests(unittest.TestCase):
                                               "embed_text": "hello"})
         Neo4jWriter("bolt://x", "u", "p", driver=driver).write_nodes([node])
         query, params = driver.log[0]
-        self.assertIn("SET n += row.props", query)  # merges into existing properties, never replaces them
+        # merges into existing properties, never replaces them
+        self.assertIn("SET n += CASE WHEN newer OR coalesce(cur.deleted, false) = false THEN row.props", query)
+        self.assertNotIn("SET n = row", query)
+        self.assertIn("ELSE properties(n) END", query)  # only a delete replaces the properties
         self.assertNotIn("embedding", params["rows"][0]["props"])
+
+
+class OrderingTests(unittest.TestCase):
+    """EMBER-85: props apply by the source's occurred_at (the Cypher itself runs in test_pg_load.py
+    and test_neo4j_integration.py against a real Neo4j)."""
+
+    def test_rows_carry_occurred_at_only_when_set(self):
+        driver = FakeDriver()
+        w = Neo4jWriter("bolt://x", "u", "p", driver=driver)
+        w.write_nodes([NodeRec("Person", G, "github:a", {"name": "A"}, occurred_at="2026-10-01T00:00:00.000000Z")])
+        self.assertEqual(driver.log[0][1]["rows"][0]["occurred_at"], "2026-10-01T00:00:00.000000Z")
+        for query in (node_query("WorkItem"), node_query("Person"), edge_query("AUTHORED", "Person", "WorkItem")):
+            self.assertIn("row.occurred_at >= cur.occurred_at) AS newer", query)
+            self.assertIn("SET n += CASE WHEN newer THEN {} ELSE cur END" if "(n:" in query
+                          else "SET r += CASE WHEN newer THEN {} ELSE cur END", query)
+
+    def test_one_element_appears_once_per_query_in_the_order_given(self):
+        driver = FakeDriver()
+        w = Neo4jWriter("bolt://x", "u", "p", driver=driver)
+        props = {"source": "github", "kind": "issue", "external_id": "a#1"}
+        first = NodeRec("WorkItem", G, "a#1", {**props, "status": "open"}, occurred_at="2026-10-02T00:00:00.000000Z")
+        other = NodeRec("WorkItem", G, "a#2", {**props, "external_id": "a#2"}, occurred_at="2026-10-01T00:00:00.000000Z")
+        second = NodeRec("WorkItem", G, "a#1", {**props, "status": "done"}, occurred_at="2026-10-03T00:00:00.000000Z")
+        w.write_nodes([first, other, second])
+        sent = [[row["props"].get("status") for row in params["rows"]] for _, params in driver.log]
+        self.assertEqual(sent, [["open", None], ["done"]])
+
+    def test_placeholders_merge_source_backed_endpoints_and_match_people(self):
+        query = edge_query("AUTHORED", "Person", "Message", placeholders=True)
+        self.assertIn("MATCH (a:Person {group_id: row.group_id, uuid: row.src})", query)
+        self.assertIn("MERGE (b:Message {group_id: row.group_id, source: row.source, external_id: row.dst_key}) "
+                      "ON CREATE SET b.uuid = row.dst, b.placeholder = true", query)
+        self.assertNotIn("placeholder", edge_query("AUTHORED", "Person", "Message"))
+        self.assertIn("REMOVE n.placeholder", node_query("Message"))
+
+    def test_a_newer_delete_keeps_only_identity_keys(self):
+        query = node_query("Message")
+        self.assertIn("SET n = CASE WHEN newer AND coalesce(row.props.deleted, false) THEN {group_id: n.group_id, "
+                      "uuid: n.uuid, source: n.source, external_id: n.external_id, kind: n.kind, deleted: n.deleted}",
+                      query)
+        self.assertNotIn("row.props.deleted", edge_query("AUTHORED", "Person", "Message"))
+
+        driver = FakeDriver(rows=[[{"n": 1}]])
+        edge = EdgeRec("REFERENCES", "t_jira", "Message", "10001", "WorkItem", "PHO-1")
+        Neo4jWriter("bolt://x", "u", "p", driver=driver).write_edges([edge], placeholders=True)
+        row = driver.log[0][1]["rows"][0]
+        self.assertEqual((row["source"], row["src_key"], row["dst_key"]), ("jira", "10001", "PHO-1"))
 
 
 if __name__ == "__main__":

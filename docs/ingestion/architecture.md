@@ -151,7 +151,9 @@ Each stage changes for its own reasons: enrich with a source's API, extract with
 
 Where the LLM runs depends on ADR 0002's spike:
 - **With Graphiti**, `add_episode` calls the LLM itself, so the LLM runs inside load and extract stays a deterministic mapping to episode text.
-- **With the fallback** (structured mapping), extract calls the LLM for free text and load writes to Neo4j directly.
+- **With the fallback** (structured mapping), extract calls the LLM for free text and load writes to Neo4j directly. On this path `episodes.attrs` holds the mapped nodes and edges, and `episodes.text` a human-readable summary.
+
+Until the spike runs, extract and load run on the fallback, as a deterministic mapping with no LLM (EMBER-45, EMBER-85; [ADR 0002, Status note](../adr/0002-graph-engine-and-schema-approach.md#status-note-2026-10-27)). How they claim work before the job queue lands: [`services/pipeline/README.md`](../../services/pipeline/README.md#extract-and-load-workers-ember-85).
 
 The stage boundaries are the same either way. The LLM itself is whatever the tenant points Ember at (a URL and API token), or our own cloud provider on the enterprise instance.
 
@@ -334,6 +336,17 @@ create table episodes (
   updated_at        timestamptz not null default now()
 );
 create index episodes_unloaded on episodes (tenant, source, occurred_at) where loaded_at is null;
+create index episodes_source_record on episodes (source_record_id);   -- EMBER-85, own migration: extract's anti-join
+
+-- interim (EMBER-85, own migration): an episode waiting for load (inserted, or re-extracted with loaded_at cleared) notifies channel episodes to wake the load worker
+create function episodes_notify() returns trigger language plpgsql as $$
+begin
+  perform pg_notify('episodes', new.source);
+  return null;
+end
+$$;
+create trigger episodes_notify after insert or update of loaded_at on episodes
+  for each row when (new.loaded_at is null) execute function episodes_notify();
 
 create table cursors (
   source text not null, tenant text not null,

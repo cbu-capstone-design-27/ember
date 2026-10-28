@@ -4,7 +4,7 @@ Ingestion pipeline and job queue: pulls activity from GitHub, Jira, and Slack, e
 
 ## Status
 
-The local loader (EMBER-45, below) reads connector output and loads it into Neo4j. Live ingestion, extraction and the job queue are not here yet; each lands under its own Jira ticket.
+The local loader (EMBER-45, below) reads connector output and loads it into Neo4j. The extract and load workers (EMBER-85, below) take `source_records` from Postgres into Neo4j. The job queue is not here yet; it lands under its own Jira ticket.
 
 Design: `docs/ingestion/architecture.md` (EMBER-41, ADR 0004). This service becomes the enrich, extract and load workers and the scheduler described there.
 
@@ -66,6 +66,66 @@ code is 1 if anything was rejected or the schema check found a mismatch, so a cl
 
 Tests: `cd services/pipeline && python -m unittest discover -s loader -t . -p "test_*.py" -v`.
 The Neo4j integration test runs only when `NEO4J_TEST_URI` is set.
+
+## Extract and load workers (EMBER-85)
+
+The stages after enrich (`docs/ingestion/architecture.md`), on ADR 0002's fallback path (deterministic
+mapping with EMBER-45's mappers, no LLM, no Graphiti):
+
+- `python -m loader extract` reads `source_records`, maps each row to one `episodes` row (`attrs` holds
+  the nodes and edges, `text` a short summary) and never touches Neo4j.
+- `python -m loader load` writes unloaded episodes to Neo4j, one subgraph (`<tenant>_<source>`) at a time
+  under a Postgres advisory lock, up to `LOAD_BATCH` (100) per job in the source's order, and stamps
+  `episodes.loaded_at` in the same transaction.
+
+Both read `DATABASE_URL` from the environment (not `.env`); load also reads `NEO4J_URI` (default
+`bolt://localhost:7687`), `NEO4J_USER` (default `neo4j`), `NEO4J_PASSWORD` and optionally `NEO4J_DATABASE`.
+`CONCURRENCY` (default 4) sets how many jobs run at once. Each wakes within a second on `NOTIFY`
+(`source_records` / `episodes`), catches up at start, polls every 30 s, and on Ctrl+C or `SIGTERM` finishes
+the jobs in flight and exits. `--once` drains what is waiting and exits.
+
+Rules worth knowing:
+
+- **Scope.** Jira issues and comments, and Slack messages, users and channels. GitHub, GitLab, Teams and
+  other kinds (Jira worklogs, Slack memberships) are not extracted yet; extract logs how many are waiting
+  when it starts.
+- **Order.** Every node and edge stores the source's `occurred_at`. A version older than the stored one
+  only fills properties the node lacks, so a late, older edit never undoes a newer one.
+- **Deletes.** A deleted Slack message or Jira issue or comment keeps its node but clears its content: a
+  delete not older than the node leaves only `group_id`, `uuid`, `source`, `external_id`, `kind`,
+  `deleted: true` and `occurred_at`, so the text, names and embeddings are gone. A late, older edit
+  cannot bring them back.
+- **Edges to nodes not loaded yet** (a comment whose issue comes in a later batch) create a bare
+  `placeholder: true` node on the target's key, which the target's own episode fills in (and the
+  flag removed). Readers that list nodes should skip `placeholder: true` ones; one whose target never
+  arrives stays a placeholder.
+- **Reruns** change nothing: extract skips records that already have an episode from this
+  `EXTRACTOR_VERSION` (`loader/extract.py`; bump it to re-extract everything), and load only takes
+  episodes with `loaded_at` null.
+- **Failures.** Postgres or Neo4j unreachable: retried with backoff, episodes stay unloaded. A record the
+  mappers reject: logged and counted, left alone until the worker restarts (no error table yet; the job
+  queue's dead letter replaces this).
+
+Try it locally with the photon demo data (made-up), from the repo root. Start and migrate the compose
+Postgres as in `apps/mcp/README.md`, start the compose Neo4j, then:
+
+    docker compose -f infra/docker-compose.yml --env-file .env up -d neo4j
+    export DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable'
+    python3 apps/mcp/seed_photon.py --no-embed     # photon Jira and Slack rows into source_records, tenant photon
+    cd services/pipeline
+    python -m loader extract --once
+    NEO4J_PASSWORD=change-me-locally python -m loader load --once
+
+The graph then holds subgraphs `photon_jira` and `photon_slack`. Leave off `--once` to keep the workers
+running and waiting for new rows.
+
+Tests: `test_extract.py` runs with the unit tests. `test_pg_load.py` needs a Postgres with pgvector and
+dbmate, and is CI's `Pipeline loader against Postgres` step:
+
+    PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable'         python -m unittest loader.test_pg_load -v
+
+With `NEO4J_TEST_URI` and `NEO4J_PASSWORD` set it also loads into that Neo4j (tenant `it-pg-load`, reset
+by the test).
 
 ## Models (EMBER-49)
 

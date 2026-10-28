@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 _NAMESPACE = uuid.UUID("6f1c2b4e-0a1d-4c53-9d57-3f4f0f8c2a10")
@@ -11,6 +12,14 @@ _NAMESPACE = uuid.UUID("6f1c2b4e-0a1d-4c53-9d57-3f4f0f8c2a10")
 
 def node_uuid(group_id: str, label: str, key: str) -> str:
     return str(uuid.uuid5(_NAMESPACE, f"{group_id}|{label}|{key}"))
+
+
+def ordering_time(value: datetime) -> str:
+    """A source time as the fixed-width UTC string stored on nodes and edges, so that comparing two
+    of them as strings, which Neo4j does, orders them by time."""
+    if value.tzinfo is None:
+        raise ValueError("ordering times must be timezone-aware")
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _drop_none(props: dict[str, Any]) -> dict[str, Any]:
@@ -24,6 +33,9 @@ class NodeRec:
     group_id: str
     key: str
     props: dict[str, Any] = field(default_factory=dict)
+    # The source's time for this version (ordering_time), set by the Postgres loader (EMBER-85). The
+    # writers apply props only if it is not older than the node's stored occurred_at; None always applies.
+    occurred_at: str | None = None
 
     def __post_init__(self) -> None:
         self.props = _drop_none(self.props)
@@ -42,6 +54,7 @@ class EdgeRec:
     dst_label: str
     dst_key: str
     props: dict[str, Any] = field(default_factory=dict)
+    occurred_at: str | None = None  # as NodeRec.occurred_at
 
     def __post_init__(self) -> None:
         self.props = _drop_none(self.props)

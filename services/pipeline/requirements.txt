@@ -1,2 +1,6 @@
 pydantic>=2,<3
 neo4j>=5,<7
+# The extract and load workers (EMBER-85), as services/embed pins them. The asyncio extra pulls in
+# greenlet, which async engines need.
+SQLAlchemy[asyncio]==2.0.54
+asyncpg==0.32.0

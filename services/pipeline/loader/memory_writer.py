@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+from ontology import parse_subgraph_id
+
+from .neo4j_writer import TOMBSTONE_KEYS
 from .facts import SOURCE_BACKED, GraphFacts, expected_constraint_names
 from .records import EdgeRec, NodeRec
 from .snapshot import HIDDEN_PROPS, Snapshot, make_ref
+
+
+def _apply(stored: dict, props: dict, occurred_at: str | None, deletable: bool) -> None:
+    """Neo4jWriter's ordering rule (neo4j_writer._guarded_set): a row not older than the stored
+    occurred_at sets its props; an older one only fills what is missing, and nothing on a deleted node."""
+    current = stored.get("occurred_at")
+    if occurred_at is None or current is None or occurred_at >= current:
+        stored.update(props)
+        if deletable and props.get("deleted") is True:  # a delete clears content (neo4j_writer.TOMBSTONE_KEYS)
+            for key in [k for k in stored if k not in TOMBSTONE_KEYS]:
+                del stored[key]
+        if occurred_at is not None:
+            stored["occurred_at"] = occurred_at
+    elif not (deletable and stored.get("deleted")):
+        for key, value in props.items():
+            if key != "deleted":  # an older delete must not mark newer content deleted
+                stored.setdefault(key, value)
 
 
 class MemoryWriter:
@@ -46,16 +66,25 @@ class MemoryWriter:
     def write_nodes(self, nodes: list[NodeRec]) -> int:
         for n in nodes:
             stored = self.nodes.setdefault((n.label, n.uuid), {})
-            stored.update(n.props)
+            _apply(stored, n.props, n.occurred_at, deletable=True)
+            stored.pop("placeholder", None)
             stored.update({"uuid": n.uuid, "group_id": n.group_id})
         return len(nodes)
 
-    def write_edges(self, edges: list[EdgeRec]) -> int:
+    def write_edges(self, edges: list[EdgeRec], placeholders: bool = False) -> int:
         written = 0
         for e in edges:
+            if placeholders:
+                source = parse_subgraph_id(e.group_id)[1]
+                for label, uuid_, key in ((e.src_label, e.src_uuid, e.src_key), (e.dst_label, e.dst_uuid, e.dst_key)):
+                    if label in SOURCE_BACKED and (label, uuid_) not in self.nodes:
+                        self.nodes[(label, uuid_)] = {"group_id": e.group_id, "uuid": uuid_, "source": source,
+                                                      "external_id": key, "placeholder": True}
             if (e.src_label, e.src_uuid) in self.nodes and (e.dst_label, e.dst_uuid) in self.nodes:
                 key = (e.type, e.src_label, e.src_uuid, e.dst_label, e.dst_uuid)
-                self.edges.setdefault(key, {}).update({**e.props, "group_id": e.group_id})
+                stored = self.edges.setdefault(key, {})
+                _apply(stored, e.props, e.occurred_at, deletable=False)
+                stored["group_id"] = e.group_id
                 written += 1
         return written
 
