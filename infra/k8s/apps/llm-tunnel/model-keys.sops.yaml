@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: spark-model-keys
+    namespace: ember
+stringData:
+    LLM_API_KEY: ENC[AES256_GCM,data:Pl8xYcACBgoS7dfLv1ZreRT2AHFTn7VqXdT9V6oLXPHSS/6dtSQ5pGNcvPBXEhL/DJ4i2K47ymAme6msuDWGVw==,iv:U8SFSpys89A3mNXmeiI1VeFRxVcIqjKCLscR1ZhbUkU=,tag:2DbMMWAYb4tOscKySi33Tg==,type:str]
+    EMBEDDING_API_KEY: ENC[AES256_GCM,data:ObGs8Hf1CdxCAsn9ygO7i3PD6AT4BlCGpKnU6OlBTK9dE9NNLaDXdAqCisZtva5N+siPeV9TnhH+9SkLXMR41A==,iv:wevh3atuSvdLZ+V+qoA0Zrloz6AjRPV7SGehLQkg6qI=,tag:G6QomoiMojotpUJcSCReag==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB1dGZDYlovaGRySnRqanVX
+            M0RUV0tnSEhnd3F6L1I5OGxoalpYWDlXRlNFClV1V21leWJtTUJjeTNTNkZhL3ky
+            bkgyRXAvVUpja1liSXBjd0pMUWZvN28KLS0tIFlUNWM2VGFJWjFvak1XRWNSOHg1
+            cWtrTmZoRXh0akg5NWRMZ2R5U3VnMXcKfH0DZevfIvmIp0YW4JYQaRfSxOQNLs56
+            RZLeEp0eogGfW15pj1bC/rvFGgClwoeDrmT9arXSUcplgWJnp5kaAQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-21T23:17:51Z"
+    mac: ENC[AES256_GCM,data:EfEdJaBQVfRbVy9hiT8RLe/YIP2azxCImcNrW635Qh1HkdZkahoAZtpIcdRci5cdDd9DO+VEkMmdcgmjeka1KV+qdvAZg+fEdOq7sicZn5blI7W1kJZKrTjVRBtRRp2v+hN5LmJSb6cUUFiMZRHpUZYUWvsAjZGAVYGx4JmYUWo=,iv:TY2JaKmPEjMDluoNR2/E8sQs7aWB30AF1gj18WpQo2Q=,tag:Cq0u+IO9LB6DQmx3Fj3hvQ==,type:str]
+    version: 3.13.3

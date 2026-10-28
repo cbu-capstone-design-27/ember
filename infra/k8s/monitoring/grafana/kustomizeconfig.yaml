@@ -1,0 +1,8 @@
+# Lets kustomize rename the GrafanaDashboard's configMapRef along with the generated ConfigMap, whose
+# name carries a hash of the dashboard JSON.
+nameReference:
+  - kind: ConfigMap
+    version: v1
+    fieldSpecs:
+      - path: spec/configMapRef/name
+        kind: GrafanaDashboard

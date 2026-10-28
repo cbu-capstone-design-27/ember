@@ -1,0 +1,249 @@
+---
+# Grafana Cloud (EMBER-91, k8s/README.md "Monitoring"). Use make grafana-secret and make grafana-health.
+#
+# secret: writes the two Secrets the cluster needs from the vault, encrypted with the public key in
+# .sops.yaml. No value is printed. Commit the files it writes.
+#   - k8s/monitoring/k8s-monitoring/grafana-cloud.sops.yaml, Secret grafana-cloud: the push URLs, user
+#     IDs and access token the collector sends metrics and logs with
+#   - k8s/monitoring/grafana/grafana-operator.sops.yaml, Secret grafana-operator: the service account
+#     token the Grafana Operator keeps the dashboards with
+# health: the operator synced the stack, and the stack has the cluster's metrics and logs.
+- name: Grafana Cloud
+  hosts: localhost
+  gather_facts: false
+  vars:
+    repo_dir: "{{ playbook_dir }}/../../.."
+    grafana_url: https://zestylagoon2114.grafana.net
+    # Secret key -> vault variable
+    grafana_cloud_keys:
+      prometheus-url: vault_grafana_cloud_prometheus_url
+      prometheus-username: vault_grafana_cloud_prometheus_user
+      loki-url: vault_grafana_cloud_loki_url
+      loki-username: vault_grafana_cloud_loki_user
+      access-token: vault_grafana_cloud_access_token
+    grafana_operator_keys:
+      token: vault_grafana_cloud_sa_token
+  tasks:
+    - name: Secret
+      tags: [secret]
+      block:
+        # Names only, so this one can say which is missing without showing a value
+        - name: Require the Grafana Cloud values in the vault
+          ansible.builtin.assert:
+            that: lookup('vars', item, default='__missing__') != '__missing__'
+            fail_msg: >-
+              Add {{ item }} with .venv/bin/ansible-vault edit group_vars/all/vault.yml
+              (k8s/README.md, "The Grafana Cloud tokens" says where each value comes from)
+            quiet: true
+          loop: "{{ (grafana_cloud_keys.values() | list) + (grafana_operator_keys.values() | list) }}"
+
+        # The user IDs are numbers, which YAML reads as integers, so compare as strings
+        - name: Require each to be set, without spaces around it
+          ansible.builtin.assert:
+            that:
+              - lookup('vars', item) | string | length > 0
+              - lookup('vars', item) | string == lookup('vars', item) | string | trim
+            fail_msg: One of the vault_grafana_cloud_* values is empty or has spaces around it
+            quiet: true
+          loop: "{{ (grafana_cloud_keys.values() | list) + (grafana_operator_keys.values() | list) }}"
+          no_log: true
+
+        # The collector appends nothing, so the Secret holds full push URLs. The stack's Prometheus page
+        # shows the full one; its Loki page shows only the host, so add Loki's push path when it's missing.
+        - name: Build the Secrets
+          ansible.builtin.set_fact:
+            grafana_secrets:
+              - file: infra/k8s/monitoring/k8s-monitoring/grafana-cloud.sops.yaml
+                secret:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: grafana-cloud
+                    namespace: monitoring
+                  stringData: "{{ cloud_values | combine({'loki-url': loki_url}) }}"
+              - file: infra/k8s/monitoring/grafana/grafana-operator.sops.yaml
+                secret:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: grafana-operator
+                    namespace: monitoring
+                  stringData: "{{ dict(grafana_operator_keys.keys() | zip(grafana_operator_keys.values() | map('extract', vars) | map('string'))) }}"
+          vars:
+            cloud_values: "{{ dict(grafana_cloud_keys.keys() | zip(grafana_cloud_keys.values() | map('extract', vars) | map('string'))) }}"
+            loki_url: >-
+              {{ cloud_values['loki-url'] if cloud_values['loki-url'] is match('.*/loki/api/v1/push$')
+                 else cloud_values['loki-url'] | regex_replace('/+$', '') ~ '/loki/api/v1/push' }}
+          no_log: true
+
+        - name: Require full push URLs
+          ansible.builtin.assert:
+            that:
+              - grafana_secrets[0].secret.stringData['prometheus-url'] is match('https://[^/]+/api/prom/push$')
+              - grafana_secrets[0].secret.stringData['loki-url'] is match('https://[^/]+/loki/api/v1/push$')
+            fail_msg: >-
+              vault_grafana_cloud_prometheus_url must be the remote write endpoint
+              (https://<host>/api/prom/push), and vault_grafana_cloud_loki_url the Loki URL
+              (https://<host>, with or without /loki/api/v1/push)
+            quiet: true
+
+        # Encrypting again gives new ciphertext every time, so only write a file when a value changed
+        - name: Read the values the files hold now
+          ansible.builtin.command:
+            argv: [sops, --decrypt, --extract, '["stringData"]', --output-type, json, "{{ item.file }}"]
+            chdir: "{{ repo_dir }}"
+          environment:
+            SOPS_AGE_KEY: "{{ vault_sops_age_key | default('') }}"
+          loop: "{{ grafana_secrets }}"
+          register: current
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Encrypt the Secrets that changed
+          ansible.builtin.command:
+            argv: [sops, --encrypt, --filename-override, "{{ item.0.file }}",
+                   --input-type, json, --output-type, yaml, /dev/stdin]
+            chdir: "{{ repo_dir }}"
+            stdin: "{{ item.0.secret | to_json }}"
+          loop: "{{ grafana_secrets | zip(current.results) | list }}"
+          register: encrypted
+          when: item.1.rc != 0 or (item.1.stdout | from_json) != item.0.secret.stringData
+          changed_when: false
+          no_log: true
+
+        - name: Write them
+          ansible.builtin.copy:
+            content: "{{ item.stdout }}\n"
+            dest: "{{ repo_dir }}/{{ item.item.0.file }}"
+            mode: "0644"
+          loop: "{{ encrypted.results | rejectattr('skipped', 'defined') | list }}"
+          loop_control:
+            label: "{{ item.item.0.file }}"
+
+        - name: Say what to do next
+          ansible.builtin.debug:
+            msg: >-
+              {{ (written | join(', ') ~ ' written. Commit and merge; the collector and the operator read their Secret within a minute or two, without a restart')
+                 if written else 'Both files already hold the vault values; nothing to do' }}
+          vars:
+            written: "{{ encrypted.results | rejectattr('skipped', 'defined') | map(attribute='item.0.file') | list }}"
+
+    - name: Health
+      tags: [health]
+      block:
+        - name: Require the service account token in the vault
+          ansible.builtin.assert:
+            that: vault_grafana_cloud_sa_token is defined
+            fail_msg: Add vault_grafana_cloud_sa_token (k8s/README.md, "The Grafana Cloud tokens")
+            quiet: true
+
+        - name: Read the operator's view of the stack and the dashboard
+          ansible.builtin.command:
+            argv: [kubectl, --context, "{{ cluster_context }}", -n, monitoring, get, grafana/grafana-cloud,
+                   grafanadashboard/ember, -o, json]
+          register: synced
+          changed_when: false
+
+        - name: Require both synced
+          ansible.builtin.assert:
+            that:
+              - stack.status.stage | default('') == 'complete'
+              - stack.status.stageStatus | default('') == 'success'
+              - dashboard_synced == ['True']
+            fail_msg: >-
+              The operator has not synced the stack (stage {{ stack.status.stage | default('?') }},
+              {{ stack.status.stageStatus | default('?') }}; dashboard synchronized {{ dashboard_synced }}).
+              kubectl --context homelab -n monitoring describe grafana grafana-cloud and
+              describe grafanadashboard ember show why; a rejected token reads 401
+            quiet: true
+          vars:
+            objects: "{{ (synced.stdout | from_json)['items'] }}"
+            stack: "{{ objects | selectattr('kind', '==', 'Grafana') | first }}"
+            dashboard_synced: >-
+              {{ (objects | selectattr('kind', '==', 'GrafanaDashboard') | first).status.conditions | default([])
+                 | selectattr('type', '==', 'DashboardSynchronized') | map(attribute='status') | list }}
+
+        - name: Ask Grafana for its data sources
+          ansible.builtin.uri:
+            url: "{{ grafana_url }}/api/frontend/settings"
+            headers:
+              Authorization: "Bearer {{ vault_grafana_cloud_sa_token }}"
+            return_content: true
+          register: settings
+          no_log: true
+
+        # Grafana Cloud names them grafanacloud-<stack>-prom and grafanacloud-<stack>-logs
+        - name: Find the stack's Prometheus and Loki
+          ansible.builtin.set_fact:
+            prom_uid: "{{ (settings.json.datasources.values() | selectattr('name', 'match', '.*-prom$') | first).uid }}"
+            loki_uid: "{{ (settings.json.datasources.values() | selectattr('name', 'match', '.*-logs$') | first).uid }}"
+
+        - name: Require the dashboard in folder Ember
+          ansible.builtin.uri:
+            url: "{{ grafana_url }}/api/dashboards/uid/ember"
+            headers:
+              Authorization: "Bearer {{ vault_grafana_cloud_sa_token }}"
+          register: dashboard
+          failed_when: dashboard.status != 200 or dashboard.json.meta.folderTitle != 'Ember'
+          no_log: true
+
+        # Each query has to return at least the number of series or the value given
+        - name: Query the stack
+          ansible.builtin.uri:
+            url: "{{ grafana_url }}/api/ds/query"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ vault_grafana_cloud_sa_token }}"
+            body_format: json
+            body:
+              from: now-1h
+              to: now
+              queries:
+                - refId: A
+                  datasource: {uid: "{{ prom_uid if item.ds == 'prom' else loki_uid }}"}
+                  expr: "{{ item.expr }}"
+                  instant: true
+                  range: false
+                  queryType: instant
+          loop: "{{ grafana_health_queries }}"
+          loop_control:
+            label: "{{ item.what }}"
+          register: answers
+          no_log: true
+          vars:
+            grafana_health_queries:
+              - {what: "Node Exporter on every node", ds: prom, min: 3, expr: 'count(up{job="integrations/node_exporter"} == 1)'}
+              - {what: "every node Ready", ds: prom, min: 3, expr: 'count(kube_node_status_condition{condition="Ready", status="true"} == 1)'}
+              - {what: "intake scraped", ds: prom, min: 1, expr: 'count(up{namespace="ember", pod=~"intake-.*"} == 1)'}
+              - {what: "Postgres exporter up", ds: prom, min: 1, expr: 'max(cnpg_collector_up)'}
+              - {what: "Flux objects exported", ds: prom, min: 1, expr: 'count(gotk_resource_info)'}
+              - {what: "both synthetic checks reporting", ds: prom, min: 2, expr: 'count(count by (job) (probe_success{job=~"ember-.*"}))'}
+              - {what: "pod logs in the last hour", ds: loki, min: 1, expr: 'sum(count_over_time({namespace="ember"}[1h]))'}
+              - {what: "Kubernetes events in the last day", ds: loki, min: 1, expr: 'sum(count_over_time({job="integrations/kubernetes/eventhandler"}[24h]))'}
+
+        - name: Show what the stack has
+          ansible.builtin.debug:
+            msg: "{{ item.what }}: {{ answer }} (need {{ item.min }})"
+          loop: "{{ answers.results | map(attribute='item') | list }}"
+          loop_control:
+            index_var: i
+            label: "{{ item.what }}"
+          vars:
+            frames: "{{ answers.results[i].json.results.A.frames | default([]) }}"
+            answer: "{{ (frames | first).data['values'][1] | last if frames and (frames | first).data['values'] | length > 1 else 'nothing' }}"
+
+        - name: Require every answer
+          ansible.builtin.assert:
+            that: answer != 'nothing' and (answer | float) >= item.min
+            fail_msg: >-
+              Missing on Grafana Cloud: {{ item.what }} (got {{ answer }}, need {{ item.min }}).
+              k8s/README.md, Monitoring, says where to look
+            quiet: true
+          loop: "{{ answers.results | map(attribute='item') | list }}"
+          loop_control:
+            index_var: i
+            label: "{{ item.what }}"
+          vars:
+            frames: "{{ answers.results[i].json.results.A.frames | default([]) }}"
+            answer: "{{ (frames | first).data['values'][1] | last if frames and (frames | first).data['values'] | length > 1 else 'nothing' }}"

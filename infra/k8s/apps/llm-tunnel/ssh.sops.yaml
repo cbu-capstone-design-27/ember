@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: llm-tunnel-ssh
+    namespace: ember
+stringData:
+    id_ed25519: ENC[AES256_GCM,data:MNSaf20k8ecHjr3tDGxrPdZ4q2TsY6oe6zYtVvf1JhpiiMR3uiQFydNUfscZ6nxM/nrz3nx10KZwhrSTFFKbPdkfVba0k33kLig/wjhUetFXHACOIDtoV4uV4v/iZEdSxFWT8TRaENi0I4GOT7QKkGJ4XVCkmAsv0Ut9Cks1W+3duPcKk4mggTqprf+QtZ7wv1r600HbaymrJrwuseeecxS/KGetW5orsqE0OEYeXk5cnms1l3pv77MKhAl5vk14N40fa3vQrJhelwi5xy18HirY2YG4hadqxD36mC2D5rVfepsZYb+apY8NC/OPAr/60oF8IbyHkSYNo/6ZKeKfpy2F61TKrqtaDP/4uOlNZJdo8HZb/qROv8Bpcy9F8T9DOr+Gx2EEkIceVkoPHC9cXJLtVhF4NdPe3l/BJiV7k8Dg0i4cLxF1egZ4bxoeqg5F7nGN0yKQTOV64fB/Tud1OzJ1QAShuwEaVMCcLdxVXw/8Sh/457aCJKfos25W2lf1C6BaNBgasMXW2ESDoZYg7vn0CX7Ic3ME0BoM,iv:TGk0eQtag0jggI58hvIsRDjOFZZyg2CxVSfckePEDNg=,tag:HE/lwbzVFp01ybwgEDVQmg==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBadE5nQW1kanM0dnpVTnhS
+            QmhhWVNlY1IyTjduY3R1WG1aRU1rRkZPcXp3CjhkN1Z0L1VDL0psMFdpREJER0Fj
+            YXpacnNDS3pQN29uRkx5MWt3dEQ0T0UKLS0tIHRUOTB5cHZ4b0IySUNxbTh5V3A2
+            K1kvczJTUFEyQSs1bHk4Nk9ZTHVpdTgKZwTLfOYSPVg05CypcOr7dI3kY3lgxlaa
+            I6GvGMccSmeP06rnBvnUPAo5T3XJ2drd1+oMqW3Q3JFylelslJKoUA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-21T22:49:21Z"
+    mac: ENC[AES256_GCM,data:HOfpfjdl+zul92UNLsPGI3yUTihLEcS/oBs9R5uQlHxxk76mwMBP0X3qWPhxj7MM4Jrtg5A5W0fcnbztj4vg9t05F3ZnO8KYZtF4gIP2eNkEIZMQCmH8sI90E3QO78Nx0YvgrfbLUtGvxqyyZMjGK6/iFrDHSIifd6ve+u5rkmI=,iv:HyUnsFOo+fvWAHB7imdyP8R4wlvpuZetaF44ynNWQLM=,tag:aqkHIf9McyYtgfVsBkfG0Q==,type:str]
+    version: 3.13.3

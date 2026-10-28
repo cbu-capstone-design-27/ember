@@ -1,5 +1,6 @@
 // EMBER-51 acceptance: sign up, log in and log out work, on SQLite and (when
-// TEST_POSTGRES_URL is set) on Postgres with no code change.
+// TEST_POSTGRES_URL is set) on Postgres with no code change. EMBER-81: the CLI
+// signs in through the browser with a device code, on both databases too.
 // Run: npm test            (SQLite only)
 //      TEST_POSTGRES_URL=postgres://... npm test   (both)
 
@@ -8,14 +9,21 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
-import pg from "pg";
-import { authOptions, createAuth, migrate } from "../src/lib/auth.ts";
-import { databaseKind } from "../src/lib/db.ts";
+import { betterAuth } from "better-auth";
+import { authOptions, CLI_CLIENT_ID, createAuth, migrate, whoami, type Auth } from "../src/lib/auth.ts";
+import {
+  closeDatabase,
+  createDatabase,
+  databaseKind,
+  describeDatabase,
+  isPostgresDatabase,
+  POSTGRES_SCHEMA,
+} from "../src/lib/db.ts";
+import { decideDeviceRequest, findDeviceRequest, formatUserCode } from "../src/lib/device.ts";
 
 const BASE = "http://localhost:3000";
 const SECRET = "test-secret-at-least-32-characters-long!!";
-
-type Auth = ReturnType<typeof createAuth>;
+const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 async function call(auth: Auth, path: string, init: { body?: unknown; cookie?: string } = {}) {
   const headers = new Headers({ origin: BASE });
@@ -34,7 +42,24 @@ async function call(auth: Auth, path: string, init: { body?: unknown; cookie?: s
     .getSetCookie()
     .map((c) => c.split(";")[0])
     .join("; ");
-  return { status: response.status, json, cookie };
+  return { status: response.status, json, cookie, headers: response.headers };
+}
+
+/** A POST the way the CLI sends it: JSON, with no Origin and no cookie. */
+async function cli(auth: Auth, path: string, body: unknown, headers: Record<string, string> = {}) {
+  const response = await auth.handler(
+    new Request(`${BASE}/api/auth${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    }),
+  );
+  const text = await response.text();
+  return { status: response.status, json: text ? JSON.parse(text) : null };
+}
+
+function bearer(token: string) {
+  return new Headers({ authorization: `Bearer ${token}` });
 }
 
 function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<void> | void) {
@@ -44,14 +69,9 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
     const email = `ada-${Date.now()}@example.com`;
     const password = "correct horse battery";
 
-    async function close(db: unknown) {
-      if (db instanceof pg.Pool) await db.end();
-      else (db as { close?: () => void } | undefined)?.close?.();
-    }
-
     after(async () => {
-      await close(migrationOptions?.database);
-      await close((auth?.options as { database?: unknown })?.database);
+      await closeDatabase(migrationOptions?.database);
+      await closeDatabase((auth?.options as { database?: unknown })?.database);
       await cleanup();
     });
 
@@ -60,6 +80,52 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       await migrate(migrationOptions);
       await migrate(migrationOptions); // a second start changes nothing
       auth = createAuth({ databaseUrl: databaseUrl(), secret: SECRET, baseURL: BASE });
+    });
+
+    // EMBER-80: on Postgres the web app shares the database with ingestion, whose tables are in public
+    test("on Postgres the tables are in their own schema", async (t) => {
+      const db = migrationOptions?.database;
+      if (!isPostgresDatabase(db)) return t.skip("SQLite has no schemas");
+      const { rows } = await db.pool.query<{ table_name: string }>(
+        "select table_name from information_schema.tables where table_schema = $1",
+        [POSTGRES_SCHEMA],
+      );
+      assert.deepEqual(rows.map((r) => r.table_name).sort(), ["account", "deviceCode", "rateLimit", "session", "user", "verification"]);
+    });
+
+    // Sign-up writes the user, then its password account; a failure between them must leave neither
+    test("a failed transaction leaves nothing behind", async () => {
+      const { adapter } = await auth.$context;
+      const rolledBack = `rolled-back-${Date.now()}@example.com`;
+      await assert.rejects(
+        adapter.transaction(async (trx) => {
+          const now = new Date();
+          await trx.create({
+            model: "user",
+            data: { name: "Rolled back", email: rolledBack, emailVerified: false, createdAt: now, updatedAt: now },
+          });
+          throw new Error("failed after the user was written");
+        }),
+        /failed after the user was written/,
+      );
+      assert.equal(await adapter.findOne({ model: "user", where: [{ field: "email", value: rolledBack }] }), null);
+    });
+
+    // Better Auth limits only in production, so this instance turns it on; the count is a database row
+    test("sign-in attempts are limited, and counted in the database", async () => {
+      const options = authOptions({ databaseUrl: databaseUrl(), secret: SECRET, baseURL: BASE });
+      const limited = betterAuth({ ...options, rateLimit: { ...options.rateLimit, enabled: true } });
+      try {
+        const attempt = () => call(limited as unknown as Auth, "/sign-in/email", { body: { email, password: "not the password" } });
+        const statuses = [];
+        for (let i = 0; i < 4; i++) statuses.push((await attempt()).status);
+        assert.equal(statuses[3], 429, `3 sign-ins per 10 s, then 429: ${statuses}`);
+        const { adapter } = await limited.$context;
+        const rows = await adapter.findMany<{ key: string; count: number }>({ model: "rateLimit" });
+        assert.ok(rows.some((r) => r.key.endsWith("/sign-in/email") && r.count >= 3), JSON.stringify(rows));
+      } finally {
+        await closeDatabase(limited.options.database);
+      }
     });
 
     test("sign up creates the account and signs in", async () => {
@@ -139,8 +205,10 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
     test("passwords are not stored in plain text", async () => {
       const db = auth.options.database as unknown;
       let stored: string;
-      if (db instanceof pg.Pool) {
-        const r = await db.query(`select password from account where "providerId" = 'credential' limit 1`);
+      if (isPostgresDatabase(db)) {
+        const r = await db.pool.query(
+          `select password from ${POSTGRES_SCHEMA}.account where "providerId" = 'credential' limit 1`,
+        );
         stored = r.rows[0].password;
       } else {
         const row = (db as { prepare: (s: string) => { get: () => { password: string } } })
@@ -149,6 +217,145 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
         stored = row.password;
       }
       assert.ok(stored && stored !== password && !stored.includes(password));
+    });
+
+    describe("CLI sign-in through the browser", () => {
+      const requestCode = (clientId = CLI_CLIENT_ID) => cli(auth, "/device/code", { client_id: clientId });
+      const poll = (deviceCode: string) =>
+        cli(auth, "/device/token", { grant_type: DEVICE_GRANT, device_code: deviceCode, client_id: CLI_CLIENT_ID });
+
+      /** Stand in for time passing: an older last poll, or a code past its expiry. */
+      async function age(userCode: string, update: { lastPolledAt?: Date; expiresAt?: Date }) {
+        const { adapter } = await auth.$context;
+        await adapter.update({ model: "deviceCode", where: [{ field: "userCode", value: userCode }], update });
+      }
+
+      const signedIn = async (as = email) =>
+        new Headers({ cookie: (await call(auth, "/sign-in/email", { body: { email: as, password } })).cookie });
+      const signUp = async (name: string) => {
+        const address = `${name.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
+        const res = await call(auth, "/sign-up/email", { body: { name, email: address, password } });
+        return { email: address, headers: new Headers({ cookie: res.cookie }) };
+      };
+
+      /** What /device does when the signed-in user clicks Approve or Deny (its server action). */
+      async function review(userCode: string, action: "approve" | "deny") {
+        return decideDeviceRequest(auth, userCode, action, await signedIn());
+      }
+
+      test("browser sign-in doesn't hand page scripts the session token", async () => {
+        const res = await call(auth, "/sign-in/email", { body: { email, password } });
+        assert.equal(res.status, 200, JSON.stringify(res.json));
+        assert.ok(res.cookie.includes("better-auth.session_token="), "the HttpOnly cookie is still set");
+        assert.equal(res.headers.get("set-auth-token"), null);
+      });
+
+      test("the CLI gets a token once the user approves, and whoami names the user", async () => {
+        const code = await requestCode();
+        assert.equal(code.status, 200, JSON.stringify(code.json));
+        const { device_code, user_code } = code.json;
+        assert.equal(code.json.verification_uri, `${BASE}/device`);
+        assert.equal(code.json.verification_uri_complete, `${BASE}/device?user_code=${user_code}`);
+        assert.equal(code.json.interval, 5);
+
+        const pending = await poll(device_code);
+        assert.equal(pending.status, 400);
+        assert.equal(pending.json.error, "authorization_pending");
+
+        assert.deepEqual(await review(user_code, "approve"), { state: "approved" });
+
+        await age(user_code, { lastPolledAt: new Date(Date.now() - 60_000) });
+        const token = await poll(device_code);
+        assert.equal(token.status, 200, JSON.stringify(token.json));
+        assert.equal(token.json.token_type, "Bearer");
+        assert.ok(token.json.expires_in > 0);
+        assert.deepEqual(await whoami(auth, bearer(token.json.access_token)), { name: "Ada", email });
+      });
+
+      test("a code gives out one token: using it again is refused", async () => {
+        const code = await requestCode();
+        await review(code.json.user_code, "approve");
+        const first = await poll(code.json.device_code);
+        assert.equal(first.status, 200, JSON.stringify(first.json));
+        const again = await poll(code.json.device_code);
+        assert.equal(again.status, 400);
+        assert.equal(again.json.error, "invalid_grant");
+      });
+
+      test("a denied request tells the CLI access_denied", async () => {
+        const code = await requestCode();
+        assert.deepEqual(await review(code.json.user_code, "deny"), { state: "denied" });
+        const result = await poll(code.json.device_code);
+        assert.equal(result.status, 400);
+        assert.equal(result.json.error, "access_denied");
+      });
+
+      test("an expired code is refused in the browser and in the CLI", async () => {
+        const code = await requestCode();
+        await age(code.json.user_code, { expiresAt: new Date(Date.now() - 1000) });
+        assert.deepEqual(await findDeviceRequest(auth, code.json.user_code), { state: "expired" });
+        assert.deepEqual(await review(code.json.user_code, "approve"), { state: "expired" });
+        const result = await poll(code.json.device_code);
+        assert.equal(result.status, 400);
+        assert.equal(result.json.error, "expired_token");
+      });
+
+      test("showing /device claims nothing, so the user can switch accounts before approving", async () => {
+        const { device_code, user_code } = (await requestCode()).json;
+        // Ada is shown the code, notices it's the wrong account, and switches to Eve.
+        assert.deepEqual(await findDeviceRequest(auth, user_code), { state: "pending", userCode: user_code });
+        const eve = await signUp("Eve");
+        assert.deepEqual(await decideDeviceRequest(auth, user_code, "approve", eve.headers), { state: "approved" });
+        assert.deepEqual(await findDeviceRequest(auth, user_code), { state: "approved" });
+        const token = await poll(device_code);
+        assert.equal(token.status, 200, JSON.stringify(token.json));
+        assert.deepEqual(await whoami(auth, bearer(token.json.access_token)), { name: "Eve", email: eve.email });
+      });
+
+      test("a code another account claimed first can't be decided by anyone else", async () => {
+        const { user_code } = (await requestCode()).json;
+        const ada = await signedIn();
+        await call(auth, `/device?user_code=${user_code}`, { cookie: ada.get("cookie")! }); // Ada's browser claims it
+        const mallory = await signUp("Mallory");
+        assert.deepEqual(await decideDeviceRequest(auth, user_code, "approve", mallory.headers), { state: "taken" });
+        assert.deepEqual(await decideDeviceRequest(auth, user_code, "approve", ada), { state: "approved" });
+      });
+
+      test("deciding after signing out, or twice, says so instead of failing", async () => {
+        const { user_code } = (await requestCode()).json;
+        assert.deepEqual(await decideDeviceRequest(auth, user_code, "approve", new Headers()), { state: "signed-out" });
+        assert.deepEqual(await review(user_code, "approve"), { state: "approved" });
+        assert.deepEqual(await review(user_code, "deny"), { state: "changed" }, "e.g. approved in another tab");
+        assert.deepEqual(await findDeviceRequest(auth, "NOTACODE"), { state: "invalid" });
+      });
+
+      test("polling faster than the interval is told to slow down", async () => {
+        const code = await requestCode();
+        await poll(code.json.device_code);
+        const tooSoon = await poll(code.json.device_code);
+        assert.equal(tooSoon.status, 400);
+        assert.equal(tooSoon.json.error, "slow_down");
+      });
+
+      test("only the Ember CLI can ask for a code", async () => {
+        const res = await requestCode("someone-else");
+        assert.equal(res.status, 400);
+        assert.equal(res.json.error, "invalid_client");
+      });
+
+      test("signing out with the token revokes it (ember auth logout)", async () => {
+        const code = await requestCode();
+        await review(code.json.user_code, "approve");
+        const token = await poll(code.json.device_code);
+        const out = await cli(auth, "/sign-out", {}, { authorization: `Bearer ${token.json.access_token}` });
+        assert.equal(out.status, 200, JSON.stringify(out.json));
+        assert.equal(await whoami(auth, bearer(token.json.access_token)), null);
+      });
+
+      test("whoami refuses a missing or made-up token", async () => {
+        assert.equal(await whoami(auth, new Headers()), null);
+        assert.equal(await whoami(auth, bearer("not-a-real-token")), null);
+      });
     });
   });
 }
@@ -163,6 +370,27 @@ if (postgresUrl) {
 } else {
   test("Postgres suite skipped (set TEST_POSTGRES_URL to run it)", { skip: true }, () => {});
 }
+
+test("/device shows the code in two groups of four, as the CLI prints it", () => {
+  assert.equal(formatUserCode("abcdefgh"), "ABCD-EFGH");
+  assert.equal(formatUserCode("ABCD-EFGH"), "ABCD-EFGH");
+});
+
+test("a Postgres connection that drops while idle doesn't crash the app", async () => {
+  const db = createDatabase("postgres://u:p@127.0.0.1:1/db"); // the pool connects lazily, so nothing is reached
+  assert.ok(isPostgresDatabase(db));
+  assert.equal(db.transaction, true);
+  assert.doesNotThrow(() => db.pool.emit("error", new Error("terminating connection due to administrator command")));
+  await closeDatabase(db);
+});
+
+test("the startup log names the database, never its password", () => {
+  const postgres = describeDatabase("postgres://ember:s3cret-pw@hv-worker-1.tail470a31.ts.net:5432/ember");
+  assert.equal(postgres, "Postgres, schema web, on hv-worker-1.tail470a31.ts.net:5432/ember");
+  assert.ok(!postgres.includes("s3cret-pw"));
+  assert.match(describeDatabase(undefined), /^SQLite file .*data\/ember\.db \(DATABASE_URL not set\)$/);
+  assert.match(describeDatabase("file:/data/ember.db"), /^SQLite file \/data\/ember\.db$/);
+});
 
 test("DATABASE_URL picks the database", () => {
   assert.equal(databaseKind("file:./data/ember.db"), "sqlite");

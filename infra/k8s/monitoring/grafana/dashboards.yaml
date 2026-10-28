@@ -1,0 +1,24 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaFolder
+metadata:
+  name: ember
+spec:
+  instanceSelector:
+    matchLabels:
+      grafana: grafana-cloud
+  title: Ember
+  uid: ember
+---
+# Nodes, pods, Postgres, ingestion and deploys on one page (k8s/README.md, Monitoring)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: ember
+spec:
+  instanceSelector:
+    matchLabels:
+      grafana: grafana-cloud
+  folderRef: ember
+  configMapRef:
+    name: grafana-dashboards
+    key: ember.json

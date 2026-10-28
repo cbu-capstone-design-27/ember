@@ -1,0 +1,11 @@
+# A node drain or rolling reboot (make reboot) evicts one intake pod at a time
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: intake
+  namespace: ember
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: intake

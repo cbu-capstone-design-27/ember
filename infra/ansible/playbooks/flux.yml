@@ -1,7 +1,8 @@
 ---
 # Flux (ADR 0003): installs the controllers from k8s/clusters/homelab/flux-system and gives them the
-# age key that decrypts the *.sops.yaml Secrets. From then on Flux applies k8s/infrastructure and
-# k8s/apps from the develop branch by itself; this playbook only installs, checks and previews.
+# age key that decrypts the *.sops.yaml Secrets. From then on Flux applies k8s/infrastructure,
+# k8s/apps and k8s/monitoring from the develop branch by itself; this playbook only installs, checks
+# and previews.
 # Run from the controller against the "homelab" kubeconfig context.
 # Use the make targets: flux-up (prep, up, health), flux-health, flux-preview, flux-preview-end.
 - name: Flux
@@ -95,9 +96,9 @@
           changed_when: false
 
         # flux-system creates these, so on a first install they can take a moment to appear
-        - name: Wait for the infrastructure and apps Kustomizations to exist
+        - name: Wait for the infrastructure, apps and monitoring Kustomizations to exist
           ansible.builtin.command: "{{ kubectl }} -n flux-system get kustomization/{{ item }}"
-          loop: [infrastructure, apps]
+          loop: [infrastructure, apps, monitoring]
           register: ks_exists
           until: ks_exists.rc == 0
           retries: 12
@@ -107,7 +108,7 @@
         # The first sync installs the Tailscale operator and Neo4j, hence the long timeout
         - name: Wait for each to be applied and healthy
           ansible.builtin.command: "{{ kubectl }} -n flux-system wait kustomization/{{ item }} --for=condition=Ready --timeout=15m"
-          loop: [infrastructure, apps]
+          loop: [infrastructure, apps, monitoring]
           changed_when: false
 
         - name: Note a preview in progress
@@ -153,7 +154,7 @@
 
         - name: Fetch the branch and apply it
           ansible.builtin.command: "{{ flux }} reconcile kustomization {{ item }} --with-source --timeout 15m"
-          loop: [infrastructure, apps]
+          loop: [infrastructure, apps, monitoring]
           changed_when: true
 
         - name: Note how to go back
@@ -178,5 +179,5 @@
 
         - name: Apply {{ flux_branch }} again
           ansible.builtin.command: "{{ flux }} reconcile kustomization {{ item }} --with-source --timeout 15m"
-          loop: [infrastructure, apps]
+          loop: [infrastructure, apps, monitoring]
           changed_when: true

@@ -1,0 +1,3 @@
+# enrich.py, models.py and pg_gates.py only (EMBER-67). receiver.py and pull_test.py stay stdlib-only.
+SQLAlchemy[asyncio]==2.0.54
+psycopg[binary]==3.2.13

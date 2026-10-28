@@ -1,0 +1,9 @@
+# Same repository as monitoring/helmrepository.yaml, as its own object: each Flux Kustomization has to
+# own what it applies, and this one is applied before monitoring.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: grafana-operator
+spec:
+  interval: 1h
+  url: https://grafana.github.io/helm-charts

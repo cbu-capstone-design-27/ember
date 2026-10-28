@@ -1,0 +1,14 @@
+# The Grafana Cloud stack, as the operator's one Grafana. The operator signs in with the token in
+# Secret grafana-operator, a service account with the Editor role on the stack.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: grafana-cloud
+  labels:
+    grafana: grafana-cloud
+spec:
+  external:
+    url: https://zestylagoon2114.grafana.net
+    apiKey:
+      name: grafana-operator
+      key: token

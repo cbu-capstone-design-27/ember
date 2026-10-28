@@ -46,7 +46,7 @@ GitHub sends no timestamp header. The only times are inside the payload ([Orderi
 
 ## Event types: payload and what enrich fetches
 
-The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/github-ingestion/receiver.py` (24 names, also in the service README). The receiver doesn't filter on it. **With the App's current permissions (Metadata, Contents, Issues, Pull requests) GitHub only delivers 13 of them**, plus the two installation events every App gets. The rest need permissions the App doesn't have. See [open questions](#open-questions).
+The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/intake/adapters/github.py` (24 names, also in intake's README). Intake doesn't filter on it. **The App has read access to every event in the list** (as of 2026-10-14: Metadata, Contents, Issues, Pull requests, Commit statuses, Checks, Actions, Deployments, Discussions, and more), so GitHub delivers whatever the App subscribes to, plus the two installation events every App gets. Enrich maps only some of them; the rest are marked enriched in bulk with no record. The App's subscriptions are trimmed to cut that noise (Recommended subscriptions, below the table). See [open questions](#open-questions).
 
 | Event | Permission GitHub requires | Delivered today |
 |---|---|---|
@@ -56,11 +56,20 @@ The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/github-ingest
 | `issues`, `issue_comment` | Issues | Yes |
 | `milestone` | Issues or Pull requests | Yes |
 | `pull_request`, `pull_request_review`, `pull_request_review_comment` | Pull requests | Yes |
-| `status` | Commit statuses | **No** |
-| `check_run`, `check_suite` | Checks | **No** |
-| `workflow_run`, `workflow_job` | Actions | **No** |
-| `deployment`, `deployment_status` | Deployments | **No** |
-| `discussion`, `discussion_comment` | Discussions | **No** |
+| `status` | Commit statuses | Not subscribed on `ember-ingest`. Enrich skips them if they arrive |
+| `check_run`, `check_suite` | Checks | Not subscribed on `ember-ingest`. Enrich skips them if they arrive |
+| `workflow_run`, `workflow_job` | Actions | Not subscribed on `ember-ingest`. Enrich skips them if they arrive |
+| `deployment`, `deployment_status` | Deployments | Yes, skipped by enrich (not mapped) |
+| `discussion`, `discussion_comment` | Discussions | Yes, skipped by enrich (not mapped) |
+
+**Recommended subscriptions** (EMBER-92). Subscribe the App to the events enrich maps (`MAPPED` in `services/github-ingestion/enrich.py`):
+
+- `issues`, `issue_comment`, `milestone`, `label`
+- `pull_request`, `pull_request_review`, `pull_request_review_comment`
+- `push`, `create`, `delete`, `commit_comment`, `release`, `repository`
+- `installation`, `installation_repositories` (always sent)
+
+Uncheck the CI events (`workflow_*`, `check_*`, `status`) in the App's settings. Enrich marks them enriched in one bulk statement without making a record, so they only add load: 904 of the 981 deliveries one repository sent in 30 minutes were CI events. GitHub has no API for an App's event subscriptions, so this is set on the App's settings page.
 
 **Rules enrich follows:**
 - **Fetch only what's missing.** The payload is the record of that moment and is kept as it is. Fetched data is added beside it in `source_records.record`.
@@ -118,7 +127,7 @@ A pull request read by both paths gets two `raw_events` rows but one `source_rec
 
 ## Ordering value (EMBER-63)
 
-GitHub's arrival order isn't its own order. GitHub doesn't document any delivery order, deliveries for one repository are separate requests that can overlap, a redelivery can come days later, and reconcile rows arrive hours later. Workers need the time GitHub says the thing happened. EMBER-63 adds a column for it. Its name and type are EMBER-63's call. **For GitHub, the value is the first of these that is present:**
+GitHub's arrival order isn't its own order. GitHub doesn't document any delivery order, deliveries for one repository are separate requests that can overlap, a redelivery can come days later, and reconcile rows arrive hours later. Workers need the time GitHub says the thing happened. EMBER-63 stores it in `raw_events.occurred_at` ([`architecture.md`](architecture.md#source-ordering-value-ember-63)), set by whoever writes the row. **For GitHub, the value is the first of these that is present:**
 
 1. The main object's `updated_at` (`issue`, `pull_request`, `comment`, `milestone`)
 2. A time the event's object has instead: `review.submitted_at`; `release.published_at`, then `created_at`; on `push`, `repository.pushed_at`
@@ -127,13 +136,14 @@ GitHub's arrival order isn't its own order. GitHub doesn't document any delivery
 | Body | Gives | Precision |
 |---|---|---|
 | `issues`, `issue_comment`, `pull_request`, `pull_request_review_comment`, `commit_comment`, `milestone` | `updated_at` | Whole seconds |
-| `pull_request_review` | `review.submitted_at` | Whole seconds |
-| `release` (`published`, `created`) | `published_at` or `created_at` | Whole seconds |
+| `pull_request_review` (`submitted`) | `review.submitted_at` | Whole seconds |
+| `release` (`published`, `created`, `released`, `prereleased`) | `published_at` or `created_at` | Whole seconds |
 | `push` | `repository.pushed_at`. In push payloads GitHub sends it as epoch seconds, not an ISO string. Confirm on a real delivery | Whole seconds |
 | Every `deleted` action, `dismissed`, `label`, `repository`, `create`, `delete`, `installation*` | `received_at`. A deleted object's `updated_at` is its last edit, not the delete, so it would sort the tombstone before that edit | Microseconds, but it's our clock |
+| Every other `pull_request_review` and `release` action, e.g. `edited` | `received_at`. These objects have no `updated_at`, and an edit keeps the original submit or publish time, so it would tie with the event it changed | Microseconds, but it's our clock |
 | Reconcile | The object's `updated_at`; a commit's `committer.date` | Whole seconds |
 
-- **Type.** `timestamptz` is the suggestion for EMBER-63. GitHub's ISO-8601 UTC strings and epoch seconds both convert exactly. The same value fills `source_records.occurred_at`.
+- **Type.** `timestamptz` (EMBER-63). GitHub's ISO-8601 UTC strings and epoch seconds both convert exactly. The same value fills `source_records.occurred_at`.
 - **Scope.** `updated_at` is per object, so it orders versions of one issue or comment well. Across objects it is only approximate. Whole seconds tie often (a `labeled` and an `assigned` from one form submit). Ties break on `raw_events.id`.
 - **How workers use it.** A record changes an object only if its ordering value is newer than what's stored for that object. A late `edited` can't bring back a deleted comment, and a late `closed` can't undo a newer `reopened`.
 
@@ -153,18 +163,16 @@ Catch-up has two steps, both run by `scheduler:github` and done by `enrich:githu
 | **Edits** | `edited` carries the new object and `changes` with the old values, so each edit is kept | Step 2 sees only the latest version. Edits in between are lost if steps 1 and 2 both missed them |
 | **Deletes** (issues, comments, labels, milestones, releases, branches) | The `deleted` action or `delete` event writes a tombstone | Step 2 can't see a delete: the object just isn't listed any more. Step 1 recovers it within 3 days. After that a missed delete stays missed (`architecture.md`'s [failures table](architecture.md#failures-and-replay)) |
 | **Out of order** (a comment before its issue's `opened`, `closed` before `edited`) | Each is still written as its own versioned row | The [ordering value](#ordering-value-ember-63) decides which is current |
-| **Events the App has no permission for** (`status`, checks, Actions, deployments, discussions) | GitHub doesn't send them | None. See [open questions](#open-questions) |
+| **Events the App has no permission for** | None known. As of 2026-10-14 the App also reads Deployments and Discussions (`GET /app`), so those events arrive whenever they're subscribed | None. See [open questions](#open-questions) |
 | **Repository added to or removed from the installation** | `installation_repositories` | Added: reconcile it from the start. Removed: stop. Data is kept (EMBER-53) |
 | **Installation not mapped to a tenant** | Stored with `tenant = null`, not processed | `ember-admin map` assigns the tenant and enqueues what was stored |
-| **The cluster URL still ends at the placeholder** (`infra/k8s/apps/github-webhook/listener.py`) | It answers 200 and stores nothing, so GitHub records success | Nothing can recover these. Don't point the App at it until intake replaces it (EMBER-56) |
 
 ## Open questions
 
-1. **EMBER-63 (Jacob):** the column's name and type. This doc suggests `timestamptz`, filled as described in [Ordering value](#ordering-value-ember-63).
-2. **The subscription list and the permissions disagree.** `RECOMMENDED_WEBHOOK_EVENTS` lists `status`, `check_run`, `check_suite`, `workflow_run`, `workflow_job`, `deployment`, `deployment_status`, `discussion` and `discussion_comment`, but the App has no Commit statuses, Checks, Actions, Deployments or Discussions permission, so GitHub never sends them. Add the read permissions (each installation has to accept them), or drop them from the list?
-3. **`architecture.md` says a push lists up to 20 commits.** GitHub's webhook reference says up to 2048. 20 is the limit of the Events API, not webhooks. This doc uses 2048. `architecture.md` needs a one-line fix.
-4. **Pull request files:** fetch the list on `opened`, `reopened` and `synchronize` as proposed, and keep `patch`? It is the only per-event call, and `pull_test.py` doesn't fetch files today.
-5. **Redelivery from enrich:** step 1 needs the App JWT, which enrich holds already (`architecture.md`, [Per-source auth](architecture.md#per-source-auth)). Confirm `scheduler:github` runs it before each reconcile.
+1. **The subscription list and the permissions disagree.** Resolved: as of 2026-10-14 the App has Deployments and Discussions read permission (`GET /app`), so `deployment`, `deployment_status`, `discussion` and `discussion_comment` arrive whenever they're subscribed. Enrich doesn't map them and skips them.
+2. **`architecture.md` says a push lists up to 20 commits.** GitHub's webhook reference says up to 2048. 20 is the limit of the Events API, not webhooks. This doc uses 2048. `architecture.md` needs a one-line fix.
+3. **Pull request files:** fetch the list on `opened`, `reopened` and `synchronize` as proposed, and keep `patch`? It is the only per-event call, and `pull_test.py` doesn't fetch files today.
+4. **Redelivery from enrich:** step 1 needs the App JWT, which enrich holds already (`architecture.md`, [Per-source auth](architecture.md#per-source-auth)). Confirm `scheduler:github` runs it before each reconcile.
 
 ## Sources
 
