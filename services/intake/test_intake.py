@@ -523,7 +523,8 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
             ("another secret", *slack(SLACK_FIXTURE, secret="other"), 401),
             ("signed for another body", body + b" ", headers, 401),
             ("replayed after 5 minutes", *slack(SLACK_FIXTURE, timestamp=now - 301), 401),
-            ("from the future", *slack(SLACK_FIXTURE, timestamp=now + 301), 401),
+            # Not now + 301: now is rounded down and the request takes time, so the gap intake sees can be 300 s
+            ("from the future", *slack(SLACK_FIXTURE, timestamp=now + 310), 401),
             ("timestamp not a number", body, {**headers, "X-Slack-Request-Timestamp": "-1"}, 401),
             ("timestamp a superscript digit", body, {**headers, "X-Slack-Request-Timestamp": "\u00b2"}, 401),
             ("timestamp too long", body, {**headers, "X-Slack-Request-Timestamp": "9" * 5000}, 401),
