@@ -277,11 +277,11 @@ $$;
 create trigger raw_events_notify after insert on raw_events
   for each row execute function raw_events_notify();
 
--- monitoring (EMBER-91, own migration): CloudNativePG's metrics exporter counts the enrich backlog and unmapped rows; never the envelope
+-- monitoring (EMBER-91, own migrations): CloudNativePG's metrics exporter counts the enrich backlog, unmapped rows and stored rows by event type; never the envelope
 do $$
 begin
   if exists (select from pg_roles where rolname = 'cnpg_metrics_exporter') then
-    grant select (source, account_id, tenant, received_at, enriched_at) on raw_events to cnpg_metrics_exporter;
+    grant select (source, account_id, tenant, received_at, enriched_at, event_name) on raw_events to cnpg_metrics_exporter;
   end if;
 end
 $$;

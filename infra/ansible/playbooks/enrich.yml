@@ -5,6 +5,9 @@
 # Use make enrich-github-secret.
 # Slack: k8s/apps/enrich-slack/slack-bot.sops.yaml, Secret enrich-slack-bot, from vault_slack_bot_token,
 # the Slack app's Bot User OAuth Token (k8s/README.md, enrich-slack). Use make enrich-slack-secret.
+# Jira: k8s/apps/enrich-jira/jira-api.sops.yaml, Secret enrich-jira-api, from vault_jira_email and
+# vault_jira_api_token, an Atlassian account and its API token (k8s/README.md, enrich-jira). Use
+# make enrich-jira-secret.
 # The values are never printed. Commit the file it writes.
 - name: Enrich
   hosts: localhost
@@ -31,6 +34,16 @@
         namespace: ember
       stringData:
         SLACK_BOT_TOKEN: "{{ vault_slack_bot_token | default('') | trim }}"
+    jira_secret_file: infra/k8s/apps/enrich-jira/jira-api.sops.yaml
+    jira_secret:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: enrich-jira-api
+        namespace: ember
+      stringData:
+        JIRA_EMAIL: "{{ vault_jira_email | default('') | trim }}"
+        JIRA_API_TOKEN: "{{ vault_jira_api_token | default('') | trim }}"
   tasks:
     - name: GitHub
       tags: [secret-github]
@@ -135,3 +148,58 @@
             msg: >-
               {{ slack_secret_file ~ ' is written. Commit and merge it, then restart the worker: kubectl --context homelab -n ember rollout restart deploy/enrich-slack'
                  if encrypted is not skipped else slack_secret_file ~ ' already holds the vault value; nothing to do' }}
+
+    - name: Jira
+      tags: [secret-jira]
+      block:
+        - name: Require the account and its API token in the vault
+          ansible.builtin.assert:
+            that:
+              - vault_jira_email is defined
+              - vault_jira_email is string
+              - vault_jira_email | trim is match('[^@\\s]+@[^@\\s]+$')
+              - vault_jira_api_token is defined
+              - vault_jira_api_token is string
+              - vault_jira_api_token | trim | length > 0
+            fail_msg: >-
+              Add vault_jira_email, the Atlassian account the worker reads Jira as, and
+              vault_jira_api_token, an API token for it (id.atlassian.com, Security, API tokens), with
+              .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
+        # Encrypting again gives new ciphertext every time, so only write when a value changed
+        - name: Read the values the file holds now
+          ansible.builtin.command:
+            argv: [sops, --decrypt, --extract, '["stringData"]', --output-type, json, "{{ jira_secret_file }}"]
+            chdir: "{{ repo_dir }}"
+          environment:
+            SOPS_AGE_KEY: "{{ vault_sops_age_key | default('') }}"
+          register: current
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Encrypt the Secret
+          ansible.builtin.command:
+            argv: [sops, --encrypt, --filename-override, "{{ jira_secret_file }}",
+                   --input-type, json, --output-type, yaml, /dev/stdin]
+            chdir: "{{ repo_dir }}"
+            stdin: "{{ jira_secret | to_json }}"
+          register: encrypted
+          when: current.rc != 0 or (current.stdout | from_json) != jira_secret.stringData
+          changed_when: false
+          no_log: true
+
+        - name: Write it to {{ jira_secret_file }}
+          ansible.builtin.copy:
+            content: "{{ encrypted.stdout }}\n"
+            dest: "{{ repo_dir }}/{{ jira_secret_file }}"
+            mode: "0644"
+          when: encrypted is not skipped
+
+        - name: Say what to do next
+          ansible.builtin.debug:
+            msg: >-
+              {{ jira_secret_file ~ ' is written. Commit and merge it, then restart the worker: kubectl --context homelab -n ember rollout restart deploy/enrich-jira'
+                 if encrypted is not skipped else jira_secret_file ~ ' already holds the vault value; nothing to do' }}

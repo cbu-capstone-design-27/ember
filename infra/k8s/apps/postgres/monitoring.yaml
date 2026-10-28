@@ -1,8 +1,8 @@
 # Custom metrics for the Postgres exporter (EMBER-91). cluster.yaml lists this ConfigMap under
 # monitoring, and the exporter runs each query against database ember when the collector scrapes it,
-# as role cnpg_metrics_exporter (granted the columns it reads by migration
-# 20261015120000_raw_events_metrics_grant.sql). The cnpg.io/reload label makes the instance pick up an
-# edit without a restart. Each column becomes cnpg_<query>_<column>.
+# as role cnpg_metrics_exporter (granted the columns it reads by migrations
+# 20261015120000_raw_events_metrics_grant.sql and 20261028120000_raw_events_metrics_event_name.sql).
+# The cnpg.io/reload label makes the instance pick up an edit without a restart. Each column becomes cnpg_<query>_<column>.
 #
 # A source with no rows exports no series, so a graph sums them "or vector(0)".
 apiVersion: v1
@@ -46,3 +46,19 @@ data:
         - accounts:
             usage: GAUGE
             description: Distinct accounts among those rows
+    raw_events_received:
+      # Every stored row, kept or not yet deleted by retention: a graph takes the increase per interval
+      query: |
+        select source, event_name, count(*) as rows
+          from public.raw_events
+         group by source, event_name
+      metrics:
+        - source:
+            usage: LABEL
+            description: The source the rows came from
+        - event_name:
+            usage: LABEL
+            description: The adapter's event type, as stored in raw_events.event_name
+        - rows:
+            usage: GAUGE
+            description: Stored deliveries of that type; falls when retention deletes rows

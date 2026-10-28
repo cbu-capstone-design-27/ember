@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: enrich-jira-api
+    namespace: ember
+stringData:
+    JIRA_EMAIL: ENC[AES256_GCM,data:tXlGgwn3VCPTfgwvpnNI9gQ0h/kRavoclCdsPdo=,iv:9xjEzyUKyFPVSeEzFcyqQT4bcGuvsK9/1DKF2Ycxpnc=,tag:AiDGrMcaPQaZHNMJjcySkw==,type:str]
+    JIRA_API_TOKEN: ENC[AES256_GCM,data:pTTbi1h0tNM16lvxupgsMBlWYm9kjsnizAXdquBQ6bQ/JnfG9hwy5d+P1NYZjSNd8ewAfTdjUZLhPHnAm/k6rMf9G1/Wc/68d/sYsSnry/ZICcQthIFuJsXEjPRKPb7EEfUjMWQ5Tx1zhFqCvK90zeL7H0+xmCChtsa+mEhKLYeSJ9SiejES1vAbOLtKNdTBQo/fWyIGbxeb5KLcwNWCKx8PnPWbTfTpd5qVOAyfl+HB5X4qLgmYZh1S/AELkD5u,iv:qG6vRGjniV6VAg/jN6jGf63774BgDUYR5sIJIcKMs8M=,tag:YQ5q5ZZNqQ2h66+yhzuKxA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAvTG1Pc3Mzc0R0dksyamxY
+            S0dZdFJsY2tTVGZ1dlpLcXR5NnNTQWJBdGlRCndsME00eFhPZVk4THZINDJNNmMr
+            dmRLVE1KS0N6dG5SdWRGbmQzMm40aHMKLS0tIG03TTRjZXd2aTRtd0JOYkZkUGJw
+            eVhwQnRWRjZlMHR3UUFaRW5lOG9qSHMKsIfdj7wGF7pOhNCeOsq2qji4znzYy3x+
+            3yXzsA4cEdvY9cUU6iJdbLGWr9umT2oRTrS7q+K297G/Chl3ALwpQg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-28T16:04:25Z"
+    mac: ENC[AES256_GCM,data:/Ayj3j38g17LY4WRIqkAx91dHrU4Zw4rO+d27g8DLdHjx9B9493T8/NH4In1h9tqhIdaFcV14Z86ZLhMmX+0UYB9/DqFPPcyTRJTLM5zkjwTaHIj6/+LsnJU4vWjx/aaKWPZqEbXX1nXz9HdwfrSFqsqqaxUMUAnRMQKxY91Tno=,iv:hFjHTOK1HOkgJPla5EPh63TuCPPTkbDixPxcsYHpunk=,tag:GK4BngoHGPxsb5FrXl6uLA==,type:str]
+    version: 3.13.3
