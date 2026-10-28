@@ -126,17 +126,26 @@ Exit 0 pass, 1 mismatch or leftovers, 2 could not start.
 
 ### Real data (ember-development): results
 
-To be filled by the Lead after the run.
+Run on 2026-10-28 against a one-time, read-only copy of the team's own Slack records (tenant `ember-development`),
+taken from the cluster Postgres with the owner's approval. They were loaded into a local Postgres 18 (pgvector 0.8.7,
+migrated by dbmate v2.36.0) and a local `neo4j:5-community`. The copy was deleted after the run, and only the counts
+below were kept: no message text, names or ids.
 
-- Date, Postgres and Neo4j used: `<fill>`
-- `source_records` by source/kind: `<fill>`
-- Episodes extracted / loaded / unloaded: `<fill>`
-- Rejected / skipped / not extracted by kind: `<fill>`
-- Nodes per label (jira, slack): `<fill>`
-- Relationships per type (jira, slack): `<fill>`
-- Schema check: `<fill>`
-- Smoke queries (comment-authors, thread-messages, issue-references, deleted-state, subgraph-isolation): `<fill>`
-- Result and follow-ups: `<fill>`
+- `source_records`: slack/message 87, slack/channel 3, slack/user 3. No Jira records were on the cluster yet; the
+  Jira part runs when they arrive.
+- Episodes: 93 extracted, 93 loaded, 0 unloaded, 0 load failures. Rejected 0, skipped 0, not extracted 0.
+- Nodes in `ember-development_slack`: Message 61, Conversation 48, Container 3, Identity 3, Person 3. The 87 message
+  records are 61 distinct messages; the rest are later versions of the same message. So 61 Message nodes is the
+  expected result.
+- Relationships: PART_OF 61, AUTHORED 61, CONTAINS 48, REPLIES_TO 13, RESOLVES_TO 3.
+- Schema check: OK.
+- Smoke queries: all 5 pass.
+  - thread-messages: 48 threads, the largest with 3 messages; all 61 messages have a sender.
+  - subgraph-isolation: 118 nodes, 0 with the wrong source, 0 crossing edges.
+  - deleted-state: 0 deleted, 0 still holding content (the copy had no deletes).
+  - comment-authors and issue-references: 0, since Jira isn't present yet.
+- Result: **PASS**. Follow-ups: rerun with Jira once its records reach the cluster. The GitHub (Parallax) run is
+  EMBER-107.
 
 ## Gaps in the ontology and mapping, with suggested tickets
 

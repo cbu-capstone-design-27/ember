@@ -118,10 +118,11 @@ class Result:
             lines.append("pipeline: " + ", ".join(f"{k}={v}" for k, v in sorted(self.pipeline.items())))
             lines.append("")
         width = max([len(r.what) for r in self.counts] + [10])
-        lines.append(f"{'subgraph':<18}{'what':<{width + 2}}{'expected':>9}{'actual':>8}  result")
+        gwidth = max([len(r.group) for r in self.counts] + [len("subgraph")]) + 2
+        lines.append(f"{'subgraph':<{gwidth}}{'what':<{width + 2}}{'expected':>9}{'actual':>8}  result")
         for row in self.counts:
             expected = "-" if row.expected is None else str(row.expected)
-            lines.append(f"{row.group:<18}{row.what:<{width + 2}}{expected:>9}{row.actual:>8}  "
+            lines.append(f"{row.group:<{gwidth}}{row.what:<{width + 2}}{expected:>9}{row.actual:>8}  "
                          + ("ok" if row.ok else "MISMATCH"))
         if not self.has_expected:
             lines.append("(no expected-counts file: counts are reported, not compared)")
