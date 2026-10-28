@@ -13,6 +13,13 @@ from .base import MapContext, Mapped, Reject, Skip, add_account, get, link_perso
 
 _REPO = re.compile(r"github\.com/([^/]+/[^/]+)/")
 _CLOSES = re.compile(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)")
+_EMAIL = re.compile(r"<?[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}>?")
+
+
+def _commit_text(message: str) -> str:
+    """A commit message without email addresses. Trailers such as Signed-off-by and
+    Co-authored-by carry them, and commit emails are not stored anywhere else either."""
+    return _EMAIL.sub("<email>", message)
 
 
 def _unwrap(body: dict) -> tuple[str, dict, dict | None]:
@@ -64,7 +71,7 @@ def map_github(ctx: MapContext, body: dict) -> Mapped:
     out.nodes.append(container)
 
     if kind == "commit":
-        message = get(obj, "commit", "message") or ""
+        message = _commit_text(get(obj, "commit", "message") or "")
         node = source_node("Change", gid, "github", "commit", f"{repo}@{obj['sha']}",
                            name=message.splitlines()[0] if message else obj["sha"][:7], url=url,
                            embed_text=message, created_at=get(obj, "commit", "author", "date"),
@@ -314,7 +321,7 @@ def _commit_record(out: Mapped, gid: str, object_id: str, commit: dict) -> Mappe
     sha = commit.get("id") or commit.get("sha") or sha_in_id
     if not repo or not sha:
         raise Reject("github commit without a repository or sha")
-    message = commit.get("message") or get(commit, "commit", "message") or ""
+    message = _commit_text(commit.get("message") or get(commit, "commit", "message") or "")
     url = commit.get("html_url") or commit.get("url")
     if not (isinstance(url, str) and url.startswith("https://github.com/")):
         url = f"https://github.com/{repo}/commit/{sha}"

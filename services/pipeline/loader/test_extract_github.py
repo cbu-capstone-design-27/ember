@@ -190,6 +190,18 @@ class KindMappingTest(unittest.TestCase):
         self.assertEqual((change["name"], change["created_at"]), ("Bulk change", gh.iso(1)))
         self.assertIn(("AUTHORED", "github:cy-fake", f"{gh.REPO}@{sha}"), edges(draft))
 
+    def test_commit_message_emails_are_removed(self):
+        sha = "fedcba9876543210fedcba9876543210fedcba98"
+        message = ("Fix the retry loop\n\nSigned-off-by: Ada Fake <ada@example.test>\n"
+                   "Co-authored-by: Cy Fake <cy.fake+bot@users.noreply.example.test>")
+        compare = {"sha": sha, "html_url": f"{gh.WEB}/commit/{sha}", "author": {"login": "cy-fake"},
+                   "commit": {"message": message, "author": {"date": gh.iso(1)}}}
+        draft = draft_for(("github", "commit", f"{gh.REPO}@{sha}", sha, gh.at(1), {"payload": compare}))
+        text = nodes(draft)[("Change", f"{gh.REPO}@{sha}")]["props"]["embed_text"]
+        self.assertNotIn("@example.test", text)
+        self.assertIn("Signed-off-by: Ada Fake <email>", text)
+        self.assertIn("Fix the retry loop", text)
+
     def test_tombstones_keep_only_the_key(self):
         cases = {("issue", f"{gh.REPO}#2"): ("WorkItem", "issue", f"{gh.REPO}#2"),
                  ("issue_comment", f"{gh.REPO}/issue-comment/5003"):
