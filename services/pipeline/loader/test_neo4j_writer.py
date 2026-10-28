@@ -151,7 +151,8 @@ class WriterTests(unittest.TestCase):
         query, params = driver.log[0]
         # merges into existing properties, never replaces them
         self.assertIn("SET n += CASE WHEN newer OR coalesce(cur.deleted, false) = false THEN row.props", query)
-        self.assertNotIn("SET n = ", query)
+        self.assertNotIn("SET n = row", query)
+        self.assertIn("ELSE properties(n) END", query)  # only a delete replaces the properties
         self.assertNotIn("embedding", params["rows"][0]["props"])
 
 
@@ -187,6 +188,13 @@ class OrderingTests(unittest.TestCase):
                       "ON CREATE SET b.uuid = row.dst, b.placeholder = true", query)
         self.assertNotIn("placeholder", edge_query("AUTHORED", "Person", "Message"))
         self.assertIn("REMOVE n.placeholder", node_query("Message"))
+
+    def test_a_newer_delete_keeps_only_identity_keys(self):
+        query = node_query("Message")
+        self.assertIn("SET n = CASE WHEN newer AND coalesce(row.props.deleted, false) THEN {group_id: n.group_id, "
+                      "uuid: n.uuid, source: n.source, external_id: n.external_id, kind: n.kind, deleted: n.deleted}",
+                      query)
+        self.assertNotIn("row.props.deleted", edge_query("AUTHORED", "Person", "Message"))
 
         driver = FakeDriver(rows=[[{"n": 1}]])
         edge = EdgeRec("REFERENCES", "t_jira", "Message", "10001", "WorkItem", "PHO-1")

@@ -269,25 +269,51 @@ class PgLoadTest(unittest.IsolatedAsyncioTestCase):
                 neo4j.reset(tenant_subgraphs(TENANT))
                 neo4j.close()
 
-    async def test_a_slack_delete_marks_the_message_and_a_late_edit_does_not_undo_it(self):
+    async def test_a_slack_delete_clears_the_message_and_a_late_edit_does_not_restore_it(self):
         ts = "1789353000.000100"
         await self.insert("slack", "message", f"C1/{ts}", ts, T0, {"payload": message(ts, "hello")})
+        writer = MemoryWriter()
+        await self.extract_all()
+        await self.load_all(writer)
+        self.slack_message(writer).update(embedding=[0.1, 0.2], embedding_text_hash="h")  # as the embed step leaves it
+
         await self.insert("slack", "message", f"C1/{ts}", "deleted:1789354000.0", T0 + timedelta(hours=1),
                           {"payload": None, "message": None, "deleted": True})
-        writer = MemoryWriter()
         extract = await self.extract_all()
         self.assertEqual(extract.counts["rejected"], 0)
         await self.load_all(writer)
-        self.assertIs(self.slack_message(writer)["deleted"], True)
-
         await self.insert("slack", "message", f"C1/{ts}", "1789353500.0", T0 + timedelta(minutes=8),
                           {"payload": message(ts, "late edit")})
         await self.extract_all()
         await self.load_all(writer)
+        self.assertEqual(await self.unloaded(), 0)
         stored = self.slack_message(writer)
         self.assertIs(stored["deleted"], True)
-        self.assertEqual(stored["embed_text"], "hello")
-        self.assertEqual(await self.unloaded(), 0)
+        self.assertEqual(set(stored), {"group_id", "uuid", "source", "external_id", "kind", "deleted", "occurred_at"},
+                         "deleted content survived in the graph")
+
+        if NEO4J_URI:
+            from loader.neo4j_writer import Neo4jWriter
+            from ontology import tenant_subgraphs
+
+            neo4j = Neo4jWriter(NEO4J_URI, os.environ.get("NEO4J_USER", "neo4j"), os.environ["NEO4J_PASSWORD"])
+            group = f"{TENANT}_slack"
+            try:
+                neo4j.reset(tenant_subgraphs(TENANT))
+                # in source order: the message (then embedded), the delete, then the late, older edit
+                for text in ("hello", "deleted", "late edit"):
+                    await self.db.execute("update episodes set loaded_at = null where text like $1", f"%{text}%")
+                    await self.load_all(neo4j)
+                    if text == "hello":
+                        neo4j._run("MATCH (m:Message {group_id: $g}) SET m.embedding = [0.1, 0.2], "
+                                   "m.embedding_text_hash = 'h'", g=group)
+                [found] = neo4j._run(f"MATCH (m:Message {{group_id: $g, external_id: 'C1:{ts}'}}) "
+                                     "RETURN properties(m) AS p", g=group)
+                self.assertEqual(set(found["p"]), {"group_id", "uuid", "source", "external_id", "kind", "deleted",
+                                                   "occurred_at"})
+            finally:
+                neo4j.reset(tenant_subgraphs(TENANT))
+                neo4j.close()
 
     # --- worker behavior ---
 

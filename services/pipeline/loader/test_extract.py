@@ -154,6 +154,23 @@ class OrderingRuleTests(unittest.TestCase):
         self.assertIs(stored["deleted"], True)
         self.assertNotIn("embed_text", stored)
 
+    def test_a_delete_clears_content_and_embeddings(self):
+        writer = MemoryWriter()
+        writer.write_nodes([node("secret", at=T0, name="secret")])
+        self.stored(writer).update(embedding=[0.1], embedding_text_hash="h")
+        writer.write_nodes([NodeRec("Message", "photon_slack", "C1:1", {"source": "slack", "kind": "message",
+                                    "external_id": "C1:1", "deleted": True},
+                                    occurred_at=ordering_time(T0 + timedelta(hours=1)))])
+        self.assertEqual(set(self.stored(writer)),
+                         {"group_id", "uuid", "source", "external_id", "kind", "deleted", "occurred_at"})
+
+    def test_an_older_delete_does_not_clear_newer_content(self):
+        writer = MemoryWriter()
+        writer.write_nodes([node("kept", at=T0 + timedelta(hours=1))])
+        writer.write_nodes([NodeRec("Message", "photon_slack", "C1:1", {"source": "slack", "kind": "message",
+                                    "external_id": "C1:1", "deleted": True}, occurred_at=ordering_time(T0))])
+        self.assertEqual(self.stored(writer)["embed_text"], "kept")
+
     def test_edges_fill_placeholders_that_their_nodes_complete(self):
         writer = MemoryWriter()
         edge = EdgeRec("REFERENCES", "photon_jira", "Message", "20001", "WorkItem", "PHO-1",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ontology import parse_subgraph_id
 
+from .neo4j_writer import TOMBSTONE_KEYS
 from .facts import SOURCE_BACKED, GraphFacts, expected_constraint_names
 from .records import EdgeRec, NodeRec
 from .snapshot import HIDDEN_PROPS, Snapshot, make_ref
@@ -15,6 +16,9 @@ def _apply(stored: dict, props: dict, occurred_at: str | None, deletable: bool) 
     current = stored.get("occurred_at")
     if occurred_at is None or current is None or occurred_at >= current:
         stored.update(props)
+        if deletable and props.get("deleted") is True:  # a delete clears content (neo4j_writer.TOMBSTONE_KEYS)
+            for key in [k for k in stored if k not in TOMBSTONE_KEYS]:
+                del stored[key]
         if occurred_at is not None:
             stored["occurred_at"] = occurred_at
     elif not (deletable and stored.get("deleted")):

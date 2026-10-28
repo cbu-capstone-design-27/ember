@@ -91,10 +91,14 @@ Rules worth knowing:
   when it starts.
 - **Order.** Every node and edge stores the source's `occurred_at`. A version older than the stored one
   only fills properties the node lacks, so a late, older edit never undoes a newer one.
-- **Deletes.** A deleted Slack message or Jira issue or comment sets `deleted: true` on its node, by the
-  delete's time. The node is kept and a late edit cannot clear the flag.
+- **Deletes.** A deleted Slack message or Jira issue or comment keeps its node but clears its content: a
+  delete not older than the node leaves only `group_id`, `uuid`, `source`, `external_id`, `kind`,
+  `deleted: true` and `occurred_at`, so the text, names and embeddings are gone. A late, older edit
+  cannot bring them back.
 - **Edges to nodes not loaded yet** (a comment whose issue comes in a later batch) create a bare
-  `placeholder: true` node on the target's key, which the target's own episode fills in.
+  `placeholder: true` node on the target's key, which the target's own episode fills in (and the
+  flag removed). Readers that list nodes should skip `placeholder: true` ones; one whose target never
+  arrives stays a placeholder.
 - **Reruns** change nothing: extract skips records that already have an episode from this
   `EXTRACTOR_VERSION` (`loader/extract.py`; bump it to re-extract everything), and load only takes
   episodes with `loaded_at` null.

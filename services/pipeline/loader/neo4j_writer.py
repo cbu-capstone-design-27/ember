@@ -36,13 +36,22 @@ def _rel(name: str) -> str:
 # A row or element without occurred_at (the JSONL loader) always applies. Rows reach a query at most
 # once per element (_rounds): Cypher runs each clause over every row before the next clause, so two
 # rows for one element in one query would both read the state before either wrote.
-def _guarded_set(var: str, deletable: bool) -> str:
+# What a delete keeps on a node: identity only. A tombstone not older than the node clears everything
+# else (text, names, embeddings), so deleted content does not survive in the graph (EMBER-85).
+TOMBSTONE_KEYS = ("group_id", "uuid", "source", "external_id", "kind", "deleted")
+
+
+def _guarded_set(var: str, deletable: bool, clears: bool = False) -> str:
     fill_ok = "newer OR coalesce(cur.deleted, false) = false" if deletable else "true"
     return (f"WITH {var}, row, properties({var}) AS cur "
             f"WITH {var}, row, cur, (row.occurred_at IS NULL OR cur.occurred_at IS NULL "
             "OR row.occurred_at >= cur.occurred_at) AS newer "
             f"SET {var} += CASE WHEN {fill_ok} THEN row.props ELSE {{}} END "
             f"SET {var} += CASE WHEN newer THEN {{}} ELSE cur END "
+            + (f"SET {var} = CASE WHEN newer AND coalesce(row.props.deleted, false) THEN "
+               + "{" + ", ".join(f"{k}: {var}.{k}" for k in TOMBSTONE_KEYS) + "} "
+               f"ELSE properties({var}) END " if clears else "")
+            +
             f"SET {var}.occurred_at = CASE WHEN newer THEN coalesce(row.occurred_at, cur.occurred_at) "
             "ELSE cur.occurred_at END ")
 
@@ -56,7 +65,7 @@ def node_query(label: str) -> str:
     if _label(label) in SOURCE_BACKED:
         return (f"UNWIND $rows AS row MERGE (n:{label} "
                 "{group_id: row.group_id, source: row.source, external_id: row.external_id}) "
-                + _guarded_set("n", deletable=True) + "SET n.uuid = row.uuid REMOVE n.placeholder")
+                + _guarded_set("n", deletable=True, clears=True) + "SET n.uuid = row.uuid REMOVE n.placeholder")
     return (f"UNWIND $rows AS row MERGE (n:{label} {{group_id: row.group_id, uuid: row.uuid}}) "
             + _guarded_set("n", deletable=True) + "REMOVE n.placeholder")
 
