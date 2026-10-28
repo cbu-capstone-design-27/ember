@@ -14,13 +14,6 @@ metadata:
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 ---
-# EMBER-64, step 1 of 2: no prune annotation, so the next change can drop this Namespace and Flux
-# deletes it (ADR 0009). Remove this block once Flux has applied this one.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: headlamp
----
 apiVersion: v1
 kind: Namespace
 metadata:
