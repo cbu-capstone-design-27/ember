@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  # Secret enrich-gitlab-api: GITLAB_API_TOKEN, for the lookups a webhook lacks (k8s/README.md, enrich-gitlab)
+  - gitlab-api.sops.yaml

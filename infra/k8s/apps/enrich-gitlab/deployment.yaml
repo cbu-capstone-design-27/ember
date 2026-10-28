@@ -1,0 +1,68 @@
+# enrich:gitlab (EMBER-68, services/gitlab-ingestion/enrich.py): turns GitLab rows in raw_events into
+# source_records. It serves nothing, so there is no Service and no probe. It claims rows with
+# FOR UPDATE SKIP LOCKED, so a second replica or a rollout's overlap never enriches a row twice.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enrich-gitlab
+  namespace: ember
+  labels:
+    app: enrich-gitlab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enrich-gitlab
+  template:
+    metadata:
+      labels:
+        app: enrich-gitlab
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      # SIGTERM stops claiming and finishes the rows in flight; a row cut off is claimed again
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: enrich
+          # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
+          image: ghcr.io/cbu-capstone-design-27/ember/gitlab-ingestion:develop-255-f83d5ad
+          # The image's default command is the stdout-only receiver.py; intake receives GitLab's webhooks
+          command: ["python3", "enrich.py"]
+          env:
+            # The pod stays in CreateContainerConfigError until both Secrets exist
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-app
+                  key: uri
+            # Calls go only here, never to a host named in a payload
+            - name: GITLAB_BASE_URL
+              value: https://gitlab.com
+            # Secret enrich-gitlab-api (gitlab-api.sops.yaml): a read_api token, for the merge request
+            # diffs and long pushes a webhook lacks. One token for now, so one tenant group
+            - name: GITLAB_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: enrich-gitlab-api
+                  key: GITLAB_API_TOKEN
+            - name: CONCURRENCY
+              value: "4"
+          # Idle it holds a LISTEN connection and a small pool, plus one thread per runner for GitLab calls
+          resources:
+            requests:
+              cpu: 10m
+              memory: 96Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
