@@ -96,7 +96,9 @@ class MemoryWriter:
                 continue
             facts.labels.add(label)
             facts.node_counts[label] = facts.node_counts.get(label, 0) + 1
-            if label in SOURCE_BACKED and not all(props.get(k) for k in ("source", "kind", "external_id")):
+            if props.get("placeholder"):
+                facts.placeholders[label] = facts.placeholders.get(label, 0) + 1
+            elif label in SOURCE_BACKED and not all(props.get(k) for k in ("source", "kind", "external_id")):
                 facts.missing_required[label] = facts.missing_required.get(label, 0) + 1
         for (rel, src, _, dst, _), props in self.edges.items():
             if props["group_id"] in wanted:

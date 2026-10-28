@@ -6,12 +6,16 @@ Nothing here touches Neo4j; load (load.py) writes the attrs.
 
 Which records map:
 
-- jira issue and comment, slack message, user and channel (EXTRACTED). Other kinds of those sources
-  (Jira worklogs, Slack memberships, ...) and other sources (GitHub, GitLab, Teams) are not claimed
-  yet: the worker counts and logs them at start.
+- jira issue and comment, slack message, user and channel, and the GitHub kinds in
+  mappers.github.RECORD_KINDS (EXTRACTED). Other kinds of those sources (Jira worklogs, Slack
+  memberships, GitHub refs, releases, labels and milestones, ...) and other sources (GitLab, Teams)
+  are not claimed: the worker counts and logs them at start.
 - A deleted record (``record["deleted"]``, a tombstone enrich writes for a Slack message_deleted
-  or a Jira *_deleted event) becomes a tombstone node: the object's schema key plus deleted: true,
-  stamped with the delete's time. Its content is not written, and load never deletes the node.
+  or a Jira *_deleted event; ``record["tombstone"]`` for a GitHub ``deleted`` action) becomes a
+  tombstone node: the object's schema key plus deleted: true, stamped with the delete's time. Its
+  content is not written, and load never deletes the node.
+- A node may carry its own ordering time (``occurred_at`` in attrs): the parent issue or pull request
+  a GitHub comment or review carries is stamped with the parent's updated_at, not the comment's time.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from ontology import subgraph_id
 from .conform import validate_mapped
 from .mappers import MapContext, Mapped, Reject, Skip, map_record
 from .mappers.base import get, source_node
+from .mappers.github import RECORD_KINDS as GITHUB_KINDS
+from .mappers.github import github_tombstone, map_github_record
 from .mappers.jira import _classify as classify_jira
 from .records import EdgeRec, NodeRec
 
@@ -33,7 +39,8 @@ from .records import EdgeRec, NodeRec
 EXTRACTOR_VERSION = 1
 
 # (source, kind) of the source_records rows extract claims
-EXTRACTED = {("jira", "issue"), ("jira", "comment"), ("slack", "message"), ("slack", "user"), ("slack", "channel")}
+EXTRACTED = {("jira", "issue"), ("jira", "comment"), ("slack", "message"), ("slack", "user"), ("slack", "channel"),
+             *(("github", kind) for kind in GITHUB_KINDS)}
 
 TEXT_LIMIT = 4000
 
@@ -111,6 +118,8 @@ def _body(row: SourceRow) -> dict:
 def _tombstone(row: SourceRow, group_id: str) -> Mapped:
     """The node a delete marks: its schema key and deleted: true, nothing of its content."""
     payload = row.record.get("payload") if isinstance(row.record.get("payload"), dict) else {}
+    if row.source == "github":
+        return github_tombstone(group_id, row.kind, row.object_id, payload)
     if (row.source, row.kind) == ("slack", "message"):
         label, kind, key = "Message", "message", row.object_id.replace("/", ":", 1)  # the mapper's channel:ts
     elif (row.source, row.kind) == ("jira", "issue"):
@@ -150,7 +159,10 @@ def _summary(row: SourceRow, mapped: Mapped, deleted: bool) -> str:
 
 
 def _node_json(node: NodeRec) -> dict:
-    return {"label": node.label, "key": node.key, "props": node.props}
+    out = {"label": node.label, "key": node.key, "props": node.props}
+    if node.occurred_at is not None:  # its own ordering time, not the episode's
+        out["occurred_at"] = node.occurred_at
+    return out
 
 
 def _edge_json(edge: EdgeRec) -> dict:
@@ -165,7 +177,8 @@ async def extract(row: SourceRow, issue_keys: IssueKeys) -> EpisodeDraft:
         group_id = subgraph_id(row.tenant, row.source)
     except ValueError as exc:
         raise Reject(str(exc)) from exc
-    deleted = isinstance(row.record, dict) and row.record.get("deleted") is True
+    deleted = isinstance(row.record, dict) and (row.record.get("deleted") is True
+                                                or row.record.get("tombstone") is True)
     ctx = MapContext(row.tenant)
     if deleted:
         mapped = _tombstone(row, group_id)
@@ -174,7 +187,10 @@ async def extract(row: SourceRow, issue_keys: IssueKeys) -> EpisodeDraft:
         if (row.source, row.kind) == ("jira", "comment"):
             ctx.jira_issue_keys.update(await _issue_keys_for(row, body, issue_keys))
         try:
-            mapped = map_record(ctx, {"type": row.source, "body": body})
+            if row.source == "github":
+                mapped = map_github_record(ctx, row.kind, row.object_id, row.record)
+            else:
+                mapped = map_record(ctx, {"type": row.source, "body": body})
         except (Skip, Reject):
             raise
         except Exception as exc:  # a malformed body fails only itself
@@ -194,9 +210,11 @@ async def extract(row: SourceRow, issue_keys: IssueKeys) -> EpisodeDraft:
 
 
 def graph_records(attrs: dict, occurred_at: str) -> tuple[list[NodeRec], list[EdgeRec]]:
-    """An episode's attrs back as the records the writers take, stamped with its ordering time."""
+    """An episode's attrs back as the records the writers take, stamped with its ordering time (a node
+    that carries its own, such as a GitHub comment's parent, keeps that)."""
     group_id = attrs["group_id"]
-    nodes = [NodeRec(n["label"], group_id, n["key"], n["props"], occurred_at=occurred_at) for n in attrs["nodes"]]
+    nodes = [NodeRec(n["label"], group_id, n["key"], n["props"], occurred_at=n.get("occurred_at") or occurred_at)
+             for n in attrs["nodes"]]
     edges = [EdgeRec(e["type"], group_id, e["src_label"], e["src_key"], e["dst_label"], e["dst_key"], e["props"],
                      occurred_at=occurred_at) for e in attrs["edges"]]
     return nodes, edges

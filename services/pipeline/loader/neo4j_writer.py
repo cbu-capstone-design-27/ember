@@ -225,11 +225,15 @@ class Neo4jWriter:
             facts.relationships[(row["s"], row["t"], row["d"])] = row["c"]
         facts.constraints = {row["name"] for row in self._run("SHOW CONSTRAINTS YIELD name RETURN name")}
         for label in sorted(SOURCE_BACKED):
-            rows = self._run(f"MATCH (n:{label}) WHERE n.group_id IN $gids AND "
-                             "(n.source IS NULL OR n.kind IS NULL OR n.external_id IS NULL) "
-                             "RETURN count(n) AS c", gids=group_ids)
-            if rows and rows[0]["c"]:
-                facts.missing_required[label] = rows[0]["c"]
+            rows = self._run(f"MATCH (n:{label}) WHERE n.group_id IN $gids "
+                             "WITH coalesce(n.placeholder, false) AS placeholder, "
+                             "(n.source IS NULL OR n.kind IS NULL OR n.external_id IS NULL) AS missing "
+                             "RETURN sum(CASE WHEN missing AND NOT placeholder THEN 1 ELSE 0 END) AS missing_count, "
+                             "sum(CASE WHEN placeholder THEN 1 ELSE 0 END) AS placeholder_count", gids=group_ids)
+            if rows and rows[0]["missing_count"]:
+                facts.missing_required[label] = rows[0]["missing_count"]
+            if rows and rows[0]["placeholder_count"]:
+                facts.placeholders[label] = rows[0]["placeholder_count"]
         return facts
 
     def snapshot(self, group_ids: list[str]) -> Snapshot:
