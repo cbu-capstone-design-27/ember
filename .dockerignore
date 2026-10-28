@@ -1,0 +1,12 @@
+# Build context is the repo root for every image (see docs/container-images.md).
+# Nothing here is COPYed by any services/*/Dockerfile; keep it out of the context
+# so local data, secrets and loader output never reach a layer.
+.git
+.env
+.env.*
+data/
+**/rejects.jsonl
+docs/superpowers
+.superpowers
+**/__pycache__
+**/node_modules

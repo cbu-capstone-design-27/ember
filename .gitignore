@@ -12,5 +12,8 @@ build/
 next-env.d.ts
 *.tsbuildinfo
 apps/web/data/
+# Local pipeline data and loader output (EMBER-45)
+/data/
+rejects.jsonl
 # Rust (apps/cli)
 target/
