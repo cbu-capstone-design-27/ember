@@ -1,9 +1,13 @@
-# Custom metrics for the Postgres exporter (EMBER-91). cluster.yaml lists this ConfigMap under
-# monitoring, and the exporter runs each query against database ember when the collector scrapes it,
-# as role cnpg_metrics_exporter (granted the columns it reads by migrations
-# 20261015120000_raw_events_metrics_grant.sql and 20261028120000_raw_events_metrics_event_name.sql).
-# The cnpg.io/reload label makes the instance pick up an edit without a restart. Each column becomes cnpg_<query>_<column>.
+# Custom metrics for the Postgres exporter (EMBER-91, EMBER-111). cluster.yaml lists this ConfigMap
+# under monitoring, and the exporter runs each query against database ember when the collector
+# scrapes it, as role cnpg_metrics_exporter (granted the columns it reads by migrations
+# 20261015120000_raw_events_metrics_grant.sql, 20261028120000_raw_events_metrics_event_name.sql and
+# 20261028170000_ingestion_metrics_grants.sql). The cnpg.io/reload label makes the instance pick up
+# an edit without a restart. Each column becomes cnpg_<query>_<column>.
 #
+# Every query aggregates; none reads an envelope, a record or an embedding. Rows with no tenant yet
+# are labelled tenant="(unmapped)", which no real tenant can be (installations' tenant rules). A
+# value that doesn't exist yet, such as when a source was last enriched before anything was, is -1.
 # A source with no rows exports no series, so a graph sums them "or vector(0)".
 apiVersion: v1
 kind: ConfigMap
@@ -15,15 +19,18 @@ data:
   queries: |
     raw_events_backlog:
       query: |
-        select source, count(*) as rows,
+        select source, tenant, count(*) as rows,
                extract(epoch from now() - min(received_at)) as oldest_age_seconds
           from public.raw_events
          where enriched_at is null and tenant is not null
-         group by source
+         group by source, tenant
       metrics:
         - source:
             usage: LABEL
             description: The source the rows came from
+        - tenant:
+            usage: LABEL
+            description: The tenant the rows belong to
         - rows:
             usage: GAUGE
             description: Rows waiting for that source's enrich worker
@@ -46,19 +53,171 @@ data:
         - accounts:
             usage: GAUGE
             description: Distinct accounts among those rows
-    raw_events_received:
-      # Every stored row, kept or not yet deleted by retention: a graph takes the increase per interval
+    raw_events_unmapped_account:
+      # Which accounts to map (make map-tenant). "(none)": the delivery names no account, e.g. GitHub's
+      # app-wide ping and security_advisory events, which no mapping can claim
       query: |
-        select source, event_name, count(*) as rows
+        select source, coalesce(account_id, '(none)') as account_id, count(*) as rows,
+               extract(epoch from now() - max(received_at)) as last_seen_age_seconds
           from public.raw_events
-         group by source, event_name
+         where enriched_at is null and tenant is null
+         group by source, account_id
       metrics:
         - source:
             usage: LABEL
             description: The source the rows came from
+        - account_id:
+            usage: LABEL
+            description: The source's account, as installations keys it
+        - rows:
+            usage: GAUGE
+            description: Rows from that account waiting for a tenant
+        - last_seen_age_seconds:
+            usage: GAUGE
+            description: Seconds since that account's latest delivery
+    raw_events_received:
+      # Every stored row, kept or not yet deleted by retention: a graph takes the increase per interval
+      query: |
+        select source, coalesce(tenant, '(unmapped)') as tenant, event_name, origin,
+               count(*) as rows, count(enriched_at) as enriched
+          from public.raw_events
+         group by source, tenant, event_name, origin
+      metrics:
+        - source:
+            usage: LABEL
+            description: The source the rows came from
+        - tenant:
+            usage: LABEL
+            description: The tenant the rows belong to, or (unmapped)
         - event_name:
             usage: LABEL
             description: The adapter's event type, as stored in raw_events.event_name
+        - origin:
+            usage: LABEL
+            description: webhook, reconcile or backfill
         - rows:
             usage: GAUGE
             description: Stored deliveries of that type; falls when retention deletes rows
+        - enriched:
+            usage: GAUGE
+            description: Of those, how many the enrich worker has processed
+    raw_events_activity:
+      query: |
+        select source, coalesce(tenant, '(unmapped)') as tenant,
+               extract(epoch from now() - max(received_at)) as last_received_age_seconds,
+               coalesce(extract(epoch from now() - max(enriched_at)), -1) as last_enriched_age_seconds
+          from public.raw_events
+         group by source, tenant
+      metrics:
+        - source:
+            usage: LABEL
+            description: The source the rows came from
+        - tenant:
+            usage: LABEL
+            description: The tenant the rows belong to, or (unmapped)
+        - last_received_age_seconds:
+            usage: GAUGE
+            description: Seconds since the latest stored delivery
+        - last_enriched_age_seconds:
+            usage: GAUGE
+            description: Seconds since enrich last finished a row, -1 if it never has
+    raw_events_enrich_latency:
+      # From stored to enriched, for rows enriched in the last 15 minutes. A row that waited for its
+      # account to be mapped counts that wait too
+      query: |
+        select source, tenant, count(*) as rows,
+               avg(extract(epoch from enriched_at - received_at)) as avg_seconds,
+               max(extract(epoch from enriched_at - received_at)) as max_seconds
+          from public.raw_events
+         where enriched_at > now() - interval '15 minutes'
+         group by source, tenant
+      metrics:
+        - source:
+            usage: LABEL
+            description: The source the rows came from
+        - tenant:
+            usage: LABEL
+            description: The tenant the rows belong to
+        - rows:
+            usage: GAUGE
+            description: Rows enriched in the last 15 minutes
+        - avg_seconds:
+            usage: GAUGE
+            description: Mean seconds from stored to enriched over those rows
+        - max_seconds:
+            usage: GAUGE
+            description: Longest seconds from stored to enriched over those rows
+    source_records_totals:
+      query: |
+        select source, tenant, kind, count(*) as rows, count(embedded_at) as embedded,
+               extract(epoch from now() - max(created_at)) as last_written_age_seconds,
+               coalesce(extract(epoch from now() - max(embedded_at)), -1) as last_embedded_age_seconds
+          from public.source_records
+         group by source, tenant, kind
+      metrics:
+        - source:
+            usage: LABEL
+            description: The source the records came from
+        - tenant:
+            usage: LABEL
+            description: The tenant the records belong to
+        - kind:
+            usage: LABEL
+            description: What the record is, e.g. issue, message, pull_request
+        - rows:
+            usage: GAUGE
+            description: Records, one per object version
+        - embedded:
+            usage: GAUGE
+            description: Of those, how many the embed worker has embedded
+        - last_written_age_seconds:
+            usage: GAUGE
+            description: Seconds since enrich last wrote one
+        - last_embedded_age_seconds:
+            usage: GAUGE
+            description: Seconds since one was last embedded, -1 if none has been
+    rate_limits_state:
+      query: |
+        select source, coalesce(tenant, '') as tenant, count(*) as buckets,
+               count(*) filter (where next_allowed_at > now()) as throttled,
+               greatest(0, coalesce(extract(epoch from max(next_allowed_at) - now()), 0)) as wait_seconds,
+               coalesce(min(remaining), -1) as remaining
+          from public.rate_limits
+         group by source, tenant
+      metrics:
+        - source:
+            usage: LABEL
+            description: The source whose API the gates are for
+        - tenant:
+            usage: LABEL
+            description: The tenant the gates belong to
+        - buckets:
+            usage: GAUGE
+            description: Rate-limit gates (GitHub installation, Slack method, Jira site)
+        - throttled:
+            usage: GAUGE
+            description: Gates closed right now
+        - wait_seconds:
+            usage: GAUGE
+            description: Seconds until the last closed gate opens, 0 when none is closed
+        - remaining:
+            usage: GAUGE
+            description: Fewest calls left in any gate, -1 when the API doesn't say
+    installations_mapped:
+      # One series per mapped account; the value is when it was mapped
+      query: |
+        select source, account_id, tenant, extract(epoch from added_at) as added_at_seconds
+          from public.installations
+      metrics:
+        - source:
+            usage: LABEL
+            description: The source the account is on
+        - account_id:
+            usage: LABEL
+            description: The source's account (GitHub installation, Slack workspace, Jira site)
+        - tenant:
+            usage: LABEL
+            description: The tenant it is mapped to
+        - added_at_seconds:
+            usage: GAUGE
+            description: When it was mapped, as epoch seconds

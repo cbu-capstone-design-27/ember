@@ -369,6 +369,18 @@ create table rate_limits (
   remaining int,
   primary key (source, tenant, bucket)
 );
+
+-- monitoring (EMBER-111, own migration): the exporter also counts by source and tenant for the Ember ingestion dashboard; never a record or an embedding
+do $$
+begin
+  if exists (select from pg_roles where rolname = 'cnpg_metrics_exporter') then
+    grant select (origin) on raw_events to cnpg_metrics_exporter;
+    grant select (source, tenant, kind, created_at, embedded_at) on source_records to cnpg_metrics_exporter;
+    grant select (source, tenant, bucket, next_allowed_at, remaining) on rate_limits to cnpg_metrics_exporter;
+    grant select (source, account_id, tenant, added_at) on installations to cnpg_metrics_exporter;
+  end if;
+end
+$$;
 ```
 
 Retention for `raw_events` is 30 days after an event is fully processed. One that has not finished processing stays until its source is removed from the tenant. Replaying enrich therefore reaches back 30 days; anything older comes back through reconcile. Retention for `source_records` and `episodes` is still open.
