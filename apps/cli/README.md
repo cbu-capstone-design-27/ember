@@ -1,10 +1,13 @@
 # apps/cli
 
-`ember`, the Ember command-line interface. Epic EMBER-11; the scaffold and `ember status` are EMBER-82. Written in Rust ([ADR 0007](../../docs/adr/0007-cli-in-rust.md)).
+`ember`, the Ember command-line interface. Epic EMBER-11; the scaffold and `ember status` are EMBER-82, `ember auth` is EMBER-87. Written in Rust ([ADR 0007](../../docs/adr/0007-cli-in-rust.md)).
 
 | Command | What it does |
 | --- | --- |
 | `ember status` | What ingestion data is in Postgres: for each source, how many `source_records` rows there are and the newest `occurred_at`. |
+| `ember auth login` | Sign in to the web app through the browser, and store the token. |
+| `ember auth status` | Who you're logged in as, and on which web app. |
+| `ember auth logout` | End the sign-in on the web app and delete the stored token. |
 
 ## Install
 
@@ -28,7 +31,9 @@ ember --version
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `DATABASE_URL` | yes | The ingestion Postgres, as `postgres://` or `postgresql://`. The same variable every worker reads. |
+| `DATABASE_URL` | for `ember status` | The ingestion Postgres, as `postgres://` or `postgresql://`. The same variable every worker reads. |
+| `EMBER_URL` | no | The web app's address for `ember auth login`, an `http://` or `https://` URL. Default `http://localhost:3000`. `--url` wins over it. |
+| `EMBER_CONFIG_DIR` | no | Where the credentials file goes. Default: `ember` inside your platform's config directory (below). |
 
 The web app reads `DATABASE_URL` too and also accepts `file:` (SQLite) URLs. `ember` refuses those, because the ingestion data is only in Postgres.
 
@@ -69,6 +74,48 @@ gitlab      127  2026-10-13T08:41:27Z
 
 Errors go to stderr and never include the password.
 
+## Sign in
+
+Accounts are made on the web app only. `ember auth login` signs in with the OAuth device flow (RFC 8628) that the web app serves; the exact requests are in [`apps/web/README.md`](../web/README.md#cli-sign-in).
+
+```console
+$ ember auth login
+Your code is WDJB-MJHT
+Approve it at http://localhost:3000/device
+Waiting for you to approve it in the browser...
+Successfully authenticated as ada@example.com
+$ ember auth status
+Logged in to http://localhost:3000 as ada@example.com
+$ ember auth logout
+Logged out of http://localhost:3000
+```
+
+1. `login` asks the web app for a code, and opens your browser at the page for it. If no browser opens (or you pass `--no-browser`), open the printed address yourself and check that the code matches.
+2. Sign in or sign up in the browser, then approve the code. `login` checks for your answer every few seconds.
+3. It asks the web app who you are and prints your **email**, because accounts have no username.
+
+- `--url <address>` or `EMBER_URL` picks the web app (`--url` wins). It must be an `http://` or `https://` address. The address is stored with the token, so `status` and `logout` talk to the server that issued it.
+- Running `login` while logged in goes through the flow again and replaces the token.
+- `status` asks the web app whether the token still works. A token expires after 7 days without use, and `status` counts as use. If it has expired or was revoked, `status` says "Not logged in. Run `ember auth login`." and leaves the file for `login` to replace.
+- `logout` ends the session on the web app, then deletes the file. If the web app can't be reached or no longer accepts the token, it still deletes the file and warns you that the session may still be open there. With nothing stored it says "Not logged in" and exits 0.
+- The token is never printed.
+
+The credentials file is `credentials.json`, holding the web app's address, the token and your email. The directory is created if it's missing.
+
+| OS | Default location |
+| --- | --- |
+| Linux | `~/.config/ember/credentials.json` (`$XDG_CONFIG_HOME/ember`) |
+| macOS | `~/Library/Application Support/ember/credentials.json` |
+| Windows | `%APPDATA%\ember\credentials.json` |
+
+On Linux and macOS the file is created with mode `0600` and the directory with `0700`, so only you can read them. The file is written to a temporary file and renamed, so an interrupted login can't leave half a token. Windows has no such modes; the file inherits your profile folder's access.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Done, or (`logout`) nothing to do |
+| 1 | Not logged in; sign-in denied, expired or already used; the token was rejected; the web app couldn't be reached or answered something unexpected. Every request gives up after 10 s. |
+| 2 | Configuration: the web app address isn't an http(s) URL, or there's no config directory. Also bad arguments. |
+
 ## Development
 
 ```sh
@@ -94,7 +141,9 @@ They use the databases `ember_test_cli_status` and `ember_test_cli_unmigrated`. 
 | `src/main.rs` | The commands (clap), and how errors become messages and exit codes |
 | `src/db.rs` | `DATABASE_URL`, connecting, and wording errors without the password |
 | `src/status.rs` | `ember status`: the query and the table |
+| `src/auth.rs` | `ember auth`: the device flow, `whoami`, sign-out, and the credentials file |
 | `tests/status.rs` | Runs the built binary, against Postgres for the ignored tests |
+| `tests/auth.rs` | Runs the built binary against a fake web app; needs no database |
 | `rust-toolchain.toml` | The Rust version everyone and CI build with |
 
 ## Conventions
