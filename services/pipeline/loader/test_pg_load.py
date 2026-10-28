@@ -255,9 +255,162 @@ class PgLoadTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(got.node_counts, want.node_counts, group)
                 self.assertEqual(got.relationships, want.relationships, group)
                 self.assertEqual(got.missing_required, {}, group)
+                self.assertEqual(got.placeholders, want.placeholders, group)
         finally:
             neo4j.reset(tenant_subgraphs(TENANT))
             neo4j.close()
+
+    # --- GitHub (EMBER-107) ---
+
+    async def seed_github(self, tenant=TENANT) -> None:
+        from loader import testdata_github as gh
+
+        for source, kind, object_id, version, at, record in gh.rows():
+            await self.insert(source, kind, object_id, version, at, record, tenant=tenant)
+
+    def github_node(self, writer, label, key) -> dict:
+        from loader.records import node_uuid
+
+        return writer.nodes[(label, node_uuid(f"{TENANT}_github", label, key))]
+
+    async def test_github_loads_into_its_own_subgraph_once_beside_jira_and_slack(self):
+        from loader import testdata_github as gh
+
+        await self.seed_github()
+        await self.insert("slack", "message", "C1/1789353000.000100", "1", T0,
+                          {"payload": message("1789353000.000100", "hello")})
+        jira_issue = {"webhookEvent": "jira:issue_created", "issue": {
+            "id": "10001", "key": "PHO-1", "self": "https://photon.example/rest/api/3/issue/10001",
+            "fields": {"summary": "x", "project": {"key": "PHO", "name": "Photon"}}}}
+        await self.insert("jira", "issue", "10001", "1", T0, {"payload": jira_issue})
+
+        extract = await self.extract_all()
+        self.assertEqual(extract.counts["extracted"], gh.EXTRACTED_ROWS + 2, dict(extract.counts))
+        self.assertEqual(extract.counts["rejected"], 0)
+        for kind, n in gh.NOT_EXTRACTED.items():
+            self.assertEqual(extract.counts[f"not_extracted:github:{kind}"], n)
+        writer = MemoryWriter()
+        await self.load_all(writer, batch=7)  # several batches, so edges meet nodes of later batches
+        self.assertEqual(await self.unloaded(), 0)
+
+        github = f"{TENANT}_github"
+        facts = writer.read_facts([github])
+        self.assertEqual(facts.node_counts, gh.EXPECTED["nodes"])
+        self.assertEqual({f"{s} {t} {d}": n for (s, t, d), n in facts.relationships.items()},
+                         gh.EXPECTED["relationships"])
+        self.assertEqual(facts.placeholders, gh.EXPECTED["placeholders"])
+        self.assertEqual(facts.missing_required, {})
+        # isolation: every node and edge stays in its subgraph; jira and slack hold none of GitHub's
+        for (label, _), props in writer.nodes.items():
+            if props.get("source"):
+                self.assertEqual(props["group_id"], f"{TENANT}_{props['source']}")
+        for (_, src_label, src, dst_label, dst), props in writer.edges.items():
+            self.assertEqual(writer.nodes[(src_label, src)]["group_id"], props["group_id"])
+            self.assertEqual(writer.nodes[(dst_label, dst)]["group_id"], props["group_id"])
+        self.assertEqual(set(writer.read_facts([f"{TENANT}_slack"]).node_counts),
+                         {"Message", "Conversation", "Container", "Identity", "Person"})
+        self.assertEqual(set(writer.read_facts([f"{TENANT}_jira"]).node_counts), {"WorkItem", "Container"})
+
+        pull = self.github_node(writer, "Change", f"{gh.REPO}#3")
+        self.assertEqual((pull["name"], pull["state"]), ("Prism: faster startup", "merged"))
+
+        before = copy.deepcopy((writer.nodes, writer.edges))
+        extract, load = await self.extract_all(), await self.load_all(writer)
+        self.assertEqual((extract.counts["extracted"], load.counts["loaded"]), (0, 0))
+        self.assertEqual((writer.nodes, writer.edges), before, "a rerun changed the graph")
+        if NEO4J_URI:
+            await self.check_neo4j_matches(writer)
+
+    async def test_github_deletes_clear_content_and_late_older_rows_do_not_regress(self):
+        from loader import testdata_github as gh
+
+        await self.seed_github()
+        writer = MemoryWriter()
+        await self.extract_all()
+        await self.load_all(writer)
+        late = [gh.late_comment_edit_row(), gh.late_pull_request_row()]
+        late_ids = [await self.insert(*row) for row in late]
+        extract = await self.extract_all()
+        self.assertEqual(extract.counts["extracted"], 2)
+        load = await self.load_all(writer)
+        self.assertEqual(load.counts["loaded"], 2)
+        tombstone = {"group_id", "uuid", "source", "external_id", "kind", "deleted", "occurred_at"}
+        for label, key in (("WorkItem", f"{gh.REPO}#2"), ("Message", f"{gh.REPO}/issue-comment/5003")):
+            self.assertEqual(set(self.github_node(writer, label, key)), tombstone, key)
+        pull = self.github_node(writer, "Change", f"{gh.REPO}#3")
+        self.assertEqual((pull["name"], pull["state"]), ("Prism: faster startup", "merged"))
+        self.assertEqual(self.github_node(writer, "WorkItem", f"{gh.REPO}#1")["status"], "closed")
+
+        if NEO4J_URI:
+            from loader.neo4j_writer import Neo4jWriter
+            from ontology import tenant_subgraphs
+
+            neo4j = Neo4jWriter(NEO4J_URI, os.environ.get("NEO4J_USER", "neo4j"), os.environ["NEO4J_PASSWORD"])
+            group = f"{TENANT}_github"
+            try:
+                neo4j.reset(tenant_subgraphs(TENANT))
+                # everything but the late rows, then (with embeddings set as the embed step leaves them) the late rows
+                await self.db.execute("update episodes set loaded_at = null where source_record_id <> all($1::bigint[])",
+                                      late_ids)
+                await self.load_all(neo4j, batch=5)
+                neo4j._run("MATCH (n {group_id: $g}) WHERE n.embed_text IS NOT NULL SET n.embedding = [0.1]", g=group)
+                await self.db.execute("update episodes set loaded_at = null where source_record_id = any($1::bigint[])",
+                                      late_ids)
+                await self.load_all(neo4j)
+                for label, key in (("WorkItem", f"{gh.REPO}#2"), ("Message", f"{gh.REPO}/issue-comment/5003")):
+                    [found] = neo4j._run(f"MATCH (n:{label} {{group_id: $g, external_id: $k}}) RETURN properties(n) AS p",
+                                         g=group, k=key)
+                    self.assertEqual(set(found["p"]), tombstone, key)
+                [found] = neo4j._run("MATCH (c:Change {group_id: $g, external_id: $k}) RETURN c.name AS name, "
+                                     "c.state AS state", g=group, k=f"{gh.REPO}#3")
+                self.assertEqual((found["name"], found["state"]), ("Prism: faster startup", "merged"))
+                got = neo4j.read_facts([group])
+                self.assertEqual(got.placeholders, gh.EXPECTED["placeholders"])
+                self.assertEqual(got.node_counts, gh.EXPECTED["nodes"])
+                self.assertEqual(got.missing_required, {})
+            finally:
+                neo4j.reset(tenant_subgraphs(TENANT))
+                neo4j.close()
+
+    async def test_e2e_check_real_data_mode_on_a_github_tenant_prints_counts_only(self):
+        from loader import e2e_check
+        from loader import testdata_github as gh
+
+        await self.seed_github()
+        writer = MemoryWriter()
+        pipeline = await e2e_check.run_pipeline(database_url(), writer, TENANT, reset=False)
+        self.assertEqual((pipeline["unloaded"], pipeline["rejected"]), (0, 0))
+        self.assertEqual(pipeline["not extracted github/ref"], gh.NOT_EXTRACTED["ref"])
+        result = e2e_check.verify(writer, TENANT, None)
+        self.assertEqual(result.failures, [])
+        rows = {r.what: r.actual for r in result.counts if r.group == f"{TENANT}_github"}
+        self.assertEqual(rows["node Change"], gh.EXPECTED["nodes"]["Change"])
+        self.assertEqual(rows["placeholder WorkItem"], 1)
+        result.pipeline = pipeline
+        text = result.render() + json.dumps(result.to_json(), default=str)
+        for secret in ("lumen-labs", "prism", "ada-fake", "Startup", "SECRET", "Ready for review", gh.SHA["c1a"],
+                       "src/app", "fast-start"):
+            self.assertNotIn(secret, text)
+
+        if NEO4J_URI:
+            from loader.neo4j_writer import Neo4jWriter
+            from ontology import tenant_subgraphs
+
+            neo4j = Neo4jWriter(NEO4J_URI, os.environ.get("NEO4J_USER", "neo4j"), os.environ["NEO4J_PASSWORD"])
+            try:
+                await e2e_check.run_pipeline(database_url(), neo4j, TENANT, reset=True)
+                result = e2e_check.verify(neo4j, TENANT, None)
+                self.assertEqual(result.failures, [])
+                self.assertTrue(all(q.ok for q in result.queries), [q.id for q in result.queries if not q.ok])
+                [changes] = [q for q in result.queries if q.id == "github-changes"]
+                self.assertEqual(changes.actual[0]["changes"], gh.EXPECTED["nodes"]["Change"])
+                self.assertEqual(changes.actual[0]["reviewed"], 2)
+                text = result.render()
+                for secret in ("lumen-labs", "ada-fake", "SECRET", gh.SHA["c1a"]):
+                    self.assertNotIn(secret, text)
+            finally:
+                neo4j.reset(tenant_subgraphs(TENANT))
+                neo4j.close()
 
     # --- ordering ---
 
@@ -480,13 +633,13 @@ class PgLoadTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_bad_and_unsupported_records_are_counted_not_retried(self):
         await self.insert("slack", "message", "C1/1", "1", T0, {"payload": None})  # nothing to map
-        await self.insert("github", "issue", "o/r#1", "1", T0, {"payload": {}})  # no extractor yet
+        await self.insert("gitlab", "issue", "g/r#1", "1", T0, {"payload": {}})  # no extractor yet
         await self.insert("slack", "message", "C1/1789353000.000100", "1",
                           T0, {"payload": message("1789353000.000100", "fine")})
         worker = await self.extract_all()
         self.assertEqual(worker.counts["rejected"], 1)
         self.assertEqual(worker.counts["extracted"], 1)
-        self.assertEqual(worker.counts["not_extracted:github:issue"], 1)
+        self.assertEqual(worker.counts["not_extracted:gitlab:issue"], 1)
         self.assertEqual(await self.db.fetchval("select count(*) from episodes"), 1)
 
     async def test_a_new_extractor_version_re_extracts_and_reloads(self):

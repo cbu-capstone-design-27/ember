@@ -16,8 +16,8 @@ One run does this, in order:
 The expected file: --expected FILE, or fixtures/photon/expected-graph.json for tenant photon, which
 fixtures/photon/derive_expected.py derives from the fixtures alone. With no expected file (your own
 tenant's data) the check reports the counts, the schema-check mismatches and what extract left behind, and
-passes when there are no mismatches. Five smoke queries run instead of the sample ones: same shapes, they print
-only counts and pass or fail. The output then holds no message text, names, keys or ids (worker logs are off
+passes when there are no mismatches. Six smoke queries run instead of the sample ones: the same five shapes plus
+one for GitHub changes (EMBER-107); they print only counts and pass or fail. The output then holds no message text, names, keys or ids (worker logs are off
 unless --verbose).
 
 --memory loads into an in-memory graph instead of Neo4j: counts and the schema check only, no queries.
@@ -157,9 +157,12 @@ class Result:
 # --- comparing ---
 
 def fact_counts(facts: GraphFacts) -> dict[str, int]:
-    """One flat map: 'node <Label>' and 'edge <Src> <TYPE> <Dst>' -> count."""
+    """One flat map: 'node <Label>', 'edge <Src> <TYPE> <Dst>' and 'placeholder <Label>' -> count. A
+    placeholder is a bare node an edge created whose own record has not been loaded (it is also in its
+    label's node count)."""
     counts = {f"node {label}": n for label, n in facts.node_counts.items()}
     counts.update({f"edge {src} {rel} {dst}": n for (src, rel, dst), n in facts.relationships.items()})
+    counts.update({f"placeholder {label}": n for label, n in facts.placeholders.items() if n})
     return counts
 
 
@@ -170,6 +173,7 @@ def compare_counts(group: str, expected: dict | None, facts: GraphFacts) -> list
         return [CountRow(group, what, None, n) for what, n in sorted(actual.items())]
     want = {f"node {label}": n for label, n in expected.get("nodes", {}).items()}
     want.update({f"edge {name}": n for name, n in expected.get("relationships", {}).items()})
+    want.update({f"placeholder {label}": n for label, n in expected.get("placeholders", {}).items()})
     return [CountRow(group, what, want.get(what, 0), actual.get(what, 0)) for what in sorted(set(want) | set(actual))]
 
 
@@ -208,7 +212,7 @@ def run_queries(writer, tenant: str, specs: list[dict]) -> list[QueryResult]:
     return results
 
 
-# The five query shapes as smoke checks for data without known answers (real data). Each returns only
+# The five query shapes as smoke checks for data without known answers (real data), plus GitHub's changes. Each returns only
 # counts, so nothing a person wrote can reach the output. `ok` judges the one row of numbers.
 SMOKE_QUERIES = [
     {"id": "comment-authors", "question": "who commented on an issue (comments with an author and an issue)",
@@ -230,28 +234,43 @@ SMOKE_QUERIES = [
                "sum(CASE WHEN w.placeholder = true THEN 1 ELSE 0 END) AS placeholders",
      "ok": lambda r: r["linked_issues"] <= r["issues"] and r["placeholders"] <= r["issues"]},
     {"id": "deleted-state", "question": "deleted items keep only their keys: none still holds content",
-     "cypher": "MATCH (n) WHERE n.group_id IN [$jira, $slack] AND n.deleted = true "
+     "cypher": "MATCH (n) WHERE n.group_id IN [$jira, $slack, $github] AND n.deleted = true "
                "RETURN count(n) AS deleted, sum(CASE WHEN n.embed_text IS NOT NULL OR n.name IS NOT NULL OR n.summary IS NOT NULL "
                "OR n.description IS NOT NULL OR n.embedding IS NOT NULL THEN 1 ELSE 0 END) AS still_holding_content",
      "ok": lambda r: r["still_holding_content"] == 0},
     {"id": "subgraph-isolation", "question": "no edge crosses subgraphs and every node's source matches its subgraph",
-     "cypher": "MATCH (n) WHERE n.group_id IN [$jira, $slack] "
+     "cypher": "MATCH (n) WHERE n.group_id IN [$jira, $slack, $github] "
                "WITH count(n) AS nodes, sum(CASE WHEN (n.group_id = $jira AND n.source <> 'jira') "
-               "OR (n.group_id = $slack AND n.source <> 'slack') THEN 1 ELSE 0 END) AS wrong_source "
-               "CALL { MATCH (a)-[r]->(b) WHERE a.group_id IN [$jira, $slack] AND a.group_id <> b.group_id RETURN count(r) AS crossing } "
+               "OR (n.group_id = $slack AND n.source <> 'slack') "
+               "OR (n.group_id = $github AND n.source <> 'github') THEN 1 ELSE 0 END) AS wrong_source "
+               "CALL { MATCH (a)-[r]->(b) WHERE a.group_id IN [$jira, $slack, $github] AND a.group_id <> b.group_id "
+               "RETURN count(r) AS crossing } "
                "RETURN nodes, wrong_source, crossing",
      "ok": lambda r: r["wrong_source"] == 0 and r["crossing"] == 0},
+    {"id": "github-changes", "question": "GitHub pull requests and commits, with authors, reviews and comments",
+     "cypher": "MATCH (c:Change {group_id: $github}) "
+               "RETURN count(c) AS changes, "
+               "sum(CASE WHEN c.kind = 'pull_request' THEN 1 ELSE 0 END) AS pull_requests, "
+               "sum(CASE WHEN c.kind = 'commit' THEN 1 ELSE 0 END) AS commits, "
+               "sum(CASE WHEN c.placeholder = true THEN 1 ELSE 0 END) AS placeholders, "
+               "sum(CASE WHEN EXISTS { (:Person)-[:AUTHORED]->(c) } THEN 1 ELSE 0 END) AS with_author, "
+               "sum(CASE WHEN EXISTS { (:Person)-[:REVIEWED]->(c) } THEN 1 ELSE 0 END) AS reviewed, "
+               "sum(CASE WHEN EXISTS { (:Message)-[:REFERENCES]->(c) } THEN 1 ELSE 0 END) AS with_comments, "
+               "sum(CASE WHEN EXISTS { (c)-[:TOUCHES]->(:Module) } THEN 1 ELSE 0 END) AS touching_modules",
+     "ok": lambda r: (r["pull_requests"] + r["commits"] + r["placeholders"] == r["changes"]
+                      and r["with_author"] <= r["changes"] and r["reviewed"] <= r["pull_requests"]
+                      and r["with_comments"] <= r["changes"])},
 ]
 
 
 def run_smoke_queries(writer, tenant: str) -> list[QueryResult]:
-    """Real-data mode: run the five shapes, report only the numbers they return and pass or fail."""
+    """Real-data mode: run the smoke queries, report only the numbers they return and pass or fail."""
     results = []
     for spec in SMOKE_QUERIES:
         if not hasattr(writer, "_run"):
             results.append(QueryResult(spec["id"], spec["question"], [], None, "needs Neo4j (not --memory)", smoke=True))
             continue
-        rows = writer._run(spec["cypher"], jira=f"{tenant}_jira", slack=f"{tenant}_slack")
+        rows = writer._run(spec["cypher"], jira=f"{tenant}_jira", slack=f"{tenant}_slack", github=f"{tenant}_github")
         row = {k: (v or 0) for k, v in (rows[0] if rows else {}).items()}
         results.append(QueryResult(spec["id"], spec["question"], [], [row], smoke=True,
                                    smoke_ok=bool(row) and bool(spec["ok"](row))))

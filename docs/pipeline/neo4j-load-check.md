@@ -98,6 +98,46 @@ edited subtype), so no transcript says what a deleted or edited item looks like.
 the deleted and edited cases are covered by `loader/test_pg_load.py` and `test_extract.py` (EMBER-85) and, on real
 data, by the `deleted-state` smoke query below.
 
+## GitHub (EMBER-107)
+
+`python -m loader extract` maps the `source_records` that `enrich:github` writes
+(`services/github-ingestion/enrich.py`, `to_records`) into the `<tenant>_github` subgraph, with the same ordering,
+delete and placeholder rules as Jira and Slack. Code: `loader/mappers/github.py` (`map_github_record`,
+`github_tombstone`). Only types `docs/graph-schema.md` already defines are used. Every node's key is the row's
+`object_id` where the object has one.
+
+| `source_records` kind | Becomes |
+| --- | --- |
+| `repository` | Container (`<owner>/<repo>`, name and URL) |
+| `issue` | WorkItem `<repo>#<n>` (title + body, `status`, `item_type: issue`), Container CONTAINS it, author AUTHORED, assignees ASSIGNED_TO |
+| `pull_request` | Change `<repo>#<n>` (`kind: pull_request`, `state` = `merged` once `merged_at` is set, else `open`/`closed`, `source_branch`, `target_branch`), CONTAINS, AUTHORED, ASSIGNED_TO, RESOLVES WorkItem for each "fixes/closes/resolves #n" in the body. `record.fetched.files` (opened/reopened/synchronize): a Module per directory holding a changed file (`path`, `.` for the root), Container CONTAINS Module, Change TOUCHES Module |
+| `pull_request_review` | REVIEWED Person to the pull request (`verdict` = the review's state, lowercased). A review with text is also a Message (`kind: review`) with AUTHORED and REFERENCES to the pull request |
+| `issue_comment` | Message (`kind: comment`) with AUTHORED and REFERENCES to the issue (WorkItem) or, when `issue.pull_request` is set, the pull request (Change) |
+| `pull_request_review_comment` | Message (`kind: comment`), REFERENCES the pull request, REPLIES_TO the comment in `in_reply_to_id` |
+| `commit_comment` | Message (`kind: comment`), REFERENCES the commit's Change |
+| `commit` | Change `<repo>@<id>` (`kind: commit`, first message line as name, `state: committed`), keyed by the push payload's `id` (or the compare API's `sha`); CONTAINS; AUTHORED by `author.username` when GitHub sends one; TOUCHES a Module per directory of `added`/`modified`/`removed` |
+| `ref`, `release`, `label`, `milestone` | Not extracted (counted as `not extracted github/<kind>`): the schema has no branch, tag, release, label or milestone type, so nothing of them, and nothing of a deleted ref, reaches the graph |
+
+- **Parents carried in payloads.** A comment or review payload carries its issue or pull request. It is written
+  too, stamped with its own `updated_at` (the ordering value the object's own rows use), so it fills a parent
+  whose own events never arrived (older than the App's install) and never overrides a newer version.
+- **Deletes.** A row with `tombstone: true` (`issues`/`*_comment`/`repository` `deleted`) becomes a tombstone node:
+  the WorkItem, Message or Container keeps only its key and `deleted: true`.
+- **Ordering.** Every version applies by `occurred_at` (enrich's ordering value: `updated_at`, `submitted_at`,
+  `pushed_at`, or `received_at` for deletes, labels and repository events).
+- Commit author and committer emails and names are not stored (GitHub's commit emails are unverified).
+
+### Synthetic check
+
+`loader/testdata_github.py` holds 31 made-up rows shaped like real `enrich:github` output (key paths and types taken
+from the team's records, no values): every kind above, edits, two deletes, a review without text, a comment on a
+pull request older than the data, late older versions and the four unmapped kinds. `test_extract_github.py` and
+`test_pg_load.py` check the graph they load to against counts made by hand. Through the CLI
+(`python -m loader e2e-check --tenant synthetic-gh`, local Postgres 18 + `neo4j:5-community`): 25 episodes, 0
+rejected, 0 unloaded; not extracted ref 3, release 2, label 1. Nodes: Change 6, Message 9, WorkItem 3 (1
+placeholder), Module 4, Identity 4, Person 4, Container 1. Schema check OK, all six smoke queries pass, and the
+output holds counts only. The real-data run (Parallax) is for the Lead.
+
 ## Real data (any populated tenant)
 
 For a Postgres that already holds `source_records` (no seeding), give the tenant:
@@ -113,9 +153,13 @@ another) it runs extract and load on whatever is waiting, then reports:
 - the schema-check result (counts of mismatches by kind, such as unknown labels or missing constraints);
 - `source_records` counts by source and kind, episodes, unloaded, and `rejected`, `skipped` and `not extracted`
   counts by `source/kind`;
-- five smoke queries, the same five shapes as above with no photon-specific answer: comment authors, thread
-  messages, issue references, deleted-item state and subgraph isolation. Each prints only a row of counts and passes
-  or fails on a rule (for example `crossing = 0`, `still_holding_content = 0`).
+- six smoke queries, the same five shapes as above with no photon-specific answer (comment authors, thread
+  messages, issue references, deleted-item state and subgraph isolation, the last two across Jira, Slack and
+  GitHub) plus `github-changes` (pull requests, commits, placeholders, and how many have an author, a review, a
+  comment, a touched Module). Each prints only a row of counts and passes or fails on a rule (for example
+  `crossing = 0`, `still_holding_content = 0`, `pull_requests + commits + placeholders = changes`);
+- `placeholder <Label>` rows: bare nodes an edge created whose own record never loaded (for GitHub, mostly
+  "closes #n" naming an issue that is not in the data). They are reported, not failed.
 
 The output holds no message text, ticket text, names, keys or ids: counts, kinds and pass/fail only. The workers'
 own log lines (record ids, rejection reasons) are silenced unless `--verbose`. `--json FILE` writes the same
@@ -144,8 +188,32 @@ below were kept: no message text, names or ids.
   - subgraph-isolation: 118 nodes, 0 with the wrong source, 0 crossing edges.
   - deleted-state: 0 deleted, 0 still holding content (the copy had no deletes).
   - comment-authors and issue-references: 0, since Jira isn't present yet.
-- Result: **PASS**. Follow-ups: rerun with Jira once its records reach the cluster. The GitHub (Parallax) run is
-  EMBER-107.
+- Result: **PASS**. Follow-up: rerun with Jira once its records reach the cluster.
+
+#### GitHub: the Parallax repository (EMBER-107)
+
+Run on 2026-10-28 in the same way. It used a one-time, read-only copy of the GitHub `source_records` for tenant
+`ember-development` (the `ryan-stoffel/parallax` deliveries), with the owner's approval. The copy went into a local
+Postgres 18 and `neo4j:5-community`, was deleted after the run, and only counts were kept.
+
+- `source_records`: ref 1703, commit 1686, pull_request 932, release 562, pull_request_review 330, issue_comment 81,
+  label 4, issue 3, repository 2 (5,303 in all).
+- Episodes: 3,034 extracted, 3,034 loaded, 0 unloaded, 0 load failures. Rejected 0, skipped 0. Not extracted, by
+  design, because the schema has no type for them: ref 1703, release 562, label 4.
+- Nodes in `ember-development_github`:
+  - Change 1,857: 171 pull requests plus 1,686 commits, one per object.
+  - Message 410: 80 issue comments plus 330 reviews with text.
+  - Module 110, Identity 5, Person 5, WorkItem 3, Container 1.
+- Relationships: TOUCHES 4,467, CONTAINS 1,857 Change + 110 Module + 3 WorkItem, AUTHORED 1,857 Change + 410
+  Message + 3 WorkItem, REFERENCES 405 Change + 5 WorkItem, REVIEWED 145, RESOLVES_TO 5, RESOLVES 2.
+  - REVIEWED keeps one edge per reviewer and pull request (the latest verdict), so 330 reviews give 145 edges.
+- Schema check: OK. Placeholders: 0.
+- Smoke queries: all 6 pass.
+  - github-changes: 1,857 changes; 1,857 with an author, 145 reviewed, 146 with comments, 1,853 touching a Module.
+  - subgraph-isolation: 2,391 nodes, 0 with the wrong source, 0 crossing edges.
+  - deleted-state: 0 deleted. The 156 deleted refs are among the refs that aren't extracted.
+  - Jira- and Slack-shaped queries: 0, as expected for a GitHub-only copy.
+- Result: **PASS**.
 
 ## Gaps in the ontology and mapping, with suggested tickets
 
@@ -175,3 +243,20 @@ Found by comparing what the photon fixtures carry with what lands in the graph.
    generator, with the transcript lines, then extend `derive_expected.py`.
 7. **Extract and load are not tenant-scoped.** `python -m loader extract` and `load` take every tenant's waiting
    rows, so a check on one tenant also loads the rest. Suggested ticket: `--tenant` on both workers.
+8. **GitHub refs, releases, labels and milestones are not in the graph** (EMBER-107). The schema has no branch,
+   tag, release, label or milestone type, and Change only has `source_branch`/`target_branch`. Suggested ticket:
+   decide whether releases are a Change or Decision kind, labels a WorkItem/Change attribute (list of names), and
+   whether branches need a node; refs are mostly noise (156 of 197 real ref objects are deleted branches).
+9. **"closes #n" guesses an issue.** GitHub issues and pull requests share numbers, so a pull request naming another
+   pull request gets a WorkItem placeholder that never fills. Suggested ticket: resolve `#n` at load time against the
+   subgraph (Change or WorkItem), or emit REFERENCES when the target is a Change.
+10. **The loader never removes edges.** A file dropped from a pull request by a later push keeps its TOUCHES edge, an
+    unassigned person keeps ASSIGNED_TO, a removed "closes #n" keeps RESOLVES, and a re-review keeps one REVIEWED
+    edge with the latest verdict. Suggested ticket: edge validity (`invalid_at`) per ADR 0002's time model.
+11. **Commits are not linked to their pull request or branch.** No edge type joins two Changes except REFERENCES, and
+    push payloads do not name the pull request. Suggested ticket: a `PART_OF`-like Change to Change edge, filled
+    from the PR commits API or the merge commit.
+12. **A renamed or transferred repository becomes a second Container** (keyed by `full_name`). Suggested ticket: key
+    GitHub Containers by `repository.id` with `full_name` as the name, which needs a rebuild of loaded subgraphs.
+13. **Module granularity.** A Module is the directory of each changed file, so deep trees give many small Modules
+    and root files share one `.` Module. Suggested ticket: decide Module granularity with the code layer (phase 3).

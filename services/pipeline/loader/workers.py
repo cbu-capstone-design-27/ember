@@ -206,7 +206,7 @@ class ExtractWorker(Worker):
         self.given_up: set[int] = set()
 
     async def start(self) -> None:
-        """Log what is stored but not extracted yet (GitHub, GitLab, other kinds), once."""
+        """Log what is stored but not extracted (GitLab, Teams, kinds without a mapping), once."""
         async with self.sessions() as session:
             rows = (await session.execute(
                 select(SourceRecord.source, SourceRecord.kind, func.count())
