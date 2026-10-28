@@ -6,7 +6,6 @@ import Link from "next/link";
 import { Wordmark } from "../../components/brand.tsx";
 import { SignOutButton } from "../../components/nav.tsx";
 import { SourcesForm } from "../../components/source-picker.tsx";
-import { ThemeSwitcher } from "../../components/theme.tsx";
 import { requireUser } from "../../lib/session.ts";
 import { Steps } from "../(auth)/steps.tsx";
 import styles from "./onboarding.module.css";
@@ -20,10 +19,9 @@ export default async function OnboardingPage() {
     <div className={styles.page}>
       <header className={styles.header}>
         <Link href="/" aria-label="Ember home" className={styles.brand}>
-          <Wordmark size={26} />
+          <Wordmark size={20} />
         </Link>
         <div className={styles.headerActions}>
-          <ThemeSwitcher />
           <SignOutButton />
         </div>
       </header>
@@ -32,12 +30,8 @@ export default async function OnboardingPage() {
         <div className={styles.intro}>
           <h1>Which tools does your team use, {firstName}?</h1>
           <p>
-            Ember builds its knowledge graph from these. Pick every one your team works in. You can change this
-            anytime in Settings.
-          </p>
-          <p className={styles.note}>
-            Nothing connects yet. GitHub, Jira and Slack come with a preview workspace, so you can explore the
-            dashboard and the graph right away.
+            Pick every one your team works in. Nothing connects yet, but GitHub, Jira and Slack come with a preview
+            workspace, so the dashboard and the graph have data right away. You can change this in Settings.
           </p>
         </div>
         <SourcesForm initial={user.sources} mode="onboarding" />

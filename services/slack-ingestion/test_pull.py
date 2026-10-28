@@ -317,7 +317,7 @@ class RateLimitTest(unittest.TestCase):
             MethodGates(clock.clock, clock.sleep),
             throttle_budget=60.0,
         )
-        with self.assertRaises(PullError) as caught:
+        with self.assertRaises(pull_test.Throttled) as caught:  # a PullError the enrich worker tells apart
             client.call("team.info")
         self.assertIn("still throttled", str(caught.exception))
         self.assertEqual(clock.slept, [7.0] * 8)  # 8 x 7s fits in 60s; the 9th would not

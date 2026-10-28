@@ -27,3 +27,10 @@ metadata:
   name: cnpg-system
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled

@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useMemo, useState, type MouseEvent } from "react";
 import { SourceLogo } from "../../../components/brand.tsx";
 import {
+  ArrowRightIcon,
   BlockedIcon,
   CheckCircleIcon,
   ClockIcon,
@@ -15,7 +16,6 @@ import {
   DriftIcon,
   GraphIcon,
   LinkIcon,
-  SparkIcon,
   XCircleIcon,
   XIcon,
 } from "../../../components/icons.tsx";
@@ -52,14 +52,12 @@ export function InsightsPanel() {
   const shown = active === "all" ? insights : insights.filter((i) => i.kind === active);
 
   return (
-    <section id="attention" className={`card ${styles.panel}`} aria-labelledby="attention-title">
-      <div className="card-header">
-        <div>
-          <h2 id="attention-title">Needs attention</h2>
-          <p>Where your tools disagree, or work is stuck. Click one to see everything behind it.</p>
-        </div>
+    <section id="attention" className={styles.panel} aria-labelledby="attention-title">
+      <div className={styles.panelHead}>
+        <h2 id="attention-title">Needs attention</h2>
+        <span className={styles.panelCount}>{insights.length}</span>
         {dismissed.length > 0 && (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowDismissed((s) => !s)} aria-expanded={showDismissed}>
+          <button type="button" className={styles.panelAction} onClick={() => setShowDismissed((s) => !s)} aria-expanded={showDismissed}>
             {showDismissed ? "Hide" : "Show"} {dismissed.length} dismissed
           </button>
         )}
@@ -81,10 +79,9 @@ export function InsightsPanel() {
       {insights.length === 0 ? (
         <div className={styles.allClear}>
           <CheckCircleIcon />
-          <div>
-            <h3>All clear</h3>
-            <p className="muted">Nothing disagrees across your sources right now.</p>
-          </div>
+          <p>
+            <b>All clear.</b> Nothing disagrees across your sources right now.
+          </p>
         </div>
       ) : (
         <>
@@ -122,12 +119,12 @@ function InsightCard({ insight, now }: { insight: Insight; now: number }) {
 
   return (
     <li className={styles.insight} data-severity={insight.severity} onClick={onCardClick}>
-      <span className={styles.insightIcon} data-kind={insight.kind} aria-hidden="true">
-        <Icon />
-      </span>
       <div className={styles.insightBody}>
         <div className={styles.insightMeta}>
-          <span className={styles.insightKind}>{label}</span>
+          <span className={styles.insightKind} data-kind={insight.kind}>
+            <Icon />
+            {label}
+          </span>
           <span className={styles.severity} data-severity={insight.severity}>
             {SEVERITY_LABEL[insight.severity]}
           </span>
@@ -160,19 +157,16 @@ function InsightCard({ insight, now }: { insight: Insight; now: number }) {
 
         <div className={styles.insightActions}>
           {insight.actions.length > 0 ? (
-            insight.actions.map((a, n) => (
-              <button key={a.label} type="button" className={`btn btn-sm ${n === 0 ? "btn-primary" : "btn-secondary"}`} onClick={() => apply(a.edit, a.done)}>
-                {n === 0 && <SparkIcon />}
+            insight.actions.map((a) => (
+              <button key={a.label} type="button" className="btn btn-secondary btn-sm" onClick={() => apply(a.edit, a.done)}>
                 {a.label}
               </button>
             ))
           ) : (
-            <span className={styles.suggestion}>
-              <SparkIcon />
-              <span>
-                <span className="subtle">Suggested:</span> {insight.suggestion}
-              </span>
-            </span>
+            <p className={styles.suggestion}>
+              <ArrowRightIcon />
+              {insight.suggestion}
+            </p>
           )}
           <span className={styles.actionsEnd}>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => openItem(insight.subject)}>

@@ -1,0 +1,21 @@
+[package]
+name = "ember-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+description = "The Ember command-line interface"
+license = "Apache-2.0"
+repository = "https://github.com/cbu-capstone-design-27/ember"
+publish = false
+
+[[bin]]
+name = "ember"
+path = "src/main.rs"
+
+[dependencies]
+chrono = "0.4.45"
+clap = { version = "4.6.7", features = ["derive"] }
+# No macros: they check queries against a live database at compile time.
+# rustls, not OpenSSL, so the binary needs no system TLS library.
+sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono"] }
+tokio = { version = "1.53.3", features = ["rt", "macros", "time"] }

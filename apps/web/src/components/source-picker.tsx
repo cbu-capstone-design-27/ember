@@ -30,29 +30,17 @@ export function SourceGrid({ value, onChange }: { value: SourceId[]; onChange: (
               aria-describedby={`source-${s.id}-desc`}
             />
             <span className={styles.top}>
-              <span className={styles.logo}>
-                <SourceLogo source={s.id} size={26} />
-              </span>
+              <SourceLogo source={s.id} size={24} />
               <span className={styles.check} aria-hidden="true">
                 <CheckIcon />
               </span>
             </span>
             <span className={styles.name}>{s.name}</span>
-            <span className={styles.category}>{s.category}</span>
             <span id={`source-${s.id}-desc`} className={styles.description}>
               {s.description}
             </span>
-            <ul className={styles.reads}>
-              {s.reads.map((r) => (
-                <li key={r}>{r}</li>
-              ))}
-            </ul>
-            <span className={styles.footer}>
-              {s.preview ? (
-                <span className="badge badge-accent">Preview data ready</span>
-              ) : (
-                <span className="badge">Connects later</span>
-              )}
+            <span className={styles.footer} data-preview={s.preview}>
+              {s.preview ? "Preview data ready" : "Connects later"}
             </span>
           </label>
         );
@@ -110,7 +98,11 @@ export function SourcesForm({ initial, mode }: { initial: SourceId[]; mode: "onb
             {all ? "Clear" : "Select all"}
           </button>
         </p>
-        {saved && !dirty && <span className="badge badge-success">Saved</span>}
+        {saved && !dirty && (
+          <span className={styles.saved}>
+            <CheckIcon /> Saved
+          </span>
+        )}
         <button
           type="button"
           className={`btn btn-primary ${mode === "onboarding" ? "btn-lg" : ""}`}

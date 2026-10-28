@@ -7,7 +7,7 @@ Jira: EMBER-39. Shape is `{type, body}`: a source name and opaque raw connector 
 ## Consumers
 
 - `services/pipeline` and each source connector (GitHub, Jira, Slack, Teams, GitLab) emit this shape.
-- `services/github-ingestion` is the first emitter (EMBER-35). It wraps a GitHub webhook as `{"type":"github","body":<raw object>}`.
+- `services/intake` wraps every webhook delivery as `{"type":"<source>","body":<raw object>}` in `raw_events.envelope` (EMBER-62). `services/github-ingestion`'s backfill wraps each REST object as `{"type":"github","body":<raw object>}` (EMBER-35).
 - `services/slack-ingestion` wraps a Slack Events API delivery, or a backfilled Slack object, as `{"type":"slack","body":<raw object>}` (EMBER-36).
 - `services/jira-ingestion` emits `{"type":"jira","body":<raw object>}` (EMBER-31).
 - `services/gitlab-ingestion` wraps a GitLab webhook, or a backfilled REST object, as `{"type":"gitlab","body":<raw object>}` (EMBER-54).

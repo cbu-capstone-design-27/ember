@@ -79,11 +79,11 @@ const GROUP_CENTER: Record<GroupKey, { x: number; y: number }> = {
   people: { x: 0, y: 30 },
 };
 
-const GROUP_STYLE: Record<GroupKey, { label: string; color: string }> = {
-  jira: { label: "Jira", color: "var(--src-jira)" },
-  github: { label: "GitHub", color: "var(--src-github)" },
-  slack: { label: "Slack", color: "var(--src-slack)" },
-  people: { label: "People", color: "var(--node-person)" },
+const GROUP_STYLE: Record<GroupKey, { label: string }> = {
+  jira: { label: "Jira" },
+  github: { label: "GitHub" },
+  slack: { label: "Slack" },
+  people: { label: "People" },
 };
 
 /** Padding around a group's nodes, drawn as a thick round stroke on its hull. */
@@ -631,7 +631,7 @@ function Explorer({ focus }: { focus?: string }) {
                 {(Object.keys(GROUP_STYLE) as GroupKey[])
                   .filter((g) => sim.nodes.some((n) => n.group === g))
                   .map((g) => (
-                    <g key={g} style={{ ["--hull" as string]: GROUP_STYLE[g].color }}>
+                    <g key={g}>
                       <path
                         className={styles.hull}
                         strokeWidth={HULL_PAD * 2}

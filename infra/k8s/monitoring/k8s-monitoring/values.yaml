@@ -1,0 +1,236 @@
+# Values for grafana/k8s-monitoring (EMBER-91). Flux installs it from helmrelease.yaml, which pins the
+# chart version. It sends the cluster's metrics, pod logs and Kubernetes events to the Grafana Cloud
+# stack zestylagoon2114, whose free tier allows 10k active series, 50 GB of logs a month and 14 days'
+# retention. Everything not set here is the chart's default.
+cluster:
+  name: homelab
+
+# The URLs, user IDs and token come from Secret grafana-cloud (grafana-cloud.sops.yaml, written by
+# make grafana-secret)
+destinations:
+  grafana-cloud-metrics:
+    type: prometheus
+    urlFrom: convert.nonsensitive(remote.kubernetes.secret.grafana_cloud_metrics.data["prometheus-url"])
+    auth:
+      type: basic
+      usernameKey: prometheus-username
+      passwordKey: access-token
+    secret:
+      create: false
+      name: grafana-cloud
+  grafana-cloud-logs:
+    type: loki
+    urlFrom: convert.nonsensitive(remote.kubernetes.secret.grafana_cloud_logs.data["loki-url"])
+    auth:
+      type: basic
+      usernameKey: loki-username
+      passwordKey: access-token
+    secret:
+      create: false
+      name: grafana-cloud
+
+# Nodes, pods and workloads from the kubelet, cAdvisor and kube-state-metrics, trimmed to the chart's
+# default allow lists
+clusterMetrics:
+  enabled: true
+  collector: alloy-metrics
+  kube-state-metrics:
+    metricsTuning:
+      # Flux's Kustomizations, HelmReleases and sources (telemetryServices below)
+      includeMetrics: [gotk_resource_info]
+
+# CPU, memory, disk and network from Node Exporter on every node
+hostMetrics:
+  enabled: true
+  collector: alloy-metrics
+  linuxHosts:
+    enabled: true
+    metricsTuning:
+      # Changes on every reboot
+      includeMetrics: [node_boot_time_seconds]
+
+# Pods that ask for it with the annotation k8s.grafana.com/scrape: "true" (intake, Postgres). Pods
+# only: CloudNativePG copies its annotations onto Postgres's Services too, which would scrape twice
+annotationAutodiscovery:
+  enabled: true
+  collector: alloy-metrics
+  services:
+    enabled: false
+
+# Kubernetes events, such as a node's Rebooted and NodeNotReady, as logs
+clusterEvents:
+  enabled: true
+  collector: alloy-metrics
+
+# Every pod's logs, read from each node's /var/log/pods
+podLogsViaLoki:
+  enabled: true
+  collector: alloy-logs
+
+collectors:
+  # One replica scrapes everything and watches events. A Deployment rather than the usual
+  # StatefulSet, so the pod is recreated on another node when its node goes down; a StatefulSet's pod
+  # waits for the node to come back. It prefers hv-worker-2, since hv-worker-1 reboots often
+  # (EMBER-90).
+  alloy-metrics:
+    presets: [deployment, small]
+    controller:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [hv-worker-2]
+  # One per node, pi-cp included: tolerate its CriticalAddonsOnly NoExecute taint as well
+  alloy-logs:
+    presets: [filesystem-log-reader, daemonset]
+    controller:
+      tolerations:
+        - operator: Exists
+    alloy:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 96Mi
+        limits:
+          memory: 512Mi
+
+telemetryServices:
+  kube-state-metrics:
+    deploy: true
+    # Same reason as alloy-metrics: node state is most needed when hv-worker-1 is down
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: In
+                  values: [hv-worker-2]
+    # Flux's documented way to export Ready state (gotk_resource_info, from
+    # fluxcd/flux2-monitoring-example), for the kinds this cluster uses
+    rbac:
+      extraRules:
+        - apiGroups:
+            - source.toolkit.fluxcd.io
+            - kustomize.toolkit.fluxcd.io
+            - helm.toolkit.fluxcd.io
+          resources:
+            - gitrepositories
+            - helmrepositories
+            - helmcharts
+            - kustomizations
+            - helmreleases
+          verbs: [list, watch]
+    customResourceState:
+      enabled: true
+      config:
+        spec:
+          resources:
+            - groupVersionKind:
+                group: kustomize.toolkit.fluxcd.io
+                version: v1
+                kind: Kustomization
+              metricNamePrefix: gotk
+              metrics:
+                - name: resource_info
+                  help: The current state of a Flux Kustomization resource.
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, "[type=Ready]", status]
+                    suspended: [spec, suspend]
+                    revision: [status, lastAppliedRevision]
+                    source_name: [spec, sourceRef, name]
+            - groupVersionKind:
+                group: helm.toolkit.fluxcd.io
+                version: v2
+                kind: HelmRelease
+              metricNamePrefix: gotk
+              metrics:
+                - name: resource_info
+                  help: The current state of a Flux HelmRelease resource.
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, "[type=Ready]", status]
+                    suspended: [spec, suspend]
+                    revision: [status, history, "0", chartVersion]
+                    chart_name: [status, history, "0", chartName]
+                    chart_app_version: [status, history, "0", appVersion]
+                    chart_source_name: [spec, chart, spec, sourceRef, name]
+            - groupVersionKind:
+                group: source.toolkit.fluxcd.io
+                version: v1
+                kind: GitRepository
+              metricNamePrefix: gotk
+              metrics:
+                - name: resource_info
+                  help: The current state of a Flux GitRepository resource.
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, "[type=Ready]", status]
+                    suspended: [spec, suspend]
+                    revision: [status, artifact, revision]
+                    url: [spec, url]
+            - groupVersionKind:
+                group: source.toolkit.fluxcd.io
+                version: v1
+                kind: HelmRepository
+              metricNamePrefix: gotk
+              metrics:
+                - name: resource_info
+                  help: The current state of a Flux HelmRepository resource.
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, "[type=Ready]", status]
+                    suspended: [spec, suspend]
+                    revision: [status, artifact, revision]
+                    url: [spec, url]
+            - groupVersionKind:
+                group: source.toolkit.fluxcd.io
+                version: v1
+                kind: HelmChart
+              metricNamePrefix: gotk
+              metrics:
+                - name: resource_info
+                  help: The current state of a Flux HelmChart resource.
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, "[type=Ready]", status]
+                    suspended: [spec, suspend]
+                    revision: [status, artifact, revision]
+                    chart_name: [spec, chart]
+                    chart_version: [spec, version]
+  # One per node, pi-cp included
+  node-exporter:
+    deploy: true
+    tolerations:
+      - operator: Exists

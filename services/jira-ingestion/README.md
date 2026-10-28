@@ -45,7 +45,7 @@ An admin webhook receiver, same shape as the GitHub App receiver: verify, wrap, 
 Registration later, once a public URL exists:
 
 1. Jira Administration → System → Webhooks → Create a webhook. The same record can be created with `POST /rest/webhooks/1.0/webhook`.
-2. URL: `https://<public-host>/webhook/jira`. Jira only delivers admin webhooks to an allow-listed port (`443`, `8080`, `8443`, and the rest of the list in the Atlassian doc). The local listener defaults to `8081` so it can sit beside `github-ingestion` on `8080`. A tunnel should terminate TLS on `443` and forward to `8081`. This PR does not start a tunnel.
+2. URL: `https://<public-host>/webhook/jira`. Jira only delivers admin webhooks to an allow-listed port (`443`, `8080`, `8443`, and the rest of the list in the Atlassian doc). The local listener defaults to `8081` so it can sit beside `intake` on `8080`. A tunnel should terminate TLS on `443` and forward to `8081`. This PR does not start a tunnel.
 3. Leave "Exclude body" off so the issue object is in the POST.
 4. Events so a live delivery can carry the same entities the backfill stores. The receiver accepts any JSON object and does not filter on `webhookEvent`.
 

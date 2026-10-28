@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: enrich-slack-bot
+    namespace: ember
+stringData:
+    SLACK_BOT_TOKEN: ENC[AES256_GCM,data:lL3uqjaQe1GnFvxLIGzq4WYKlYIQPzw4TiHyPLz6ZKoT/xR/sF5M6u2zfruzBF/uwi6slu5r7xUY9Hc=,iv:FLM+2ncja+pGZ1lvzGALcH9IOT+0rq4JT0GrTWDdkeA=,tag:kU37IhZBEVOPp8lYG8CTfA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA5ZytqejZ5ay9wUHFmZFov
+            UG9YcHp6a2FMR2VCMHNEeThjS2xBN1ZJbGhFCmlTY2hZeDRKVW93V0QyOUxJK1FV
+            WTFLaEIxays5OGFGMml0bWowbHRjRDAKLS0tIEJ3WlRyM2ZSYmFwZTFzTGFNWG9t
+            M3ZIS0FTV2FLSldYVDhLWWI5dzJZUUEKtHkSNC28rmLZ+EHUvCXyY2mSnCieVSaM
+            Y8EISiVjRphHS8NpK027Z4PTZzTMALMaxkMkZs3QK9zdBlTkc/5RqQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-26T16:57:03Z"
+    mac: ENC[AES256_GCM,data:324ObAZIgaKLMoK2XFWExn1yn9ncQU4MaY6AU06aEne9u8/FkffVeA9etD8VpVJkZA0c8g/qIlHEnl1jzbPkKnKPdSGHXiGb/iPCuIkrr13qGGbrHk1fWRmSMSa4yUM6XmNOLBrbrjbkMc6CQB3p90z9y9ry6rkuKtpJL5m/Kq0=,iv:NRVHaX7qSyz7MlO/BCWv99TKZMPQvFG3aHo2D0Nk1qY=,tag:6/t2BrY0RmE25Tr/zLlO5A==,type:str]
+    version: 3.13.3

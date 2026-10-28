@@ -6,3 +6,4 @@ resources:
   - namespaces.yaml
   - tailscale-operator
   - cnpg
+  - grafana-operator
