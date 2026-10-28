@@ -25,3 +25,4 @@ configMapGenerator:
       - migrations/20261021120100_source_records_notify.sql
       - migrations/20261027120000_episodes_notify.sql
       - migrations/20261027120100_episodes_source_record_index.sql
+      - migrations/20261028120000_raw_events_metrics_event_name.sql
