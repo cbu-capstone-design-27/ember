@@ -9,7 +9,7 @@ Jira: EMBER-54 (connector) and EMBER-55 (rate limits), epic EMBER-20. Design: [`
 - `receiver.py` takes live webhook deliveries. It checks the configured webhook secrets, wraps the raw body, and writes one envelope per delivery to stdout. It does not filter on event, project, or group, holds no API token, and never calls GitLab. GitLab webhooks carry the full object, so nothing needs fetching on the live path.
 - `pull.py` is the backfill and reconciliation. It reads one project through REST API v4 and writes one envelope per REST object.
 - `enrich.py` is `enrich:gitlab` (EMBER-68). It turns GitLab rows in Postgres `raw_events` into `source_records`. See [Enrich worker](#enrich-worker).
-- The receiver and `pull.py` run from one Docker image, configured only through environment variables.
+- The receiver, `pull.py` and `enrich.py` run from one Docker image, configured only through environment variables.
 - No queue yet. Live webhooks still need a public URL (EMBER-40). This change does not open a tunnel or register a webhook.
 
 ## Webhook
@@ -120,7 +120,7 @@ That writes:
 
 ## Container
 
-One image, two compose services, both outside the default `up`:
+One image, two compose services, both outside the default `up`. The same image runs the enrich worker with `python3 enrich.py`, which is what the cluster deploys (EMBER-83).
 
 ```sh
 # Webhook receiver on GITLAB_INGESTION_PORT (default 8083). Gets only the webhook secrets.
@@ -136,7 +136,7 @@ docker compose -f infra/docker-compose.yml --env-file .env \
   --profile gitlab-backfill run --rm -T gitlab-backfill --lookback-hours 24 > gitlab.jsonl
 ```
 
-The image is `python:3.12-slim`, stdlib only, and runs as `nobody`. CI builds it and checks `/health` on a running container.
+The image is `python:3.12-slim` with `requirements.txt` installed for `enrich.py`, and runs as `nobody`. CI builds it, checks `/health` on a running container, and checks that `enrich.py` starts as far as asking for `DATABASE_URL`.
 
 To receive a real delivery before the cluster tunnel exists, point a temporary tunnel at port 8083 (for example `cloudflared tunnel --url http://127.0.0.1:8083`) and set the webhook URL to `https://<tunnel-host>/webhook/gitlab`.
 
