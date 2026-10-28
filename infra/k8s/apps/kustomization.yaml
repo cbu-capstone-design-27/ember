@@ -12,4 +12,3 @@ resources:
   - llm-tunnel
   - neo4j
   - postgres
-  - headlamp

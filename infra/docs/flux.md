@@ -19,7 +19,7 @@ We chose Flux over Argo CD. The full decision is ADR 0003 (`docs/adr/0003-gitops
 | Secrets | SOPS decryption built in | Needs Sealed Secrets, External Secrets or a plugin |
 | Helm | Real Helm releases; `helm history` works | Renders charts and applies the objects; no Helm release |
 | Image updates | Built-in controllers | Argo CD Image Updater, a separate project |
-| Web UI | None built in (we run Headlamp instead) | Built in; Argo's main advantage |
+| Web UI | None built in | Built in; Argo's main advantage |
 
 The workers have about 4 GB each, Neo4j takes 2 Gi of hv-worker-1, and pi-cp is tainted `CriticalAddonsOnly`, so footprint mattered.
 
@@ -40,7 +40,7 @@ infra/k8s/
     apps.yaml                 # Flux Kustomization -> infra/k8s/apps, dependsOn infrastructure
     monitoring.yaml           # Flux Kustomization -> infra/k8s/monitoring, dependsOn infrastructure
   infrastructure/
-    namespaces.yaml           # ember, tailscale, headlamp, cnpg-system, monitoring (prune: disabled)
+    namespaces.yaml           # ember, tailscale, cnpg-system, monitoring (prune: disabled)
     tailscale-operator/       # HelmRepository, HelmRelease, values.yaml, operator-oauth.sops.yaml
     cnpg/                     # HelmRepository, HelmRelease, values.yaml (CloudNativePG operator)
     grafana-operator/         # HelmRepository, HelmRelease, values.yaml (keeps the Grafana Cloud dashboards)
@@ -49,7 +49,6 @@ infra/k8s/
     intake/                   # webhook listener for every source (EMBER-62), webhooks.sops.yaml
     neo4j/                    # HelmRepository, HelmRelease, values.yaml, service-lb.yaml
     postgres/                 # CloudNativePG Cluster, service-lb.yaml, migrate-job.yaml, migrations/
-    headlamp/                 # HelmRepository, HelmRelease, values.yaml, ingress.yaml, viewer.yaml
   monitoring/
     helmrepository.yaml       # Grafana's charts
     k8s-monitoring/           # HelmRelease, values.yaml, grafana-cloud.sops.yaml (EMBER-91)
@@ -62,7 +61,7 @@ flowchart LR
   gh["GitHub: develop<br/>infra/k8s"] -->|every 1m| src["GitRepository<br/>flux-system"]
   src --> fs["Kustomization flux-system<br/>clusters/homelab"]
   fs -->|creates| infra["Kustomization infrastructure<br/>namespaces, Tailscale operator, CloudNativePG, Grafana Operator"]
-  fs -->|creates| apps["Kustomization apps<br/>nginx, intake, Neo4j, Postgres, Headlamp"]
+  fs -->|creates| apps["Kustomization apps<br/>nginx, intake, Neo4j, Postgres"]
   fs -->|creates| mon["Kustomization monitoring<br/>Grafana Cloud collector and dashboard"]
   infra -->|healthy first| apps
   infra -->|healthy first| mon
@@ -91,14 +90,12 @@ What runs on the cluster:
 | `ember` | Neo4j (pinned to hv-worker-1) | HelmRelease, chart 2026.9.0 |
 | `cnpg-system` | CloudNativePG operator | HelmRelease, chart 0.29.1 |
 | `ember` | Postgres (pinned to hv-worker-2), migrate Job | CloudNativePG `Cluster`, plain manifests |
-| `headlamp` | Headlamp + Flux plugin | HelmRelease, chart 0.45.0 |
 
 Public and tailnet addresses:
 
 | URL | Reachable from | Serves |
 |---|---|---|
 | `https://ember.tail470a31.ts.net` | Internet (Funnel) | nginx, which routes `/webhook/` to intake and answers `/healthz` |
-| `https://headlamp.tail470a31.ts.net` | Tailnet only | Headlamp |
 | `bolt://hv-worker-1.tail470a31.ts.net:7687` | Tailnet only | Neo4j |
 | `hv-worker-2.tail470a31.ts.net:5432` | Tailnet only | Postgres (`make postgres-url`) |
 
@@ -139,15 +136,6 @@ make flux-preview-end        # after the PR merges, or to abandon the preview
 | `flux get kustomizations` | Each Kustomization, the commit it applied (`develop@sha1:…`), and its last error |
 | `flux get helmreleases -A` | Each Helm release, its chart version, and whether the last install or upgrade worked |
 | `flux logs --level=error` | What the controllers rejected |
-| Headlamp | The same in a browser (below) |
-
-### Headlamp
-
-`https://headlamp.tail470a31.ts.net`, on the tailnet only. It shows the whole cluster, with a Flux section from the Flux plugin.
-
-Sign in with a token from `make headlamp-token`. It is valid for 24 hours and signs you in as ServiceAccount `headlamp-viewer`, which has the built-in `view` role. That role includes Flux's objects through Flux's `flux-view-flux-system` role. `headlamp-viewer-cluster` adds read access to the cluster-wide objects Headlamp's overview and the Flux plugin need: nodes, persistent volumes, storage classes, CRDs and metrics. You can look at everything except Secrets, and change nothing. Use `make sync` or the `flux` CLI for actions.
-
-The plugin comes from the image `ghcr.io/headlamp-k8s/headlamp-plugin-flux:v0.7.0`, pinned in `apps/headlamp/values.yaml`; an init container copies it into the pod. Headlamp's own ServiceAccount has no cluster role (the chart default would bind cluster-admin).
 
 ---
 
@@ -241,7 +229,6 @@ Each chart is a Flux HelmRelease with its HelmRepository and its `values.yaml` b
 | `tailscale/tailscale-operator` | `infrastructure/tailscale-operator/` | 1.102.4 | Installs and upgrades its CRDs (`crds: CreateReplace`). OAuth from `operator-oauth.sops.yaml` |
 | `cnpg/cloudnative-pg` | `infrastructure/cnpg/` | 0.29.1 (operator 1.30.1) | Installs and upgrades its CRDs (`crds: CreateReplace`). Runs the Postgres in `apps/postgres` (`infra/k8s/README.md`, Postgres) |
 | `neo4j/neo4j` | `apps/neo4j/` | 2026.9.0 | Pinned to hv-worker-1 with a 10Gi `local-path-retain` volume; install and upgrade timeout 10m |
-| `headlamp/headlamp` | `apps/headlamp/` | 0.45.0 | See Headlamp above |
 | `grafana/grafana-operator` | `infrastructure/grafana-operator/` | 5.25.0 | Installs and upgrades its CRDs (`crds: CreateReplace`). Watches only namespace `monitoring`, where `monitoring/grafana` points it at Grafana Cloud |
 | `grafana/k8s-monitoring` | `monitoring/k8s-monitoring/` | 4.5.3 | Alloy collectors through the Alloy operator, kube-state-metrics, Node Exporter. Installs and upgrades the Alloy CRD (`crds: CreateReplace`). Credentials from `grafana-cloud.sops.yaml` (`infra/k8s/README.md`, Monitoring) |
 
@@ -266,7 +253,7 @@ Everything on the cluster comes back from Git plus the age key in the vault.
 
 1. Build the nodes and install k3s: `make up`, then `make kubeconfig` (`k3-setup.md`, Part 7).
 2. `make deps`.
-3. In the Tailscale admin console, remove any old `ember` and `headlamp` devices. Otherwise the new proxies come back as `ember-1` and `headlamp-1`, and GitHub's webhook URL stops working. The one-time tailnet setup (tags, `funnel` nodeAttr, OAuth client) is in `infra/k8s/README.md` under Tailscale operator.
+3. In the Tailscale admin console, remove any old `ember` device. Otherwise the new proxy comes back as `ember-1`, and GitHub's webhook URL stops working. The one-time tailnet setup (tags, `funnel` nodeAttr, OAuth client) is in `infra/k8s/README.md` under Tailscale operator.
 4. `make flux-up`. It:
    - checks the cluster meets Flux's requirements (`flux check --pre`),
    - applies `gotk-components.yaml` and waits for the CRDs,
@@ -288,7 +275,6 @@ Everything on the cluster comes back from Git plus the age key in the vault.
 | `make flux-preview BRANCH=<branch>` | Deploy a pushed branch instead of `develop` |
 | `make flux-preview-end` | Go back to `develop` |
 | `make flux-components` | Regenerate `gotk-components.yaml` after changing `FLUX_VERSION` in the Makefile. Commit it; Flux upgrades itself |
-| `make headlamp-token` | Print a 24-hour read-only Headlamp sign-in token |
 | `make apps-health` | Public route end to end: Ingress hostname, nginx `/healthz`, a webhook POST from the tailnet and through Funnel, 404 on unknown paths |
 | `make ts-operator-health` | Operator ready and logged in; each Tailscale Ingress has a hostname and answers HTTPS; each Funnel Ingress has public DNS |
 | `make neo4j-health` | Pod ready on hv-worker-1; a query works in the pod and on every node's IP |
@@ -313,8 +299,6 @@ Tool versions are pinned in `infra/ansible/Makefile` and checksum-verified by `m
 | `apps` stays not Ready while `infrastructure` is fine | A workload in `apps` is not rolling out. `kubectl --context homelab get pods -A` and that pod's logs. A crash-looping new nginx pod means its config did not load; the old pod keeps serving |
 | `make apps-health` fails on the hostname check | The Tailscale device came back as `ember-1`. Remove the stale `ember` device in the admin console, `kubectl --context homelab -n ember delete ingress ember`, then `make sync` |
 | `ts-operator-health` fails on "Check the operator logged in" | The OAuth client lacks a scope or the `tag:k8s-operator` tag, or `operator-oauth.sops.yaml` holds an old credential (then restart the operator) |
-| Headlamp shows no Flux section | `kubectl --context homelab -n headlamp logs deploy/headlamp -c flux-plugin`, the init container that copies the plugin |
-| Headlamp says forbidden | Expected for Secrets and for any change: the viewer token is read-only. An expired token (24 hours) also lands here: run `make headlamp-token` again |
 | CI fails "k8s Secrets are SOPS-encrypted" | A Secret outside a `*.sops.yaml` file, or a `*.sops.yaml` that was never encrypted. Encrypt it (Add a secret, above). If plain text was pushed, rotate that credential |
 
 ---
