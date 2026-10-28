@@ -32,6 +32,8 @@ class RawEvent(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     envelope: Mapped[dict] = mapped_column(JSONB)
     enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # EMBER-63. Not read yet: enrich still computes ordering_value() until intake fills the column
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class SourceRecord(Base):
@@ -48,6 +50,11 @@ class SourceRecord(Base):
     record: Mapped[dict] = mapped_column(JSONB)
     raw_event_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("raw_events.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # EMBER-77: written by services/embed, never read or written by enrich. The column is pgvector's
+    # vector(1024), which asyncpg has no codec for, so it is mapped as text and deferred so it never loads.
+    embedding: Mapped[str | None] = mapped_column(Text, deferred=True)
+    embed_text: Mapped[str | None] = mapped_column(Text)
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class RateLimit(Base):

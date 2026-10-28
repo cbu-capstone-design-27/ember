@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: intake-webhooks
+    namespace: ember
+stringData:
+    GITHUB_WEBHOOK_SECRET: ENC[AES256_GCM,data:T8nZKD+Nb1ubKiXC0LySkWJkDd0YfXQLb839YVARXYYx/9HckpFsRo143JZ2HsS/yI4gY+0srMuubxeL6Dqnyw==,iv:unRM7pAvt8X/Owwyo3pSVv6xZWAJLVkes1brf+sJFJ0=,tag:prXJzIwf81/t8bWWuRkAJg==,type:str]
+    SLACK_SIGNING_SECRET: ENC[AES256_GCM,data:CdYeIkbdkTk0rv4Rzd8gqNIm8IukgAiGyipgKMHLkTM=,iv:5U3ubuQTRb/d6c06RDmzQuJ/NkRjEwVEe5Bs8Vn424o=,tag:K5rBcYpqormQJIG0VH0mDQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBmV1hTRFBYT25kNzgwSGJa
+            VllCT1puN2RpODlxVmRXaXpvVGc1UE8vblh3CmQxMG53RVV5d1NveCt2ZUM5R0sw
+            cmZzcU5qbG5GSzFOYVZES3pGUXIzRTAKLS0tIGNOWGZhT2VBQ3lBZFQ4dzRKNlhR
+            UmQ4N0pnWEtnWTB2M2pXSk9jNUl0S1kKG3o4mzc6kRJythp9nRLpe9yGxc9uRSXa
+            +/u/cDZvjr2QG4X5+JjNHwlh1hKQqmhs50xWXiTlstATq4O0MUlcew==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-26T17:15:49Z"
+    mac: ENC[AES256_GCM,data:3SK7bzA9V333Xz7nmzy3/U0za5kpZhq9cvipiNnTnC1/OcpoZsvvI0FW1qltYDPF+fqspqwt5HlFHN3r2zswmgnaYjjPQVoPLfL6J5Sa5o9eOwOR1UY/ARSunS5h2Q4tMXVLSs9IV4D0+gU9l6qWF4t+3Vcl3U46J/0PV3ZJaVw=,iv:fn46mI+mzODpVbxzM2Z4NWUKdSbCN/phQ4elIRIuTKw=,tag:nfs8cQXd1qqKmE/oaE3zHw==,type:str]
+    version: 3.13.3

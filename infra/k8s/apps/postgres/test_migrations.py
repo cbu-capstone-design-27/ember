@@ -44,6 +44,7 @@ select 'constraint', conrelid::regclass, conname, pg_get_constraintdef(oid)
   from pg_constraint
  where connamespace = 'public'::regnamespace and conrelid::regclass::text <> 'schema_migrations'
  order by 2, 3;
+select 'extension', extname from pg_extension where extname <> 'plpgsql' order by 2;
 select 'index', tablename, indexname, indexdef
   from pg_indexes
  where schemaname = 'public' and tablename <> 'schema_migrations'

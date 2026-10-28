@@ -1,0 +1,309 @@
+/* The animated stories: the drift (landing, log-in), the sources linking up
+   (sign-up), embers over the fire, floating logo tiles. Motion is slow and
+   eased; reduced motion turns it off (globals.css), and PauseOffscreen pauses
+   CSS animations off screen (globals.css). */
+
+/* --- the drift: cards on a grid, joined by <Links> ----------------------- */
+
+.drift {
+  position: relative;
+  display: grid;
+  gap: var(--space-8);
+  width: 100%;
+  max-width: 34rem;
+}
+
+/* Two equal columns; every card in the row is the same height, so both links
+   leave from the same line. */
+.pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.pair > .slot {
+  display: grid;
+}
+
+/* Cards rise in one at a time; everything fades out together when the loop restarts. */
+.slot {
+  opacity: 0;
+  transform: translateY(var(--space-2));
+  transition:
+    opacity 600ms var(--ease-out),
+    transform 600ms var(--ease-out);
+}
+
+.slot[data-on="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* --- links between cards (links.tsx) ------------------------------------ */
+
+.links {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.link path {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 700ms var(--ease-out);
+}
+
+.link[data-on="true"] path {
+  stroke-dashoffset: 0;
+}
+
+.link circle {
+  opacity: 0;
+  transition: opacity 300ms var(--ease-out);
+}
+
+.link[data-on="true"] .linkFromDot {
+  opacity: 1;
+}
+
+/* The end dot lands once the line has drawn in. */
+.link[data-on="true"] .linkToDot {
+  opacity: 1;
+  transition-delay: 550ms;
+}
+
+.linkFrom {
+  stop-color: var(--text-3);
+}
+
+.linkTo,
+.link[data-hot="true"] .linkFrom {
+  stop-color: var(--accent);
+}
+
+.linkFromDot {
+  fill: var(--text-3);
+}
+
+.linkToDot,
+.link[data-hot="true"] .linkFromDot {
+  fill: var(--accent);
+}
+
+/* --- a record card ----------------------------------------------------- */
+
+.card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1-5);
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  transition: border-color 700ms var(--ease-out);
+}
+
+.card[data-hot="true"] {
+  border-color: var(--accent-border);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+
+.cardWhen {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.cardText {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cardText b {
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.cardState {
+  justify-self: start;
+  padding: 0 var(--space-2);
+  height: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  transition:
+    color 700ms var(--ease-out),
+    border-color 700ms var(--ease-out);
+}
+
+.card[data-hot="true"] .cardState {
+  color: var(--accent-text);
+  border-color: var(--accent-border);
+}
+
+/* The insight Ember raises. */
+.flag {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--accent-border);
+  border-radius: var(--radius-button);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  box-shadow: var(--shadow-lg);
+}
+
+.flag p {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.flag span {
+  font-size: var(--text-xs);
+  color: var(--accent-text);
+}
+
+/* --- sources linking up (sign-up) -------------------------------------- */
+
+.connect {
+  position: relative;
+  display: grid;
+  gap: var(--space-10);
+  width: 100%;
+  max-width: 34rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.row > .slot {
+  display: grid;
+}
+
+.tile {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-3);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+}
+
+/* One count per line when the pair doesn't fit, never a number without its noun. */
+.tile code span {
+  white-space: nowrap;
+}
+
+.tile code {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+
+.hub {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--accent-border);
+  border-radius: var(--radius-button);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  box-shadow: var(--shadow-lg);
+}
+
+.hub > span {
+  display: grid;
+  gap: var(--space-0-5);
+}
+
+.hub b {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.hub code {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+/* --- embers over the fire (embers.tsx) ------------------------------------ */
+
+/* Above the fire canvas, under the content. Full width and bottom-aligned
+   like the fire; embers.tsx sets the height to a whole number of fire rows. */
+.embers {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+/* --- floating logo tiles (landing hero) ------------------------------- */
+
+.floatTile {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: var(--tile, 3.5rem);
+  height: var(--tile, 3.5rem);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  animation: drift-y 12s var(--ease-in-out) infinite alternate;
+}
+
+@keyframes drift-y {
+  from {
+    transform: translate3d(0, calc(-1 * var(--space-2)), 0) rotate(var(--tilt, 0deg));
+  }
+  to {
+    transform: translate3d(0, var(--space-2), 0) rotate(calc(var(--tilt, 0deg) * -0.6));
+  }
+}
+
+/* Two cards side by side get narrow on phones: drop the timestamps and keep
+   each header on one line. */
+@media (max-width: 760px) {
+  .cardWhen {
+    display: none;
+  }
+
+  .cardHead code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

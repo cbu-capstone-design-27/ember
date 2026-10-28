@@ -1,6 +1,6 @@
 # Dependabot configuration.
 #
-# Only GitHub Actions for now. Add package ecosystems (npm, pip, gomod, ...)
+# GitHub Actions, and Cargo for apps/cli. Add package ecosystems (npm, pip, ...)
 # per directory once the corresponding app/service has a manifest.
 
 version: 2
@@ -16,5 +16,18 @@ updates:
       prefix: "chore(ci)"
     groups:
       github-actions:
+        patterns:
+          - "*"
+  - package-ecosystem: cargo
+    directory: /apps/cli
+    schedule:
+      interval: weekly
+    target-branch: develop
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(cli)"
+    groups:
+      cli:
         patterns:
           - "*"

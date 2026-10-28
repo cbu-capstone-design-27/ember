@@ -1,0 +1,4 @@
+# embed.py (EMBER-77). The embedding service is called with the standard library.
+# The asyncio extra pulls in greenlet, which async engines need.
+SQLAlchemy[asyncio]==2.0.54
+asyncpg==0.32.0

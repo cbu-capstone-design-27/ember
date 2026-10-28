@@ -1,0 +1,15 @@
+# Grafana Operator (EMBER-91): keeps the dashboards in monitoring/grafana on the Grafana Cloud stack.
+# Here rather than in monitoring/ so its CRDs exist before the monitoring Kustomization applies the
+# objects that use them.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - helmrepository.yaml
+  - helmrelease.yaml
+configMapGenerator:
+  - name: grafana-operator-values
+    files:
+      - values.yaml
+configurations:
+  - kustomizeconfig.yaml

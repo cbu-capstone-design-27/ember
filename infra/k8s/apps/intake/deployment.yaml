@@ -1,0 +1,108 @@
+# intake (EMBER-62, services/intake): the one webhook listener for every source. nginx proxies
+# /webhook/ to Service intake. Two replicas on different workers, and the PodDisruptionBudget keeps
+# one up through a drain, so a delivery always finds a pod that can store it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intake
+  namespace: ember
+  labels:
+    app: intake
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: intake
+  # Start the new pod and wait until it is ready before stopping an old one
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: intake
+      # The collector scrapes /metrics on both pods (k8s/README.md, Monitoring)
+      annotations:
+        k8s.grafana.com/scrape: "true"
+        k8s.grafana.com/metrics.portName: http
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      # preStop's 5 s plus uvicorn's 20 s for requests in flight
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      # A preference, not a rule: with one worker down both replicas still run on the other
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: intake
+      containers:
+        - name: intake
+          # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
+          image: ghcr.io/cbu-capstone-design-27/ember/intake:develop-194-6b72048
+          env:
+            # The pod stays in CreateContainerConfigError until both Secrets exist
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-app
+                  key: uri
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: intake-webhooks
+                  key: GITHUB_WEBHOOK_SECRET
+            # Serves /webhook/slack (services/intake/README.md, Slack adapter)
+            - name: SLACK_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: intake-webhooks
+                  key: SLACK_SIGNING_SECRET
+            - name: LISTEN_PORT
+              value: "8080"
+          ports:
+            - name: http
+              containerPort: 8080
+          # Ready only while Postgres answers, so nginx never routes to a pod that cannot store
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 5
+          # Answered without Postgres, so a database outage marks pods unready instead of restarting them
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          # uvicorn closes its listener as soon as SIGTERM arrives. Waiting first gives the Service and
+          # nginx time to stop sending this pod new deliveries
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          # About 60 MiB idle. A delivery takes up to 15 times its size while it is parsed and stored,
+          # and 8 are handled at once (BODIES_IN_MEMORY): 8 near the 8 MiB cap measured about 800 MiB
+          resources:
+            requests:
+              cpu: 20m
+              memory: 96Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

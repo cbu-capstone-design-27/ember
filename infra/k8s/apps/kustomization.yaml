@@ -3,7 +3,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - nginx
-  - github-webhook
+  - intake
+  - enrich-github
+  - enrich-slack
+  - embed
+  # TEMPORARY (EMBER-49): SSH tunnel to the Spark's chat model
+  - llm-tunnel
   - neo4j
   - postgres
   - headlamp

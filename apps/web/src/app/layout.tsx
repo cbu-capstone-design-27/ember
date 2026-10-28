@@ -1,27 +1,24 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { THEME_SCRIPT } from "../components/theme-script.ts";
+import { mono, sans } from "./fonts.ts";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: { default: "Ember", template: "%s · Ember" },
-  description: "Your team's context, connected: GitHub, Jira and Slack in one knowledge graph.",
+  description: "GitHub, Jira and Slack in one knowledge graph, and where they disagree.",
 };
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f7f6f4" },
-    { media: "(prefers-color-scheme: dark)", color: "#0e0d0c" },
+    { media: "(prefers-color-scheme: light)", color: "#f7f7f5" },
+    { media: "(prefers-color-scheme: dark)", color: "#09090b" },
   ],
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    // data-theme is set by THEME_SCRIPT before React hydrates.
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
-      </head>
+    // Light or dark follows the system (prefers-color-scheme in globals.css).
+    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <body>{children}</body>
     </html>
   );

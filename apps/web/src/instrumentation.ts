@@ -8,5 +8,8 @@ export async function register() {
     throw new Error("BETTER_AUTH_SECRET is not set. Generate one with `openssl rand -hex 32` and put it in .env.");
   }
   const { migrateDatabase } = await import("./lib/auth.ts");
+  const { describeDatabase } = await import("./lib/db.ts");
+  // Say where sign-ins go: without DATABASE_URL they land in a local SQLite file (EMBER-80)
+  console.log(`[db] Auth database: ${describeDatabase(process.env.DATABASE_URL)}`);
   await migrateDatabase();
 }
