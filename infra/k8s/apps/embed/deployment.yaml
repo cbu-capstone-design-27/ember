@@ -1,0 +1,67 @@
+# embed (EMBER-77, services/embed): embeds source_records rows with the Spark's embedding model through
+# llm-tunnel. It serves nothing, so there is no Service and no probe. It claims rows with
+# FOR UPDATE SKIP LOCKED, so a rollout's overlap never embeds a row twice.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: embed
+  namespace: ember
+  labels:
+    app: embed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: embed
+  template:
+    metadata:
+      labels:
+        app: embed
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      # SIGTERM stops claiming and finishes the batch in flight; a batch cut off is rolled back and
+      # claimed again
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: embed
+          # Public on GHCR, so no imagePullSecret (docs/container-images.md). The image is first
+          # published when this merges, so this starts on the moving develop tag. Pin a
+          # <branch>-<run>-<sha> tag once one exists
+          image: ghcr.io/cbu-capstone-design-27/ember/embed:develop
+          imagePullPolicy: Always
+          # Secret spark-model-keys (apps/llm-tunnel/model-keys.sops.yaml): EMBEDDING_API_KEY. The
+          # worker reads only that key; LLM_API_KEY comes along unused
+          envFrom:
+            - secretRef:
+                name: spark-model-keys
+          env:
+            # The pod stays in CreateContainerConfigError until postgres-app exists
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-app
+                  key: uri
+            # Without /v1: the worker appends /v1/embeddings
+            - name: EMBEDDING_URL
+              value: http://llm-tunnel.ember:8000
+          # Idle it holds a LISTEN connection and a small pool. A batch is 32 texts of up to 8000
+          # characters plus their 1024-dimension vectors
+          resources:
+            requests:
+              cpu: 10m
+              memory: 96Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
