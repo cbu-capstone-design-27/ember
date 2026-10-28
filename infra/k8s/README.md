@@ -265,7 +265,7 @@ To rotate the key, generate a new one (`ssh-keygen -t ed25519 -N "" -C ember-llm
 
 ### Mapping a tenant
 
-Intake stores a delivery with `tenant` null when its account isn't in `installations`. For GitHub, the account is the App installation id. The enrich workers skip those rows, because every record belongs to a tenant's subgraph. Until `ember-admin map` exists (`docs/ingestion/architecture.md`), `make map-tenant` (from `infra/ansible`, `playbooks/tenants.yml`) does it. It runs `playbooks/map-tenant.sql` with psql in the Postgres primary's pod, so no credential leaves the cluster.
+Intake stores a delivery with `tenant` null when its account isn't in `installations`. For GitHub, the account is the App installation id; for GitLab, `<instance host>/<top-level group>`, e.g. `gitlab.com/personal-embertest`. The enrich workers skip those rows, because every record belongs to a tenant's subgraph. Until `ember-admin map` exists (`docs/ingestion/architecture.md`), `make map-tenant` (from `infra/ansible`, `playbooks/tenants.yml`) does it. It runs `playbooks/map-tenant.sql` with psql in the Postgres primary's pod, so no credential leaves the cluster.
 
 To find the accounts that are waiting:
 
