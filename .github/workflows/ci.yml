@@ -290,6 +290,9 @@ jobs:
       - name: Pipeline loader unit tests
         working-directory: services/pipeline
         run: python -m unittest discover -s loader -t . -p "test_*.py" -v
+      - name: Model client unit tests
+        working-directory: services/pipeline
+        run: python -m unittest discover -s models -t . -p "test_*.py" -v
 
   # EMBER-51. The web app: type check, production build, and the sign-up /
   # log-in / log-out tests on SQLite and on a real Postgres (DATABASE_URL swap),

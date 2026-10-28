@@ -10,6 +10,29 @@ class MemoryWriter:
     def __init__(self) -> None:
         self.nodes: dict[tuple[str, str], dict] = {}
         self.edges: dict[tuple, dict] = {}
+        self.identity = None
+
+    def read_embedding_identity(self):
+        return self.identity
+
+    def write_embedding_identity(self, identity) -> None:
+        if self.identity is None:
+            self.identity = identity
+
+    def embed_candidates(self, group_ids: list[str]) -> list[dict]:
+        wanted = set(group_ids)
+        return [
+            {"label": label, "uuid": uuid_, "group_id": props["group_id"], "key": props.get("external_id"),
+             "text": props["embed_text"], "hash": props.get("embedding_text_hash"),
+             "vector": props.get("embedding")}
+            for (label, uuid_), props in self.nodes.items()
+            if props["group_id"] in wanted and (props.get("embed_text") or "").strip()
+        ]
+
+    def write_embeddings(self, rows: list[dict]) -> None:
+        for row in rows:
+            node = self.nodes[(row["label"], row["uuid"])]
+            node["embedding"], node["embedding_text_hash"] = row["vector"], row["hash"]
 
     def ensure_schema(self) -> None:
         pass
