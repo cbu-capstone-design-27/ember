@@ -138,31 +138,32 @@
             fail_msg: Add vault_grafana_cloud_sa_token (k8s/README.md, "The Grafana Cloud tokens")
             quiet: true
 
-        - name: Read the operator's view of the stack and the dashboard
+        - name: Read the operator's view of the stack and the dashboards
           ansible.builtin.command:
             argv: [kubectl, --context, "{{ cluster_context }}", -n, monitoring, get, grafana/grafana-cloud,
-                   grafanadashboard/ember, -o, json]
+                   grafanadashboard/ember, grafanadashboard/ember-ingestion, -o, json]
           register: synced
           changed_when: false
 
-        - name: Require both synced
+        - name: Require all synced
           ansible.builtin.assert:
             that:
               - stack.status.stage | default('') == 'complete'
               - stack.status.stageStatus | default('') == 'success'
-              - dashboard_synced == ['True']
+              - dashboard_synced == ['True', 'True']
             fail_msg: >-
               The operator has not synced the stack (stage {{ stack.status.stage | default('?') }},
-              {{ stack.status.stageStatus | default('?') }}; dashboard synchronized {{ dashboard_synced }}).
-              kubectl --context homelab -n monitoring describe grafana grafana-cloud and
-              describe grafanadashboard ember show why; a rejected token reads 401
+              {{ stack.status.stageStatus | default('?') }}; dashboards ember, ember-ingestion synchronized
+              {{ dashboard_synced }}). kubectl --context homelab -n monitoring describe grafana grafana-cloud
+              and describe grafanadashboard show why; a rejected token reads 401
             quiet: true
           vars:
             objects: "{{ (synced.stdout | from_json)['items'] }}"
             stack: "{{ objects | selectattr('kind', '==', 'Grafana') | first }}"
             dashboard_synced: >-
-              {{ (objects | selectattr('kind', '==', 'GrafanaDashboard') | first).status.conditions | default([])
-                 | selectattr('type', '==', 'DashboardSynchronized') | map(attribute='status') | list }}
+              {{ objects | selectattr('kind', '==', 'GrafanaDashboard') | map(attribute='status')
+                 | map(attribute='conditions', default=[]) | map('selectattr', 'type', '==', 'DashboardSynchronized')
+                 | map('map', attribute='status') | map('join') | list }}
 
         - name: Ask Grafana for its data sources
           ansible.builtin.uri:
@@ -179,11 +180,12 @@
             prom_uid: "{{ (settings.json.datasources.values() | selectattr('name', 'match', '.*-prom$') | first).uid }}"
             loki_uid: "{{ (settings.json.datasources.values() | selectattr('name', 'match', '.*-logs$') | first).uid }}"
 
-        - name: Require the dashboard in folder Ember
+        - name: Require the dashboards in folder Ember
           ansible.builtin.uri:
-            url: "{{ grafana_url }}/api/dashboards/uid/ember"
+            url: "{{ grafana_url }}/api/dashboards/uid/{{ item }}"
             headers:
               Authorization: "Bearer {{ vault_grafana_cloud_sa_token }}"
+          loop: [ember, ember-ingestion]
           register: dashboard
           failed_when: dashboard.status != 200 or dashboard.json.meta.folderTitle != 'Ember'
           no_log: true
@@ -217,6 +219,7 @@
               - {what: "every node Ready", ds: prom, min: 3, expr: 'count(kube_node_status_condition{condition="Ready", status="true"} == 1)'}
               - {what: "intake scraped", ds: prom, min: 1, expr: 'count(up{namespace="ember", pod=~"intake-.*"} == 1)'}
               - {what: "Postgres exporter up", ds: prom, min: 1, expr: 'max(cnpg_collector_up)'}
+              - {what: "ingestion metrics by tenant (raw_events, source_records)", ds: prom, min: 2, expr: 'count(count by (__name__) ({__name__=~"cnpg_raw_events_received_rows|cnpg_source_records_totals_rows", tenant!=""}))'}
               - {what: "Flux objects exported", ds: prom, min: 1, expr: 'count(gotk_resource_info)'}
               - {what: "both synthetic checks reporting", ds: prom, min: 2, expr: 'count(count by (job) (probe_success{job=~"ember-.*"}))'}
               - {what: "pod logs in the last hour", ds: loki, min: 1, expr: 'sum(count_over_time({namespace="ember"}[1h]))'}

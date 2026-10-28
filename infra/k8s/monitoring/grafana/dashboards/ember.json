@@ -44,7 +44,17 @@
   "annotations": {
     "list": []
   },
-  "links": [],
+  "links": [
+    {
+      "title": "Ember ingestion",
+      "type": "link",
+      "url": "/d/ember-ingestion",
+      "icon": "dashboard",
+      "targetBlank": false,
+      "keepTime": true,
+      "tooltip": "Intake and enrichment by source and tenant"
+    }
+  ],
   "panels": [
     {
       "type": "row",
@@ -1111,23 +1121,24 @@
     },
     {
       "type": "timeseries",
-      "title": "GitHub webhooks by event type",
-      "description": "Deliveries GitHub sent, by X-GitHub-Event, from nginx's access log. Only requests with GitHub's user agent (GitHub-Hookshot) count, so the synthetic checks' unsigned pings don't. Includes deliveries intake refused or never got (Webhook responses at nginx), and a redelivery counts again. Each bar is one interval of at least 5 min; the legend's Total covers the whole time range.",
+      "title": "GitHub events by type",
+      "description": "GitHub deliveries intake verified and stored, by tenant and raw_events.event_name (X-GitHub-Event plus action), counted by the Postgres exporter (raw_events_received). Deliveries intake refused aren't here: Webhook responses at nginx shows those. A redelivery counts once. (unmapped) is an installation no tenant is mapped to, or an app-wide event such as ping. Each bar is one interval of at least 5 min; the legend's Total covers the whole time range. An interval in which retention deleted rows can show too few. Dashboard Ember ingestion breaks this down further.",
       "datasource": {
-        "type": "loki",
-        "uid": "${loki}"
+        "type": "prometheus",
+        "uid": "${prometheus}"
       },
       "interval": "5m",
       "targets": [
         {
           "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "${loki}"
+            "type": "prometheus",
+            "uid": "${prometheus}"
           },
-          "expr": "sum by (event) (count_over_time({namespace=\"ember\", container=\"nginx\"} |= \" event=\" |= \"\\\"GitHub-Hookshot/\" | regexp `event=(?P<event>\\S+)` [$__auto]))",
-          "legendFormat": "{{event}}",
-          "queryType": "range"
+          "expr": "sum by (tenant, event_name) (clamp_min(cnpg_raw_events_received_rows{source=\"github\"} - cnpg_raw_events_received_rows{source=\"github\"} offset $__interval, 0))",
+          "legendFormat": "{{tenant}} · {{event_name}}",
+          "range": true,
+          "instant": false
         }
       ],
       "fieldConfig": {
@@ -1148,7 +1159,8 @@
           },
           "unit": "short",
           "decimals": 0,
-          "min": 0
+          "min": 0,
+          "noValue": "No events in this range"
         },
         "overrides": []
       },
@@ -1179,7 +1191,7 @@
     {
       "type": "timeseries",
       "title": "Slack events by type",
-      "description": "Slack deliveries intake verified and stored, by raw_events.event_name (message, message:message_changed, …), counted by the Postgres exporter (raw_events_received). Slack sends its event type only in the body, so unlike GitHub's panel this can't come from nginx: a delivery intake refused isn't here, and a retry Slack re-sent counts once. Rows from an unmapped workspace count too (Unmapped). Each bar is one interval of at least 5 min; the legend's Total covers the whole time range. An interval in which retention deleted rows can show too few.",
+      "description": "Slack deliveries intake verified and stored, by tenant and raw_events.event_name (message, message:message_changed, …), counted by the Postgres exporter (raw_events_received). A delivery intake refused isn't here, and a retry Slack re-sent counts once. (unmapped) is a workspace no tenant is mapped to. Each bar is one interval of at least 5 min; the legend's Total covers the whole time range. An interval in which retention deleted rows can show too few. Dashboard Ember ingestion breaks this down further.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -1192,8 +1204,8 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "sum by (event_name) (clamp_min(cnpg_raw_events_received_rows{source=\"slack\"} - cnpg_raw_events_received_rows{source=\"slack\"} offset $__interval, 0))",
-          "legendFormat": "{{event_name}}",
+          "expr": "sum by (tenant, event_name) (clamp_min(cnpg_raw_events_received_rows{source=\"slack\"} - cnpg_raw_events_received_rows{source=\"slack\"} offset $__interval, 0))",
+          "legendFormat": "{{tenant}} · {{event_name}}",
           "range": true,
           "instant": false
         }
@@ -1248,7 +1260,7 @@
     {
       "type": "timeseries",
       "title": "Jira events by type",
-      "description": "Jira deliveries intake verified and stored, by raw_events.event_name (jira:issue_updated, comment_created, …), counted by the Postgres exporter (raw_events_received). Jira's admin webhook sends its event type only in the body, so as with Slack this can't come from nginx: a delivery intake refused isn't here, and a retry Jira re-sent counts once. Rows from an unmapped site count too (Unmapped). Each bar is one interval of at least 5 min; the legend's Total covers the whole time range. An interval in which retention deleted rows can show too few.",
+      "description": "Jira deliveries intake verified and stored, by tenant and raw_events.event_name (jira:issue_updated, comment_created, …), counted by the Postgres exporter (raw_events_received). A delivery intake refused isn't here, and a retry Jira re-sent counts once. (unmapped) is a site no tenant is mapped to. Each bar is one interval of at least 5 min; the legend's Total covers the whole time range. An interval in which retention deleted rows can show too few. Dashboard Ember ingestion breaks this down further.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -1261,8 +1273,8 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "sum by (event_name) (clamp_min(cnpg_raw_events_received_rows{source=\"jira\"} - cnpg_raw_events_received_rows{source=\"jira\"} offset $__interval, 0))",
-          "legendFormat": "{{event_name}}",
+          "expr": "sum by (tenant, event_name) (clamp_min(cnpg_raw_events_received_rows{source=\"jira\"} - cnpg_raw_events_received_rows{source=\"jira\"} offset $__interval, 0))",
+          "legendFormat": "{{tenant}} · {{event_name}}",
           "range": true,
           "instant": false
         }
@@ -1329,8 +1341,8 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "sum by (source) (cnpg_raw_events_backlog_rows)",
-          "legendFormat": "{{source}}",
+          "expr": "sum by (source, tenant) (cnpg_raw_events_backlog_rows)",
+          "legendFormat": "{{source}} · {{tenant}}",
           "range": true,
           "instant": false
         },
@@ -1400,8 +1412,8 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "max by (source) (cnpg_raw_events_backlog_oldest_age_seconds)",
-          "legendFormat": "{{source}}",
+          "expr": "max by (source, tenant) (cnpg_raw_events_backlog_oldest_age_seconds)",
+          "legendFormat": "{{source}} · {{tenant}}",
           "range": true,
           "instant": false
         }

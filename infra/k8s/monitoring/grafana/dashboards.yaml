@@ -22,3 +22,17 @@ spec:
   configMapRef:
     name: grafana-dashboards
     key: ember.json
+---
+# Intake and enrichment by source and tenant (EMBER-111; k8s/README.md, Monitoring)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: ember-ingestion
+spec:
+  instanceSelector:
+    matchLabels:
+      grafana: grafana-cloud
+  folderRef: ember
+  configMapRef:
+    name: grafana-dashboards
+    key: ember-ingestion.json

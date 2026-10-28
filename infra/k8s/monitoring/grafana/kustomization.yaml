@@ -13,5 +13,6 @@ configMapGenerator:
   - name: grafana-dashboards
     files:
       - dashboards/ember.json
+      - dashboards/ember-ingestion.json
 configurations:
   - kustomizeconfig.yaml
