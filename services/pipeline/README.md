@@ -118,3 +118,13 @@ With `openai-dev`, embedding a small input costs a few cents; set a spending lim
 before the first real run. `local-spark` costs nothing per call.
 
 Tests (no key, no network): `cd services/pipeline && python -m unittest discover -s models -t . -p "test_*.py" -v`.
+
+## Benchmarks (EMBER-58)
+
+`python -m benchmarks run --tenant <tenant> --input <raw folder>` measures loading correctness and
+retrieval quality (BM25, vector, hybrid). The retrieval suite makes paid embedding calls and needs
+`OPENAI_API_KEY`; `--suite loading` makes none. What each suite measures, how to write the questions,
+how to read the scores, the exit codes, and what is not measured yet: `docs/benchmarks.md`. Saved
+results: `benchmarks/results/`. The baseline scores are not recorded yet.
+
+Tests (no key, no network): `cd services/pipeline && python -m unittest discover -s benchmarks -t . -p "test_*.py" -v`.
