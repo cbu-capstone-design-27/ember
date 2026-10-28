@@ -188,7 +188,30 @@ below were kept: no message text, names or ids.
   - subgraph-isolation: 118 nodes, 0 with the wrong source, 0 crossing edges.
   - deleted-state: 0 deleted, 0 still holding content (the copy had no deletes).
   - comment-authors and issue-references: 0, since Jira isn't present yet.
-- Result: **PASS**. Follow-up: rerun with Jira once its records reach the cluster.
+- Result: **PASS**.
+
+#### Jira and Slack together (rerun when Jira arrived)
+
+Run later on 2026-10-28 in the same way, once the team's Jira records reached the cluster. It used a one-time,
+read-only copy of the `ember-development` Jira and Slack `source_records`, deleted after the run, with only counts
+kept.
+
+- `source_records`: jira/issue 11, slack/message 125, slack/channel 3, slack/user 3.
+- Episodes: 142 extracted, 142 loaded, 0 unloaded, 0 load failures. Rejected 0, skipped 0.
+- `ember-development_jira`:
+  - Nodes: WorkItem 8, Person 3, Identity 3, Container 1. The 11 issue records are 8 issues; the rest are later
+    versions.
+  - Edges: CONTAINS 8, AUTHORED 8, ASSIGNED_TO 7, RESOLVES_TO 3.
+- `ember-development_slack`:
+  - Nodes: Message 89, Conversation 71, Container 3, Identity 3, Person 3.
+  - Edges: PART_OF 89, AUTHORED 89, CONTAINS 71, REPLIES_TO 18, RESOLVES_TO 3.
+- Schema check: OK for both subgraphs.
+- Smoke queries: all pass.
+  - issue-references: 8 issues, 0 links between issues, 0 placeholders.
+  - thread-messages: 71 threads, all 89 messages with a sender.
+  - subgraph-isolation: 184 nodes, 0 with the wrong source, 0 crossing edges.
+  - comment-authors: 0, since the Jira data has no comments yet.
+- Result: **PASS**.
 
 #### GitHub: the Parallax repository (EMBER-107)
 
