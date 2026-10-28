@@ -119,6 +119,18 @@ Postgres as in `apps/mcp/README.md`, start the compose Neo4j, then:
 The graph then holds subgraphs `photon_jira` and `photon_slack`. Leave off `--once` to keep the workers
 running and waiting for new rows.
 
+### End-to-end check (EMBER-86)
+
+One command extracts, loads and verifies the graph. On the photon data it compares per-label and
+per-relationship counts and five sample Cypher answers with values derived from the fixtures; on any
+other populated tenant it reports counts, schema-check mismatches, rejected/skipped by kind and five smoke
+queries, with no message text, names or keys in the output:
+
+    python -m loader e2e-check --tenant photon --seed-photon --reset     # photon, with expected values
+    python -m loader e2e-check --tenant ember-development                # real data, counts only
+
+How to read it, the photon results and the gaps found: `docs/pipeline/neo4j-load-check.md`.
+
 Tests: `test_extract.py` runs with the unit tests. `test_pg_load.py` needs a Postgres with pgvector and
 dbmate, and is CI's `Pipeline loader against Postgres` step:
 
