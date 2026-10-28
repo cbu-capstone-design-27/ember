@@ -40,6 +40,7 @@ from starlette.routing import Route
 
 from adapters import BadRequest, Delivery, SourceAdapter, Unauthorized
 from adapters.github import GitHubAdapter
+from adapters.jira import JiraAdapter
 from adapters.slack import SlackAdapter
 from models import Installation, RawEvent
 
@@ -231,6 +232,8 @@ def main() -> int:
         adapters: list[SourceAdapter] = [GitHubAdapter(os.environ.get("GITHUB_WEBHOOK_SECRET", ""))]
         if os.environ.get("SLACK_SIGNING_SECRET"):
             adapters.append(SlackAdapter(os.environ["SLACK_SIGNING_SECRET"]))
+        if os.environ.get("JIRA_WEBHOOK_SECRET"):
+            adapters.append(JiraAdapter(os.environ["JIRA_WEBHOOK_SECRET"]))
     except ValueError as error:
         print(error, file=sys.stderr)
         return 2

@@ -2,7 +2,7 @@
 
 The one listener for every source's webhooks (EMBER-62). It verifies each delivery, stores it as it arrived in Postgres `raw_events`, and answers. It never calls a source API: the per-source enrich workers fetch what a payload lacks. The design is [`docs/ingestion/architecture.md`, "The parent listener (intake)"](../../docs/ingestion/architecture.md#the-parent-listener-intake).
 
-GitHub and Slack have adapters so far. Adding a source means adding an adapter under `adapters/` and listing it in `intake.py`'s `main`, not a new listener.
+GitHub, Slack and Jira have adapters so far. Adding a source means adding an adapter under `adapters/` and listing it in `intake.py`'s `main`, not a new listener.
 
 ## Contract
 
@@ -34,6 +34,7 @@ SIGINT or SIGTERM stops accepting connections and lets requests in flight finish
 | `DATABASE_URL` | Postgres, e.g. `postgresql://ember:...@localhost:5432/ember?sslmode=disable`. On the cluster, Secret `postgres-app`, key `uri` |
 | `GITHUB_WEBHOOK_SECRET` | The GitHub App's webhook secret. Required: intake refuses to start without it, so it never stores an unsigned delivery. It also refuses one with leading or trailing whitespace, which no signature would match |
 | `SLACK_SIGNING_SECRET` | The Slack app's signing secret (Basic Information, App Credentials). Optional: without it intake serves GitHub only and `/webhook/slack` is an unknown source (404), so intake runs where the Slack app isn't set up. When set, the same whitespace rule as GitHub's applies. The startup log names the sources served |
+| `JIRA_WEBHOOK_SECRET` | The secret saved on the Jira site's admin webhook. Optional, like Slack's: without it `/webhook/jira` is an unknown source (404). When set, the same whitespace rule applies |
 | `LISTEN_PORT` | Defaults to `8080`. Not `INTAKE_PORT`, which Kubernetes sets for a Service called `intake` |
 
 ## GitHub adapter
@@ -64,6 +65,18 @@ Subscribe the App to these. Intake does not filter on them, and with the App's c
 - **`occurred_at`:** the [ordering value](../../docs/ingestion/slack-webhooks.md#ordering-value-ember-63): `event.event_ts`, then `event.ts`, then the wrapper's `event_time`, to the microsecond; `minute_rate_limited` for the notice. One that is unreadable gets `received_at`.
 
 The app's scopes and events are in `services/slack-ingestion/slack-app-manifest.json`. Set its Event Subscriptions Request URL to `https://ember.tail470a31.ts.net/webhook/slack` once intake has the secret: Slack sends the URL check straight away.
+
+## Jira adapter
+
+[`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md) is the spec. `enrich:jira` (`services/jira-ingestion/enrich.py`) reads the rows.
+
+- **Verification:** `X-Hub-Signature`, `sha256=` and the HMAC-SHA256 of the raw body with the admin webhook's secret (WebSub `method=signature`). Only `sha256` is accepted, and a webhook saved without a secret is refused.
+- **`delivery_id`:** `<site>:<X-Atlassian-Webhook-Identifier>`, at most 255 characters. Jira makes the identifier unique only within a site and repeats it on its retries (`X-Atlassian-Webhook-Retry`, logged with `X-Atlassian-Webhook-Flow`).
+- **`account_id`:** the site, the host of the first `self` URL among the event's own entity (`comment`, `worklog`, `attachment`, `issueLink`, …), then `issue`, then `user`, e.g. `ember-capstone.atlassian.net`. Admin bodies often omit `cloudId`. A body with no `self` URL is stored with no account and `delivery_id` `unknown:<identifier>`.
+- **`event_name`:** `webhookEvent` as sent, e.g. `jira:issue_updated`, `comment_created`. A body without it is a 400.
+- **`occurred_at`:** the [ordering value](../../docs/ingestion/jira-webhooks.md#ordering-value-ember-63): `issue.fields.updated`, `comment.updated` or `worklog.updated`, then `attachment.created` for `attachment_created`, then the body's `timestamp` (epoch ms). Deletes, links and properties use `timestamp`, since a deleted entity's `updated` is its last edit. One that is unreadable gets `received_at`.
+
+Jira counts any answer but 200 as a failure and retries; intake answers 200 for stored and duplicate deliveries. Register the admin webhook (Jira Administration → System → Webhooks) with the URL `https://ember.tail470a31.ts.net/webhook/jira` and the same secret as `JIRA_WEBHOOK_SECRET`, once intake has it.
 
 ## Run
 

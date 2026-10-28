@@ -43,6 +43,7 @@ sys.path.insert(0, str(REPO / "packages" / "ingestion-envelope"))
 import intake  # noqa: E402
 from adapters import Delivery, Unauthorized  # noqa: E402
 from adapters.github import RECOMMENDED_WEBHOOK_EVENTS, GitHubAdapter  # noqa: E402
+from adapters.jira import JiraAdapter  # noqa: E402
 from adapters.slack import SlackAdapter  # noqa: E402
 from models import Installation, RawEvent  # noqa: E402
 from validate import assert_valid  # noqa: E402
@@ -54,6 +55,9 @@ SECRET = "test-webhook-secret"
 FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "github.json").read_text())["body"]
 SLACK_SECRET = "test-signing-secret"
 SLACK_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "slack.json").read_text())["body"]
+JIRA_SECRET = "test-jira-webhook-secret"
+JIRA_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "jira.json").read_text())["body"]
+JIRA_SITE = "ember-capstone.atlassian.net"  # the host of the fixture's issue.self
 
 
 def database_url() -> str:
@@ -90,6 +94,13 @@ def slack(payload: dict | bytes, secret: str = SLACK_SECRET, timestamp: int | No
     sent = str(int(time.time()) if timestamp is None else timestamp)
     signature = "v0=" + hmac.new(secret.encode(), f"v0:{sent}:".encode() + body, hashlib.sha256).hexdigest()
     return body, {"X-Slack-Request-Timestamp": sent, "X-Slack-Signature": signature,
+                  "Content-Type": "application/json", **headers}
+
+
+def jira(payload: dict | bytes, identifier: str = "wh-1", secret: str = JIRA_SECRET, **headers: str) -> tuple[bytes, dict]:
+    """A delivery as a Jira admin webhook with a secret sends it: X-Hub-Signature, sha256=HMAC of the body."""
+    body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+    return body, {"X-Atlassian-Webhook-Identifier": identifier, "X-Hub-Signature": sign(body, secret),
                   "Content-Type": "application/json", **headers}
 
 
@@ -138,7 +149,7 @@ class Server:
         self.port = free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         app = intake.create_app(intake.create_engine(url, timeout), {"github": GitHubAdapter(SECRET), "slack": SlackAdapter(SLACK_SECRET),
-                                                                    "teams": FakeTeams()},
+                                                                    "jira": JiraAdapter(JIRA_SECRET), "teams": FakeTeams()},
                                 registry, deadline=deadline)
         self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning"))
 
@@ -175,7 +186,7 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
         await self.db.execute("truncate raw_events, installations restart identity cascade")
         await self.db.execute("insert into installations (source, account_id, tenant)"
                               " values ('github', '77', 'acme'), ('gitlab', '77', 'not-this-one'),"
-                              " ('slack', 'T012WORKSPACE', 'acme')")
+                              " ('slack', 'T012WORKSPACE', 'acme'), ('jira', $1, 'acme')", JIRA_SITE)
         self.registry = CollectorRegistry()
         self.intake = await Server(database_url(), self.registry).__aenter__()
 
@@ -529,6 +540,111 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.intake.post("/webhook/slack", case_body, case_headers))[0], status)
         self.assertEqual(await self.rows(), [])
 
+    async def deliver_jira(self, payload: dict | bytes, identifier: str = "wh-1", **kwargs) -> tuple[int, str]:
+        return await self.intake.post("/webhook/jira", *jira(payload, identifier, **kwargs))
+
+    async def test_signed_jira_delivery_is_stored_as_it_arrived(self):
+        self.assertEqual(await self.deliver_jira(JIRA_FIXTURE), (200, '{"status":"stored"}'))
+
+        (row,) = await self.rows()
+        self.assertEqual(
+            (row["source"], row["delivery_id"], row["account_id"], row["tenant"], row["event_name"], row["origin"]),
+            ("jira", f"{JIRA_SITE}:wh-1", JIRA_SITE, "acme", "jira:issue_updated", "webhook"))
+        # The fixture's issue has no fields.updated, so the body's timestamp (epoch ms) orders it
+        self.assertEqual(row["occurred_at"], datetime(2025, 9, 23, 23, 9, 8, tzinfo=timezone.utc))
+        envelope = json.loads(row["envelope"])
+        self.assertEqual(envelope, {"type": "jira", "body": JIRA_FIXTURE})
+        assert_valid(envelope)
+        self.assertIsNone(row["enriched_at"])
+
+    async def test_jira_retry_is_a_no_op_and_an_unmapped_site_waits(self):
+        self.assertEqual(await self.deliver_jira(JIRA_FIXTURE), (200, '{"status":"stored"}'))
+        # Jira retries with the same identifier, up to 5 times, on anything but a 200
+        self.assertEqual(await self.deliver_jira(JIRA_FIXTURE, **{"X-Atlassian-Webhook-Retry": "1",
+                                                                   "X-Atlassian-Webhook-Flow": "Primary"}),
+                         (200, '{"status":"duplicate"}'))
+        # The identifier is unique only within a site, so another site's same identifier is a new delivery
+        other = {**JIRA_FIXTURE, "issue": {**JIRA_FIXTURE["issue"], "self": "https://other.atlassian.net/rest/api/3/issue/1"}}
+        self.assertEqual(await self.deliver_jira(other), (200, '{"status":"stored"}'))
+        self.assertEqual([(r["delivery_id"], r["account_id"], r["tenant"]) for r in await self.rows()],
+                         [(f"{JIRA_SITE}:wh-1", JIRA_SITE, "acme"),
+                          ("other.atlassian.net:wh-1", "other.atlassian.net", None)])
+
+    async def test_jira_site_comes_from_the_events_own_entity(self):
+        site = f"https://{JIRA_SITE}/rest/api/3"
+        cases = [
+            ("comment", {"webhookEvent": "comment_created", "timestamp": 1,
+                         "comment": {"id": "5", "self": f"{site}/issue/10204/comment/5"},
+                         "issue": {"id": "10204", "self": "https://reduced.example/issue/10204"}}, JIRA_SITE),
+            ("worklog", {"webhookEvent": "worklog_deleted", "timestamp": 1,
+                         "worklog": {"id": "7", "issueId": "10204", "self": f"{site}/issue/10204/worklog/7"}}, JIRA_SITE),
+            ("link", {"webhookEvent": "issuelink_created", "timestamp": 1,
+                      "issueLink": {"id": "9", "self": f"{site}/issueLink/9"}}, JIRA_SITE),
+            ("no self anywhere", {"webhookEvent": "jira:issue_updated", "timestamp": 1, "issue": {"id": "1"}}, None),
+            ("malformed self", {"webhookEvent": "jira:issue_updated", "timestamp": 1,
+                                "issue": {"self": "https://[::1"}}, None),
+        ]
+        for n, (_name, payload, _site) in enumerate(cases):
+            self.assertEqual((await self.deliver_jira(payload, f"wh-{n}"))[0], 200)
+        for (name, _payload, expected), row in zip(cases, await self.rows(), strict=True):
+            with self.subTest(name):
+                self.assertEqual(row["account_id"], expected)
+                self.assertTrue(row["delivery_id"].startswith(f"{expected or 'unknown'}:wh-"))
+
+    async def test_occurred_at_follows_jiras_ordering_rule(self):
+        # jira-webhooks.md, "Ordering value": the entity's updated, then attachment.created, then timestamp
+        ts = 1760389511123  # 2025-10-13T21:05:11.123Z
+        updated = "2026-10-13T14:05:11.123-0700"  # 2026-10-13T21:05:11.123Z
+        cases = [
+            ({"webhookEvent": "jira:issue_updated", "issue": {"fields": {"updated": updated}}}, "2026-10-13T21:05:11.123+00:00"),
+            ({"webhookEvent": "jira:issue_created", "issue": {"fields": {"updated": "2026-10-13T21:05:11.000+0000"}}},
+             "2026-10-13T21:05:11+00:00"),
+            ({"webhookEvent": "comment_updated", "comment": {"updated": updated}}, "2026-10-13T21:05:11.123+00:00"),
+            ({"webhookEvent": "worklog_created", "worklog": {"updated": updated}}, "2026-10-13T21:05:11.123+00:00"),
+            ({"webhookEvent": "attachment_created", "attachment": {"created": updated}}, "2026-10-13T21:05:11.123+00:00"),
+            # A deleted entity's updated is its last edit, not the delete
+            ({"webhookEvent": "jira:issue_deleted", "issue": {"fields": {"updated": updated}}}, "2025-10-13T21:05:11.123+00:00"),
+            ({"webhookEvent": "comment_deleted", "comment": {"updated": updated}}, "2025-10-13T21:05:11.123+00:00"),
+            ({"webhookEvent": "issuelink_created", "issueLink": {"id": 1}}, "2025-10-13T21:05:11.123+00:00"),
+            ({"webhookEvent": "jira:issue_updated", "issue": {"fields": {"updated": "not a time"}}}, "2025-10-13T21:05:11.123+00:00"),
+            ({"webhookEvent": "jira:issue_updated", "issue": {"fields": {"updated": "2026-10-13T14:05:11"}}},
+             "2025-10-13T21:05:11.123+00:00"),
+        ]
+        for n, (payload, _expected) in enumerate(cases):
+            self.assertEqual((await self.deliver_jira({**payload, "timestamp": ts}, f"wh-{n}"))[0], 200)
+        # No readable time at all: received_at
+        self.assertEqual((await self.deliver_jira({"webhookEvent": "jira:issue_updated", "timestamp": "soon"}, "wh-none"))[0], 200)
+        self.assertEqual((await self.deliver_jira({"webhookEvent": "jira:issue_updated", "timestamp": True}, "wh-bool"))[0], 200)
+        rows = await self.rows()
+        for (payload, expected), row in zip(cases, rows, strict=False):
+            with self.subTest(payload["webhookEvent"], delivery=row["delivery_id"]):
+                self.assertEqual(row["event_name"], payload["webhookEvent"])
+                self.assertEqual(row["occurred_at"], datetime.fromisoformat(expected))
+        for row in rows[len(cases):]:
+            self.assertEqual(row["occurred_at"], row["received_at"])
+
+    async def test_rejected_jira_deliveries_store_nothing(self):
+        body, headers = jira(JIRA_FIXTURE)
+        cases = [
+            ("bad signature", body, {**headers, "X-Hub-Signature": "sha256=" + "0" * 64}, 401),
+            ("no signature", body, {k: v for k, v in headers.items() if k != "X-Hub-Signature"}, 401),
+            ("another secret", *jira(JIRA_FIXTURE, secret="other"), 401),
+            ("signed for another body", body + b" ", headers, 401),
+            ("sha1 signature", body, {**headers, "X-Hub-Signature": "sha1=" + hmac.new(
+                JIRA_SECRET.encode(), body, hashlib.sha1).hexdigest()}, 401),
+            ("signed with GitHub's secret", *jira(JIRA_FIXTURE, secret=SECRET), 401),
+            ("no identifier", body, {k: v for k, v in headers.items() if k != "X-Atlassian-Webhook-Identifier"}, 400),
+            ("long identifier", *jira(JIRA_FIXTURE, "i" * 8000), 400),
+            ("no webhookEvent", *jira({k: v for k, v in JIRA_FIXTURE.items() if k != "webhookEvent"}), 400),
+            ("webhookEvent not a string", *jira({**JIRA_FIXTURE, "webhookEvent": 3}), 400),
+            ("not an object", *jira(b"[]"), 400),
+            ("not json", *jira(b"{"), 400),
+        ]
+        for name, case_body, case_headers, status in cases:
+            with self.subTest(name):
+                self.assertEqual((await self.intake.post("/webhook/jira", case_body, case_headers))[0], status)
+        self.assertEqual(await self.rows(), [])
+
     async def test_adding_a_source_is_adding_an_adapter(self):
         self.assertEqual(await self.intake.post("/webhook/teams?validationToken=abc", b"", {}), (200, "abc"))
         body = json.dumps({"clientState": "expected", "tenantId": "t-1", "changeType": "created"}).encode()
@@ -551,7 +667,7 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
 
     def env(self, **extra: str) -> dict:
         env = {k: v for k, v in os.environ.items()
-               if k not in ("GITHUB_WEBHOOK_SECRET", "SLACK_SIGNING_SECRET", "DATABASE_URL")}
+               if k not in ("GITHUB_WEBHOOK_SECRET", "SLACK_SIGNING_SECRET", "JIRA_WEBHOOK_SECRET", "DATABASE_URL")}
         return {**env, "DATABASE_URL": database_url(), **extra}
 
     def test_refuses_to_start_without_a_usable_webhook_secret(self):
@@ -563,21 +679,25 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn(f"GITHUB_WEBHOOK_SECRET {message}", result.stderr)
 
-    def test_refuses_to_start_with_an_unusable_slack_secret(self):
-        for secret, message in (("  ", "is required"), ("secret\n", "has leading or trailing")):
-            with self.subTest(repr(secret)):
-                result = subprocess.run([sys.executable, str(HERE / "intake.py")],
-                                        env=self.env(GITHUB_WEBHOOK_SECRET=SECRET, SLACK_SIGNING_SECRET=secret),
-                                        capture_output=True, text=True, timeout=30)
-                self.assertEqual(result.returncode, 2)
-                self.assertIn(f"SLACK_SIGNING_SECRET {message}", result.stderr)
+    def test_refuses_to_start_with_an_unusable_slack_or_jira_secret(self):
+        for name in ("SLACK_SIGNING_SECRET", "JIRA_WEBHOOK_SECRET"):
+            for secret, message in (("  ", "is required"), ("secret\n", "has leading or trailing")):
+                with self.subTest(name, secret=repr(secret)):
+                    result = subprocess.run([sys.executable, str(HERE / "intake.py")],
+                                            env=self.env(GITHUB_WEBHOOK_SECRET=SECRET, **{name: secret}),
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(f"{name} {message}", result.stderr)
 
-    async def test_slack_is_served_only_with_its_secret(self):
-        # Without it intake still runs for GitHub, so a rollout before the Slack app is set up is safe
-        for slack_secret, sources, status in ((None, "github", 404), (SLACK_SECRET, "github, slack", 200)):
+    async def test_slack_and_jira_are_served_only_with_their_secrets(self):
+        # Without them intake still runs for GitHub, so a rollout before an app or webhook is set up is safe
+        cases = (({}, "github", 404, 404),
+                 ({"SLACK_SIGNING_SECRET": SLACK_SECRET}, "github, slack", 200, 404),
+                 ({"SLACK_SIGNING_SECRET": SLACK_SECRET, "JIRA_WEBHOOK_SECRET": JIRA_SECRET}, "github, slack, jira",
+                  200, 200))
+        for extra, sources, slack_status, jira_status in cases:
             with self.subTest(sources):
                 port = free_port()
-                extra = {"SLACK_SIGNING_SECRET": slack_secret} if slack_secret else {}
                 process = subprocess.Popen(
                     [sys.executable, str(HERE / "intake.py")],
                     env=self.env(GITHUB_WEBHOOK_SECRET=SECRET, LISTEN_PORT=str(port), **extra),
@@ -592,7 +712,10 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(0.05)
                     check = {"type": "url_verification", "challenge": "c"}
                     reply = await asyncio.to_thread(request, f"http://127.0.0.1:{port}/webhook/slack", *slack(check))
-                    self.assertEqual(reply[0], status)
+                    self.assertEqual(reply[0], slack_status)
+                    reply = await asyncio.to_thread(request, f"http://127.0.0.1:{port}/webhook/jira",
+                                                    *jira(JIRA_FIXTURE, f"process-{port}"))
+                    self.assertEqual(reply[0], jira_status)
                 finally:
                     process.send_signal(signal.SIGINT)
                     output = (await asyncio.to_thread(process.communicate, timeout=30))[0]

@@ -12,7 +12,7 @@ Which projects feed Ember is a later webapp concern, not this service. A JQL fil
 
 Stub HTTP receiver for live deliveries, plus a local pull command for one test project. The receiver checks an optional HMAC, wraps the raw body, and writes the envelope to stdout. No queue yet. The receiver does not call the Jira API and does not filter on a site or project.
 
-Live admin webhooks still need a public HTTPS URL. This change does not open a tunnel or register a webhook.
+Live deliveries go to intake, not this receiver: intake's Jira adapter (EMBER-109, `services/intake/README.md`) verifies and stores them in `raw_events` at `https://ember.tail470a31.ts.net/webhook/jira`, and `enrich.py`, which the image also runs, turns them into `source_records`.
 
 Atlassian MCP is not a runtime path. It is not imported, not called, and not a substitute for the webhook or the REST pull.
 
