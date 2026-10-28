@@ -2,8 +2,9 @@
 # Writes k8s/apps/intake/webhooks.sops.yaml, Secret intake-webhooks, from the vault, encrypted with
 # the public key in .sops.yaml. vault_github_webhook_secret is the GitHub App's webhook secret
 # (k8s/README.md, "The webhook secret"); vault_slack_signing_secret is the Slack app's signing secret
-# (k8s/README.md, "The Slack signing secret"). The values are never printed. Commit the file it
-# writes. Use make intake-secret.
+# (k8s/README.md, "The Slack signing secret"); vault_jira_webhook_secret is the secret saved on the
+# Jira site's admin webhook (k8s/README.md, "The Jira webhook secret"). The values are never printed.
+# Commit the file it writes. Use make intake-secret.
 - name: Intake
   hosts: localhost
   gather_facts: false
@@ -19,6 +20,7 @@
       stringData:
         GITHUB_WEBHOOK_SECRET: "{{ vault_github_webhook_secret }}"
         SLACK_SIGNING_SECRET: "{{ vault_slack_signing_secret }}"
+        JIRA_WEBHOOK_SECRET: "{{ vault_jira_webhook_secret }}"
   tasks:
     - name: Secret
       tags: [secret]
@@ -47,6 +49,19 @@
             fail_msg: >-
               Add vault_slack_signing_secret, the Slack app's Signing Secret (Basic Information, App
               Credentials), with .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
+        - name: Require the Jira webhook secret in the vault
+          ansible.builtin.assert:
+            that:
+              - vault_jira_webhook_secret is defined
+              - vault_jira_webhook_secret is string
+              - vault_jira_webhook_secret | length > 0
+              - vault_jira_webhook_secret == vault_jira_webhook_secret | trim
+            fail_msg: >-
+              Add vault_jira_webhook_secret (openssl rand -hex 32), the secret you save on the Jira
+              site's admin webhook, with .venv/bin/ansible-vault edit group_vars/all/vault.yml
             quiet: true
           no_log: true
 

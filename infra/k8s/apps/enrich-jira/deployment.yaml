@@ -1,0 +1,72 @@
+# enrich:jira (EMBER-66, services/jira-ingestion/enrich.py): turns Jira rows in raw_events into
+# source_records. It serves nothing, so there is no Service and no probe. It claims rows with
+# FOR UPDATE SKIP LOCKED, so a second replica or a rollout's overlap never enriches a row twice.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enrich-jira
+  namespace: ember
+  labels:
+    app: enrich-jira
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enrich-jira
+  template:
+    metadata:
+      labels:
+        app: enrich-jira
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      # SIGTERM stops claiming and finishes the rows in flight; a row cut off is claimed again
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: enrich
+          # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
+          image: ghcr.io/cbu-capstone-design-27/ember/jira-ingestion:JIRA_IMAGE_TAG
+          # The image's default command is the stdout-only receiver.py; intake receives Jira's webhooks
+          command: ["python3", "enrich.py"]
+          env:
+            # The pod stays in CreateContainerConfigError until both Secrets exist
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-app
+                  key: uri
+            # One site's credentials for now (enrich.py, EMBER-12): rows from any other site fail
+            - name: JIRA_BASE_URL
+              value: https://ember-capstone.atlassian.net
+            # Secret enrich-jira-api (jira-api.sops.yaml): an Atlassian account's email and API token
+            - name: JIRA_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: enrich-jira-api
+                  key: JIRA_EMAIL
+            - name: JIRA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: enrich-jira-api
+                  key: JIRA_API_TOKEN
+            - name: CONCURRENCY
+              value: "4"
+          # Idle it holds a LISTEN connection and a small pool, plus one thread per runner for Jira calls
+          resources:
+            requests:
+              cpu: 10m
+              memory: 96Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

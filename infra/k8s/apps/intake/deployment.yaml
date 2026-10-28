@@ -67,6 +67,12 @@ spec:
                 secretKeyRef:
                   name: intake-webhooks
                   key: SLACK_SIGNING_SECRET
+            # Serves /webhook/jira (services/intake/README.md, Jira adapter)
+            - name: JIRA_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: intake-webhooks
+                  key: JIRA_WEBHOOK_SECRET
             - name: LISTEN_PORT
               value: "8080"
           ports:
