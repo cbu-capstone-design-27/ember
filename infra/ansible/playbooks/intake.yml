@@ -3,7 +3,9 @@
 # the public key in .sops.yaml. vault_github_webhook_secret is the GitHub App's webhook secret
 # (k8s/README.md, "The webhook secret"); vault_slack_signing_secret is the Slack app's signing secret
 # (k8s/README.md, "The Slack signing secret"); vault_jira_webhook_secret is the secret saved on the
-# Jira site's admin webhook (k8s/README.md, "The Jira webhook secret"). The values are never printed.
+# Jira site's admin webhook (k8s/README.md, "The Jira webhook secret"); vault_gitlab_webhook_signing_token
+# is the signing token GitLab generated for the project webhook (k8s/README.md, "The GitLab signing
+# token"). The values are never printed.
 # Commit the file it writes. Use make intake-secret.
 - name: Intake
   hosts: localhost
@@ -21,6 +23,7 @@
         GITHUB_WEBHOOK_SECRET: "{{ vault_github_webhook_secret }}"
         SLACK_SIGNING_SECRET: "{{ vault_slack_signing_secret }}"
         JIRA_WEBHOOK_SECRET: "{{ vault_jira_webhook_secret }}"
+        GITLAB_WEBHOOK_SIGNING_TOKEN: "{{ vault_gitlab_webhook_signing_token }}"
   tasks:
     - name: Secret
       tags: [secret]
@@ -62,6 +65,21 @@
             fail_msg: >-
               Add vault_jira_webhook_secret (openssl rand -hex 32), the secret you save on the Jira
               site's admin webhook, with .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
+        # Intake also refuses one that isn't whsec_ and base64, as GitLab shows it
+        - name: Require the GitLab signing token in the vault
+          ansible.builtin.assert:
+            that:
+              - vault_gitlab_webhook_signing_token is defined
+              - vault_gitlab_webhook_signing_token is string
+              - vault_gitlab_webhook_signing_token == vault_gitlab_webhook_signing_token | trim
+              - vault_gitlab_webhook_signing_token is match('whsec_[A-Za-z0-9+/]+=*$')
+            fail_msg: >-
+              Add vault_gitlab_webhook_signing_token, the whsec_ token GitLab showed once when the project
+              webhook was created with Generate signing token, with .venv/bin/ansible-vault edit
+              group_vars/all/vault.yml
             quiet: true
           no_log: true
 

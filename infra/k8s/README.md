@@ -150,6 +150,17 @@ A Jira admin webhook signs each delivery with the secret saved on it (`X-Hub-Sig
 
 Between steps 4 and 5 Jira's deliveries are refused with 401. Jira retries each one up to 5 times over roughly an hour; what it drops, reconcile picks up by `updated` (`docs/ingestion/jira-webhooks.md`, Known gaps).
 
+#### The GitLab signing token
+
+A GitLab project webhook signs each delivery with its signing token (`webhook-signature`), and intake checks it before serving `/webhook/gitlab` (`services/intake/README.md`, GitLab adapter). GitLab generates the token and shows it **once**, when the webhook is created; the API never returns it. It lives in the webhook, the vault, and `apps/intake/webhooks.sops.yaml`. To set or rotate it:
+
+1. In the project (`personal-embertest/Personal-Ember` today), **Settings → Webhooks → Add new webhook**: URL `https://ember.tail470a31.ts.net/webhook/gitlab`, **Generate signing token**, and the triggers in `RECOMMENDED_WEBHOOK_TRIGGERS` (`services/gitlab-ingestion/receiver.py`): merge request events, issues events, comments, push events. Copy the `whsec_…` token before leaving the page. Group webhooks need Premium or Ultimate, so on Free it is per project.
+2. Keep it in the vault as `vault_gitlab_webhook_signing_token`.
+3. `make intake-secret`, which writes all four intake secrets into the same file and needs all four in the vault. It refuses a token that isn't `whsec_` and base64, as intake does.
+4. Commit and merge the file, then `kubectl --context homelab -n ember rollout restart deploy/intake`.
+
+Until step 4 rolls out, GitLab's deliveries get a 404 (or a 401 after a rotation). GitLab counts each as a failure and disables the webhook for a while after 4 in a row, so create it on a quiet project and send the webhook's **Test** delivery once intake has the token. A missed delivery can be resent from the webhook's **Recent events** for 7 days, with the same `Idempotency-Key`, so intake stores it once.
+
 ### enrich-github
 
 `enrich:github` (EMBER-65, `services/github-ingestion`): turns the GitHub rows intake stores in `raw_events` into `source_records`. One replica in namespace `ember` from `apps/enrich-github/`, with no Service, because it serves nothing. It claims rows with `FOR UPDATE SKIP LOCKED`, so a rollout's overlap never enriches a row twice.
@@ -202,6 +213,24 @@ kubectl --context homelab -n ember logs deploy/enrich-jira
 It logs `enrich:jira listening on raw_events` once connected, which `make apps-health` waits for.
 
 To set or rotate the token: create one at **id.atlassian.com → Security → API tokens** for the account, put the account's email in the vault as `vault_jira_email` and the token as `vault_jira_api_token`, run `make enrich-jira-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-jira`. Revoke the old token once the new pod is listening.
+
+### enrich-gitlab
+
+`enrich:gitlab` (EMBER-68, `services/gitlab-ingestion/enrich.py`): turns the GitLab rows intake stores in `raw_events` into `source_records`. One replica in namespace `ember` from `apps/enrich-gitlab/`, with no Service, because it serves nothing. It claims rows with `FOR UPDATE SKIP LOCKED`, as `enrich-github` does.
+
+- **Image.** `deployment.yaml` pins a `develop-<run>-<sha>` tag of `ghcr.io/cbu-capstone-design-27/ember/gitlab-ingestion` and runs `python3 enrich.py`. The image's default command is `receiver.py`, a stdout-only stub that is never deployed; intake receives GitLab's webhooks.
+- **Credentials.** `DATABASE_URL` comes from Secret `postgres-app`. `GITLAB_BASE_URL` is `https://gitlab.com`; calls never go to a host named in a payload. Secret `enrich-gitlab-api` holds `GITLAB_API_TOKEN`, a `read_api` token used for merge request diffs and pushes of more than 20 commits, the only things a webhook lacks. One token, so one tenant group for now: rows from a group it can't read fail. Intake never sees the token, and this worker never sees the signing token.
+- **Rate limits.** The gates live in Postgres table `rate_limits`, bucket = account, so every worker shares one token's quota.
+- **Tenants.** Intake stores a delivery with `tenant` null until its account is in `installations`. The account is `<instance host>/<top-level group>`, e.g. `gitlab.com/personal-embertest`. Map it with `make map-tenant SOURCE=gitlab ACCOUNT=gitlab.com/<group> TENANT=<tenant>` ([Mapping a tenant](#mapping-a-tenant)), using the `account_id` the first delivery was stored with.
+- **Stopping.** On SIGTERM it stops claiming and finishes the rows in flight, for up to 60 s.
+
+```bash
+kubectl --context homelab -n ember logs deploy/enrich-gitlab
+```
+
+It logs `enrich:gitlab listening on raw_events` once connected, which `make apps-health` waits for.
+
+To set or rotate the token: create one with the `read_api` scope (a group access token on Premium or Ultimate, else a personal access token on an account that can read the projects), put it in the vault as `vault_gitlab_api_token`, run `make enrich-gitlab-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-gitlab`. Revoke the old token once the new pod is listening. GitLab tokens expire (at most a year), and an expired one fails only the rows that fetch, so note its date.
 
 ### llm-tunnel
 

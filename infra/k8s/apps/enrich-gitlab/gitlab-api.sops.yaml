@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: enrich-gitlab-api
+    namespace: ember
+stringData:
+    GITLAB_API_TOKEN: ENC[AES256_GCM,data:hRy73t6FPOG5essTqJKNG7a8rAhKrHKu8B1kXLp9yGmOHzDqvs3EtRPFyQtR1TF/bVpYb+6lSfs/dzErIzo=,iv:buYM2Sf5E9XboBFVLNIhkHnysjLdOQ0SwTrECM46r0A=,tag:ZbmUwPKZsTGpnBqZO8i1qA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBSZGRQSWhwZDFMSHUweDFR
+            aGwxN0V6UkdPbGQrRTgxMFBTdkpwRnBJd0d3Cm9ENi9nenEvaE9XWmxja2phUjgr
+            OU9qam1PeEd5a2JHM21LeTlNZCt6VG8KLS0tIGR3dzdNZGliUXpFUEVBcDc4aThB
+            Z05UT2JWcURoS3dDZUk4aXVIcDZtRzQKVTTuEfd7tH3Xwi3oJgvZMa+qFE6fb9wJ
+            r20Ngpf8Mruy6O/lX057Y1eZeE14Nv+u1q/BtDmhF8iSwugJjcPizA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-28T22:21:51Z"
+    mac: ENC[AES256_GCM,data:CiKSU/BJctcVtco2NEitD2lysIUvZk1Cuc0tpKS4NfNuJSR7kqqv2ulQ3f+Q3yqAZZio/bLZzR4A6ydEoGY/Rce4ggPZfx4KNK7AJZ62kosjo8D7ikWDLP/alx8wDyjy88BfXZXgojrTSO4+DG6tN9vpenkFPK/2FL+a/mP2Q8w=,iv:2oEJ740L+ApmdieLMoeLUKC71BzjaFY2UFPDk5+s4tw=,tag:MmLwA6UY7hmdqg6gPtM5RA==,type:str]
+    version: 3.13.3

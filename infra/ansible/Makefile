@@ -22,7 +22,7 @@ DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-j
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
 	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate \
-	intake-secret enrich-github-secret enrich-slack-secret enrich-jira-secret llm-tunnel-secret map-tenant grafana-secret grafana-health
+	intake-secret enrich-github-secret enrich-slack-secret enrich-jira-secret enrich-gitlab-secret llm-tunnel-secret map-tenant grafana-secret grafana-health
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -136,7 +136,7 @@ apps-diff: ## Show what this checkout's k8s/ would change on the cluster
 apps-health: ## Apps rolled out; enrich workers listening; intake refuses an unsigned webhook through nginx, from the tailnet and through Funnel
 	ansible-playbook playbooks/apps.yml --tags health
 
-intake-secret: ## Write k8s/apps/intake/webhooks.sops.yaml, encrypted, from vault_github_webhook_secret, vault_slack_signing_secret and vault_jira_webhook_secret. Commit it
+intake-secret: ## Write k8s/apps/intake/webhooks.sops.yaml, encrypted, from vault_github_webhook_secret, vault_slack_signing_secret, vault_jira_webhook_secret and vault_gitlab_webhook_signing_token. Commit it
 	ansible-playbook playbooks/intake.yml --tags secret
 
 enrich-github-secret: ## Write k8s/apps/enrich-github/github-app.sops.yaml, encrypted, from vault_github_app_private_key. Commit it
@@ -147,6 +147,9 @@ enrich-slack-secret: ## Write k8s/apps/enrich-slack/slack-bot.sops.yaml, encrypt
 
 enrich-jira-secret: ## Write k8s/apps/enrich-jira/jira-api.sops.yaml, encrypted, from vault_jira_email and vault_jira_api_token. Commit it
 	ansible-playbook playbooks/enrich.yml --tags secret-jira
+
+enrich-gitlab-secret: ## Write k8s/apps/enrich-gitlab/gitlab-api.sops.yaml, encrypted, from vault_gitlab_api_token. Commit it
+	ansible-playbook playbooks/enrich.yml --tags secret-gitlab
 
 grafana-secret: ## Write the Grafana Cloud Secrets (collector, operator), encrypted, from vault_grafana_cloud_*. Commit them
 	ansible-playbook playbooks/grafana-cloud.yml --tags secret
