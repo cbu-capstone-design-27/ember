@@ -1,0 +1,147 @@
+{
+  "tenant": "photon",
+  "derived_by": "fixtures/photon/derive_expected.py, from the intake envelopes and the readable transcripts",
+  "subgraphs": {
+    "jira": {
+      "nodes": {
+        "WorkItem": 112,
+        "Container": 1,
+        "Message": 29,
+        "Identity": 3,
+        "Person": 3
+      },
+      "relationships": {
+        "Container CONTAINS WorkItem": 112,
+        "Person AUTHORED WorkItem": 112,
+        "Person ASSIGNED_TO WorkItem": 112,
+        "WorkItem RELATES_TO WorkItem": 14,
+        "Person AUTHORED Message": 29,
+        "Message REFERENCES WorkItem": 29,
+        "Identity RESOLVES_TO Person": 3
+      }
+    },
+    "slack": {
+      "nodes": {
+        "Message": 637,
+        "Conversation": 340,
+        "Container": 5,
+        "Identity": 5,
+        "Person": 5
+      },
+      "relationships": {
+        "Container CONTAINS Conversation": 340,
+        "Message PART_OF Conversation": 637,
+        "Message REPLIES_TO Message": 297,
+        "Person AUTHORED Message": 637,
+        "Identity RESOLVES_TO Person": 5
+      }
+    }
+  },
+  "queries": [
+    {
+      "id": "comment-authors",
+      "question": "Who commented on PHO-48?",
+      "source": "jira.md, section PHO-48: the '> **Name** date PT:' comment lines",
+      "cypher": "MATCH (p:Person)-[:AUTHORED]->(:Message)-[:REFERENCES]->(w:WorkItem {group_id: $jira, external_id: $issue}) WHERE p.group_id = $jira RETURN DISTINCT p.name AS person ORDER BY person",
+      "params": {
+        "issue": "PHO-48"
+      },
+      "expect": [
+        {
+          "person": "Daniel Reyes"
+        },
+        {
+          "person": "Ryan Stoffel"
+        }
+      ]
+    },
+    {
+      "id": "thread-messages",
+      "question": "Which messages are in the #photon-bugs thread that starts '0.3.0 is bad. Photon shows up ...', and who sent them?",
+      "source": "slack.md, section #photon-bugs: the parent line and its indented replies",
+      "cypher": "MATCH (m:Message {group_id: $slack})-[:PART_OF]->(c:Conversation {group_id: $slack, external_id: $thread}) MATCH (i:Identity {group_id: $slack})-[:RESOLVES_TO]->(:Person)-[:AUTHORED]->(m) RETURN i.external_id AS sender, m.embed_text AS text ORDER BY m.created_at, m.external_id",
+      "params": {
+        "thread": "C08PHOTONBG:1789482000.000100"
+      },
+      "expect": [
+        {
+          "sender": "U08DREYES01",
+          "text": "0.3.0 is bad. Photon shows up in the Dock, the launcher has a title bar with traffic lights, appearance is stuck on light, the panel moves when clicked, and app icons do not render. Dock screenshot is going on the issue."
+        },
+        {
+          "sender": "U08RSTOFFEL",
+          "text": "Filed as GH-107."
+        }
+      ],
+      "ordered": true
+    },
+    {
+      "id": "issues-linked-to",
+      "question": "Which issues are linked to PHO-19 ('relates to')?",
+      "source": "jira.md: '- relates to' lines of PHO-19 and of the issues naming it",
+      "cypher": "MATCH (a:WorkItem {group_id: $jira})-[:RELATES_TO]-(b:WorkItem {group_id: $jira, external_id: $issue}) RETURN DISTINCT a.external_id AS issue ORDER BY issue",
+      "params": {
+        "issue": "PHO-19"
+      },
+      "expect": [
+        {
+          "issue": "PHO-10"
+        },
+        {
+          "issue": "PHO-12"
+        }
+      ]
+    },
+    {
+      "id": "issue-state",
+      "question": "What are PHO-19's type and status, and how many issues are in each status?",
+      "source": "jira.md: the 'Task, To Do' line of PHO-19, and the status line of every issue",
+      "cypher": "MATCH (w:WorkItem {group_id: $jira}) RETURN w.status AS status, count(*) AS issues, collect(CASE WHEN w.external_id = $issue THEN w.item_type END)[0] AS type_of_issue ORDER BY status",
+      "params": {
+        "issue": "PHO-19"
+      },
+      "expect": [
+        {
+          "status": "Done",
+          "issues": 109,
+          "type_of_issue": null
+        },
+        {
+          "status": "In Progress",
+          "issues": 2,
+          "type_of_issue": null
+        },
+        {
+          "status": "To Do",
+          "issues": 1,
+          "type_of_issue": "Task"
+        }
+      ]
+    },
+    {
+      "id": "subgraph-isolation",
+      "question": "Does anything cross from the Jira subgraph into the Slack one?",
+      "source": "the data: Jira and Slack records are loaded into their own subgraphs, so no edge may join them and each node's source must match its subgraph",
+      "cypher": "MATCH (n) WHERE n.group_id IN [$jira, $slack] WITH n.group_id AS grp, collect(DISTINCT n.source) AS sources, count(*) AS nodes CALL { MATCH (a)-[r]->(b) WHERE a.group_id IN [$jira, $slack] AND a.group_id <> b.group_id RETURN count(r) AS crossing } RETURN grp, sources, nodes, crossing ORDER BY grp",
+      "params": {},
+      "expect": [
+        {
+          "grp": "{tenant}_jira",
+          "sources": [
+            "jira"
+          ],
+          "nodes": 148,
+          "crossing": 0
+        },
+        {
+          "grp": "{tenant}_slack",
+          "sources": [
+            "slack"
+          ],
+          "nodes": 992,
+          "crossing": 0
+        }
+      ]
+    }
+  ]
+}

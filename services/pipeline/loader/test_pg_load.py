@@ -202,6 +202,43 @@ class PgLoadTest(unittest.IsolatedAsyncioTestCase):
         if NEO4J_URI:
             await self.check_neo4j_matches(writer)
 
+    async def test_e2e_check_matches_the_counts_derived_from_the_photon_fixtures(self):
+        """EMBER-86: loader/e2e_check.py against fixtures/photon/expected-graph.json, which is counted from the
+        intake envelopes. Per label and relationship type, where the test above only compares the loader's
+        totals with the seeded rows. With NEO4J_TEST_URI it also runs the sample Cypher queries on Neo4j."""
+        from loader import e2e_check
+
+        expected = e2e_check.load_expected(e2e_check.PHOTON_EXPECTED, TENANT)
+        await self.seed_photon()
+        writer = MemoryWriter()
+        pipeline = await e2e_check.run_pipeline(database_url(), writer, TENANT, reset=False)
+        self.assertEqual(pipeline["unloaded"], 0)
+        result = e2e_check.verify(writer, TENANT, expected)
+        self.assertEqual(result.failures, [])
+        self.assertTrue(all(row.expected is not None for row in result.counts))
+        self.assertEqual({row.group for row in result.counts}, {f"{TENANT}_jira", f"{TENANT}_slack"})
+        self.assertFalse(any(q.ran for q in result.queries), "MemoryWriter has no Cypher; the queries are skipped")
+
+        # With no expected file the same graph is reported, not compared (the real-data fallback)
+        report = e2e_check.verify(writer, TENANT, None)
+        self.assertEqual(report.failures, [])
+        self.assertEqual([r.actual for r in report.counts], [r.actual for r in result.counts])
+        self.assertTrue(all(r.expected is None for r in report.counts))
+
+        if NEO4J_URI:
+            from loader.neo4j_writer import Neo4jWriter
+            from ontology import tenant_subgraphs
+
+            neo4j = Neo4jWriter(NEO4J_URI, os.environ.get("NEO4J_USER", "neo4j"), os.environ["NEO4J_PASSWORD"])
+            try:
+                await e2e_check.run_pipeline(database_url(), neo4j, TENANT, reset=True)
+                result = e2e_check.verify(neo4j, TENANT, expected)
+                self.assertEqual(result.failures, [])
+                self.assertEqual([q.id for q in result.queries if q.ok], [q["id"] for q in expected["queries"]])
+            finally:
+                neo4j.reset(tenant_subgraphs(TENANT))
+                neo4j.close()
+
     async def check_neo4j_matches(self, memory: MemoryWriter) -> None:
         from loader.neo4j_writer import Neo4jWriter
         from ontology import tenant_subgraphs

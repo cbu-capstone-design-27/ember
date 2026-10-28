@@ -2,6 +2,7 @@
 
   python -m loader extract [--once]   source_records -> episodes (EMBER-85; see loader/workers.py)
   python -m loader load [--once]      episodes -> Neo4j
+  python -m loader e2e-check --tenant photon --seed-photon --reset   extract, load, verify (EMBER-86)
 
   python -m loader --tenant brandon-dev --input data/raw/brandon-dev
   python -m loader --tenant brandon-dev --input data/raw/brandon-dev --dry-run   (no Neo4j)
@@ -45,6 +46,10 @@ def main(argv: list[str] | None = None) -> int:
         from .workers import main as worker_main  # needs the database packages; the JSONL loader does not
 
         return worker_main(argv)
+    if argv and argv[0] == "e2e-check":  # EMBER-86: extract + load + verify the graph (loader/e2e_check.py)
+        from .e2e_check import main as check_main
+
+        return check_main(argv[1:])
     parser = argparse.ArgumentParser(prog="loader", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tenant", required=True, help="tenant name, lowercase letters, digits and '-'")
