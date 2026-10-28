@@ -2,7 +2,7 @@
 
 The one listener for every source's webhooks (EMBER-62). It verifies each delivery, stores it as it arrived in Postgres `raw_events`, and answers. It never calls a source API: the per-source enrich workers fetch what a payload lacks. The design is [`docs/ingestion/architecture.md`, "The parent listener (intake)"](../../docs/ingestion/architecture.md#the-parent-listener-intake).
 
-GitHub, Slack and Jira have adapters so far. Adding a source means adding an adapter under `adapters/` and listing it in `intake.py`'s `main`, not a new listener.
+GitHub, Slack, Jira and GitLab have adapters so far. Adding a source means adding an adapter under `adapters/` and listing it in `intake.py`'s `main`, not a new listener.
 
 ## Contract
 
@@ -35,6 +35,7 @@ SIGINT or SIGTERM stops accepting connections and lets requests in flight finish
 | `GITHUB_WEBHOOK_SECRET` | The GitHub App's webhook secret. Required: intake refuses to start without it, so it never stores an unsigned delivery. It also refuses one with leading or trailing whitespace, which no signature would match |
 | `SLACK_SIGNING_SECRET` | The Slack app's signing secret (Basic Information, App Credentials). Optional: without it intake serves GitHub only and `/webhook/slack` is an unknown source (404), so intake runs where the Slack app isn't set up. When set, the same whitespace rule as GitHub's applies. The startup log names the sources served |
 | `JIRA_WEBHOOK_SECRET` | The secret saved on the Jira site's admin webhook. Optional, like Slack's: without it `/webhook/jira` is an unknown source (404). When set, the same whitespace rule applies |
+| `GITLAB_WEBHOOK_SIGNING_TOKEN`, `GITLAB_WEBHOOK_SECRET_TOKEN` | The GitLab webhook's signing token (`whsec_…`, recommended) and legacy secret token. Optional, like Slack's: with neither, `/webhook/gitlab` is an unknown source (404). Set either or both, as on the webhook; every one that is set is checked. A signing token that isn't `whsec_` and base64 stops intake at startup, and the same whitespace rule applies to both |
 | `LISTEN_PORT` | Defaults to `8080`. Not `INTAKE_PORT`, which Kubernetes sets for a Service called `intake` |
 
 ## GitHub adapter
@@ -77,6 +78,18 @@ The app's scopes and events are in `services/slack-ingestion/slack-app-manifest.
 - **`occurred_at`:** the [ordering value](../../docs/ingestion/jira-webhooks.md#ordering-value-ember-63): `issue.fields.updated`, `comment.updated` or `worklog.updated`, then `attachment.created` for `attachment_created`, then the body's `timestamp` (epoch ms). Deletes, links and properties use `timestamp`, since a deleted entity's `updated` is its last edit. One that is unreadable gets `received_at`.
 
 Jira counts any answer but 200 as a failure and retries; intake answers 200 for stored and duplicate deliveries. Register the admin webhook (Jira Administration → System → Webhooks) with the URL `https://ember.tail470a31.ts.net/webhook/jira` and the same secret as `JIRA_WEBHOOK_SECRET`, once intake has it.
+
+## GitLab adapter
+
+[`docs/ingestion/gitlab-webhooks.md`](../../docs/ingestion/gitlab-webhooks.md) is the spec. `enrich:gitlab` (`services/gitlab-ingestion/enrich.py`) reads the rows. The checks are the ones `services/gitlab-ingestion/receiver.py` makes, which stays as a local stub.
+
+- **Verification:** with a signing token, `webhook-signature` must hold a `v1,` HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`, and `webhook-timestamp` must be within 5 minutes. With a secret token, `X-Gitlab-Token` must equal it. Each configured one is checked.
+- **`delivery_id`:** `webhook-id`, else `Idempotency-Key` (the same value), at most 255 characters. GitLab keeps it across retries and a manual Resend. Not `X-Gitlab-Event-UUID`, which a webhook triggered by another webhook shares.
+- **`account_id`:** `<instance host>/<top-level group>`, e.g. `gitlab.com/acme`: the host of `X-Gitlab-Instance` (a URL or a bare hostname) and the first segment of `project.path_with_namespace`, as GitLab writes it. One read token per tenant group, so this is what `make map-tenant SOURCE=gitlab` takes. Without either, the delivery is stored with no account.
+- **`event_name`:** `object_kind`, plus `:<action>` when there is one, e.g. `merge_request:update`, `work_item:close`, `push`. The body decides because `Issue Hook` covers issues and work items. A body without `object_kind` is a 400.
+- **`occurred_at`:** the [ordering value](../../docs/ingestion/gitlab-webhooks.md#ordering-value-ember-63): `object_attributes.updated_at` for merge requests, issues, work items and notes, in either of GitLab's time formats. Pushes, branch deletes, the four approval actions, other kinds and an unreadable time get `received_at`.
+
+GitLab wants a 2xx within 10 seconds and disables a webhook after 4 failures in a row. Intake answers 200 for stored and duplicate deliveries. Register the project or group webhook with the URL `https://ember.tail470a31.ts.net/webhook/gitlab`, the same token as intake's, and the triggers in `RECOMMENDED_WEBHOOK_TRIGGERS` (`services/gitlab-ingestion/receiver.py`), once intake has the token.
 
 ## Run
 

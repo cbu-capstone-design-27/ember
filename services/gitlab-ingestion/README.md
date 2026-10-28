@@ -6,7 +6,7 @@ Jira: EMBER-54 (connector) and EMBER-55 (rate limits), epic EMBER-20. Design: [`
 
 ## Status
 
-- `receiver.py` takes live webhook deliveries. It checks the configured webhook secrets, wraps the raw body, and writes one envelope per delivery to stdout. It does not filter on event, project, or group, holds no API token, and never calls GitLab. GitLab webhooks carry the full object, so nothing needs fetching on the live path.
+- `receiver.py` takes live webhook deliveries. It checks the configured webhook secrets, wraps the raw body, and writes one envelope per delivery to stdout. It does not filter on event, project, or group, holds no API token, and never calls GitLab. GitLab webhooks carry the full object, so nothing needs fetching on the live path. On the cluster, intake's `gitlab` adapter (`services/intake/adapters/gitlab.py`) receives webhooks instead and stores them in `raw_events`; this receiver stays as a local stub.
 - `pull.py` is the backfill and reconciliation. It reads one project through REST API v4 and writes one envelope per REST object.
 - `enrich.py` is `enrich:gitlab` (EMBER-68). It turns GitLab rows in Postgres `raw_events` into `source_records`. See [Enrich worker](#enrich-worker).
 - The receiver, `pull.py` and `enrich.py` run from one Docker image, configured only through environment variables.
