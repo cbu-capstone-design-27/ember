@@ -188,8 +188,32 @@ below were kept: no message text, names or ids.
   - subgraph-isolation: 118 nodes, 0 with the wrong source, 0 crossing edges.
   - deleted-state: 0 deleted, 0 still holding content (the copy had no deletes).
   - comment-authors and issue-references: 0, since Jira isn't present yet.
-- Result: **PASS**. Follow-ups: rerun with Jira once its records reach the cluster. The GitHub (Parallax) run is
-  EMBER-107.
+- Result: **PASS**. Follow-up: rerun with Jira once its records reach the cluster.
+
+#### GitHub: the Parallax repository (EMBER-107)
+
+Run on 2026-10-28 in the same way. It used a one-time, read-only copy of the GitHub `source_records` for tenant
+`ember-development` (the `ryan-stoffel/parallax` deliveries), with the owner's approval. The copy went into a local
+Postgres 18 and `neo4j:5-community`, was deleted after the run, and only counts were kept.
+
+- `source_records`: ref 1703, commit 1686, pull_request 932, release 562, pull_request_review 330, issue_comment 81,
+  label 4, issue 3, repository 2 (5,303 in all).
+- Episodes: 3,034 extracted, 3,034 loaded, 0 unloaded, 0 load failures. Rejected 0, skipped 0. Not extracted, by
+  design, because the schema has no type for them: ref 1703, release 562, label 4.
+- Nodes in `ember-development_github`:
+  - Change 1,857: 171 pull requests plus 1,686 commits, one per object.
+  - Message 410: 80 issue comments plus 330 reviews with text.
+  - Module 110, Identity 5, Person 5, WorkItem 3, Container 1.
+- Relationships: TOUCHES 4,467, CONTAINS 1,857 Change + 110 Module + 3 WorkItem, AUTHORED 1,857 Change + 410
+  Message + 3 WorkItem, REFERENCES 405 Change + 5 WorkItem, REVIEWED 145, RESOLVES_TO 5, RESOLVES 2.
+  - REVIEWED keeps one edge per reviewer and pull request (the latest verdict), so 330 reviews give 145 edges.
+- Schema check: OK. Placeholders: 0.
+- Smoke queries: all 6 pass.
+  - github-changes: 1,857 changes; 1,857 with an author, 145 reviewed, 146 with comments, 1,853 touching a Module.
+  - subgraph-isolation: 2,391 nodes, 0 with the wrong source, 0 crossing edges.
+  - deleted-state: 0 deleted. The 156 deleted refs are among the refs that aren't extracted.
+  - Jira- and Slack-shaped queries: 0, as expected for a GitHub-only copy.
+- Result: **PASS**.
 
 ## Gaps in the ontology and mapping, with suggested tickets
 
