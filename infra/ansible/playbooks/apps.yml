@@ -16,7 +16,7 @@
     webhook_url: "{{ ember_url }}/webhook/github"
     # The A records (type 1) in the public DNS answer, which can list a CNAME before them
     # One per enrich worker on the cluster: Deployment enrich-<source>, which logs "enrich:<source> listening"
-    enrich_sources: [github, slack]
+    enrich_sources: [github, slack, jira]
     public_ips: >-
       {{ (public_dns.content | default('{}') | from_json).Answer | default([])
       | selectattr('type', 'equalto', 1) | map(attribute='data') | list }}

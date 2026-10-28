@@ -25,9 +25,10 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make sync` | Fetch `develop` and apply it now instead of within the next minute |
 | `make apps-diff` | Shows what this checkout's `infrastructure/`, `apps/` and `monitoring/` would change on the cluster. Deploys nothing |
 | `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Also checks each enrich worker logged that it is listening. Deploys nothing |
-| `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret and the Slack app's signing secret in the vault ([The webhook secret](#the-webhook-secret), [The Slack signing secret](#the-slack-signing-secret)). Commit the result |
+| `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret, the Slack app's signing secret and the Jira webhook's secret in the vault ([The webhook secret](#the-webhook-secret), [The Slack signing secret](#the-slack-signing-secret), [The Jira webhook secret](#the-jira-webhook-secret)). Commit the result |
 | `make enrich-github-secret` | Writes `apps/enrich-github/github-app.sops.yaml`, encrypted, from the GitHub App's private key in the vault ([enrich-github](#enrich-github)). Commit the result |
 | `make enrich-slack-secret` | Writes `apps/enrich-slack/slack-bot.sops.yaml`, encrypted, from the Slack app's bot token in the vault ([enrich-slack](#enrich-slack)). Commit the result |
+| `make enrich-jira-secret` | Writes `apps/enrich-jira/jira-api.sops.yaml`, encrypted, from the Atlassian account and API token in the vault ([enrich-jira](#enrich-jira)). Commit the result |
 | `make llm-tunnel-secret` | Temporary (EMBER-49). Writes `apps/llm-tunnel/ssh.sops.yaml` and `model-keys.sops.yaml`, encrypted, from the tunnel key and the Spark's API keys in the vault, and prints the `authorized_keys` line for the Spark ([llm-tunnel](#llm-tunnel)). Commit the result |
 | `make map-tenant SOURCE=… ACCOUNT=… TENANT=…` | Maps a source account to a tenant and hands the deliveries already stored for it to the enrich workers ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
 | `make grafana-secret` | Writes the collector's and the Grafana Operator's Secrets, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud tokens](#the-grafana-cloud-tokens)). Commit the result |
@@ -137,6 +138,18 @@ Slack signs each delivery with the Slack app's signing secret, and intake checks
 
 After a rotation, deliveries are refused with 401 until intake restarts. Slack retries each one three times, the last about five minutes after the first, then drops it.
 
+#### The Jira webhook secret
+
+A Jira admin webhook signs each delivery with the secret saved on it (`X-Hub-Signature`), and intake checks it before serving `/webhook/jira` (`services/intake/README.md`, Jira adapter). Unlike Slack's, we choose the secret. It lives in the vault, `apps/intake/webhooks.sops.yaml`, and the webhook's settings. To set or rotate it:
+
+1. Generate one: `openssl rand -hex 32`.
+2. Keep it in the vault as `vault_jira_webhook_secret`.
+3. `make intake-secret`, which writes all three intake secrets into the same file and needs all three in the vault.
+4. Commit and merge the file, then `kubectl --context homelab -n ember rollout restart deploy/intake`.
+5. On the site (`ember-capstone.atlassian.net`), **Jira Administration → System → Webhooks**: create or edit the webhook with URL `https://ember.tail470a31.ts.net/webhook/jira`, the same secret, no JQL filter, and the events in `services/jira-ingestion/README.md`. Only a Jira admin can.
+
+Between steps 4 and 5 Jira's deliveries are refused with 401. Jira retries each one up to 5 times over roughly an hour; what it drops, reconcile picks up by `updated` (`docs/ingestion/jira-webhooks.md`, Known gaps).
+
 ### enrich-github
 
 `enrich:github` (EMBER-65, `services/github-ingestion`): turns the GitHub rows intake stores in `raw_events` into `source_records`. One replica in namespace `ember` from `apps/enrich-github/`, with no Service, because it serves nothing. It claims rows with `FOR UPDATE SKIP LOCKED`, so a rollout's overlap never enriches a row twice.
@@ -171,6 +184,24 @@ kubectl --context homelab -n ember logs deploy/enrich-slack
 It logs `enrich:slack listening on raw_events` once connected, which `make apps-health` waits for.
 
 To set or rotate the token: copy **OAuth & Permissions → Bot User OAuth Token** (`xoxb-…`) from the Slack app, put it in the vault as `vault_slack_bot_token`, run `make enrich-slack-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-slack`.
+
+### enrich-jira
+
+`enrich:jira` (EMBER-66, `services/jira-ingestion/enrich.py`): turns the Jira rows intake stores in `raw_events` into `source_records`. One replica in namespace `ember` from `apps/enrich-jira/`, with no Service, because it serves nothing. It claims rows with `FOR UPDATE SKIP LOCKED`, as `enrich-github` does.
+
+- **Image.** `deployment.yaml` pins a `develop-<run>-<sha>` tag of `ghcr.io/cbu-capstone-design-27/ember/jira-ingestion` and runs `python3 enrich.py`. The image's default command is `receiver.py`, a stdout-only stub that is never deployed; intake receives Jira's webhooks.
+- **Credentials.** `DATABASE_URL` comes from Secret `postgres-app`. `JIRA_BASE_URL` is `https://ember-capstone.atlassian.net`, the one site it has credentials for: a row from another site fails (per-site credentials come with EMBER-12). Secret `enrich-jira-api` holds `JIRA_EMAIL` and `JIRA_API_TOKEN`, an Atlassian account that can browse the projects, used for the lookups a webhook lacks. Intake never sees the token, and this worker never sees the webhook secret.
+- **Rate limits.** The gates live in Postgres table `rate_limits`, bucket = site, so every worker shares one site's quota.
+- **Tenants.** Intake stores a delivery with `tenant` null until its site is in `installations`. Map it with `make map-tenant SOURCE=jira ACCOUNT=ember-capstone.atlassian.net TENANT=<tenant>` ([Mapping a tenant](#mapping-a-tenant)). The site is the host of the event's `self` URL.
+- **Stopping.** On SIGTERM it stops claiming and finishes the rows in flight, for up to 60 s.
+
+```bash
+kubectl --context homelab -n ember logs deploy/enrich-jira
+```
+
+It logs `enrich:jira listening on raw_events` once connected, which `make apps-health` waits for.
+
+To set or rotate the token: create one at **id.atlassian.com → Security → API tokens** for the account, put the account's email in the vault as `vault_jira_email` and the token as `vault_jira_api_token`, run `make enrich-jira-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-jira`. Revoke the old token once the new pod is listening.
 
 ### llm-tunnel
 

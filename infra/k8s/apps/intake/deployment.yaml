@@ -48,7 +48,7 @@ spec:
       containers:
         - name: intake
           # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
-          image: ghcr.io/cbu-capstone-design-27/ember/intake:develop-194-6b72048
+          image: ghcr.io/cbu-capstone-design-27/ember/intake:develop-229-b3b242d
           env:
             # The pod stays in CreateContainerConfigError until both Secrets exist
             - name: DATABASE_URL
@@ -67,6 +67,12 @@ spec:
                 secretKeyRef:
                   name: intake-webhooks
                   key: SLACK_SIGNING_SECRET
+            # Serves /webhook/jira (services/intake/README.md, Jira adapter)
+            - name: JIRA_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: intake-webhooks
+                  key: JIRA_WEBHOOK_SECRET
             - name: LISTEN_PORT
               value: "8080"
           ports:

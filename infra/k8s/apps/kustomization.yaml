@@ -6,6 +6,7 @@ resources:
   - intake
   - enrich-github
   - enrich-slack
+  - enrich-jira
   - embed
   # TEMPORARY (EMBER-49): SSH tunnel to the Spark's chat model
   - llm-tunnel
