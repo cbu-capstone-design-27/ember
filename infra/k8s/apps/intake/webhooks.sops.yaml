@@ -4,20 +4,21 @@ metadata:
     name: intake-webhooks
     namespace: ember
 stringData:
-    GITHUB_WEBHOOK_SECRET: ENC[AES256_GCM,data:T8nZKD+Nb1ubKiXC0LySkWJkDd0YfXQLb839YVARXYYx/9HckpFsRo143JZ2HsS/yI4gY+0srMuubxeL6Dqnyw==,iv:unRM7pAvt8X/Owwyo3pSVv6xZWAJLVkes1brf+sJFJ0=,tag:prXJzIwf81/t8bWWuRkAJg==,type:str]
-    SLACK_SIGNING_SECRET: ENC[AES256_GCM,data:CdYeIkbdkTk0rv4Rzd8gqNIm8IukgAiGyipgKMHLkTM=,iv:5U3ubuQTRb/d6c06RDmzQuJ/NkRjEwVEe5Bs8Vn424o=,tag:K5rBcYpqormQJIG0VH0mDQ==,type:str]
+    GITHUB_WEBHOOK_SECRET: ENC[AES256_GCM,data:VMKsYuTnx51ASw+pJRelBnTi68TZXA3nbefBI6TLVnp+jMPU8L67k4cH/XLRZNmkyD1at9o9Kb4SpadGrXQd+w==,iv:kH0oeDzJ5/1Zuc/jQ8K1qDrAVHI+6ZadhydJ7jl52qs=,tag:7ufigtsl0cAJlLzqC0tQ7g==,type:str]
+    SLACK_SIGNING_SECRET: ENC[AES256_GCM,data:CVOg9TzgEvWigr5w8j1j/ngss88Sv7it2/KdJ2GRvIQ=,iv:k0n2c5wXdLO2lutGCDqnO5r89IgTOK0y179VgAaixbA=,tag:j87QVui+axV5nNNS4btphw==,type:str]
+    JIRA_WEBHOOK_SECRET: ENC[AES256_GCM,data:HQVw4zMBZ6sHDigMDj7kqePBmpKUgdZK/mymzUcfRNBCnYRzJF2kOrYexRsQnaNiLa8mSC5CuwyxA5jdnwgRjQ==,iv:JnGUyhKCy5mUDbEi2kF4SapImEalH1PZpkofx6RNEH0=,tag:bJRjPLnos51B1X/OzoA05A==,type:str]
 sops:
     age:
         - enc: |
             -----BEGIN AGE ENCRYPTED FILE-----
-            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBmV1hTRFBYT25kNzgwSGJa
-            VllCT1puN2RpODlxVmRXaXpvVGc1UE8vblh3CmQxMG53RVV5d1NveCt2ZUM5R0sw
-            cmZzcU5qbG5GSzFOYVZES3pGUXIzRTAKLS0tIGNOWGZhT2VBQ3lBZFQ4dzRKNlhR
-            UmQ4N0pnWEtnWTB2M2pXSk9jNUl0S1kKG3o4mzc6kRJythp9nRLpe9yGxc9uRSXa
-            +/u/cDZvjr2QG4X5+JjNHwlh1hKQqmhs50xWXiTlstATq4O0MUlcew==
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA5ZkVranNXVmFrbS9vVXpa
+            MFA1aHcxMVYwQzRrdC94VU5udXN1MkFrSnpFCmhWbzlaZUhVRkFKRnVqNGttM203
+            am00ZW9JRlZYbXVzKys3dDNpT2N2ancKLS0tIElnQUV5MDRreS81ZTkvQkJtMUV5
+            Z1V4and1aTR3OWxLR2ora3UvVWxpOGcK18hd70d8bdCZTdwiGeQH4e/8BDLVlyKx
+            zHzdrNI/K4t+7oo2YKtazmf+0s8WrA9XBs+J+KTEHbH5+rbsiHb3fg==
             -----END AGE ENCRYPTED FILE-----
           recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-10-26T17:15:49Z"
-    mac: ENC[AES256_GCM,data:3SK7bzA9V333Xz7nmzy3/U0za5kpZhq9cvipiNnTnC1/OcpoZsvvI0FW1qltYDPF+fqspqwt5HlFHN3r2zswmgnaYjjPQVoPLfL6J5Sa5o9eOwOR1UY/ARSunS5h2Q4tMXVLSs9IV4D0+gU9l6qWF4t+3Vcl3U46J/0PV3ZJaVw=,iv:fn46mI+mzODpVbxzM2Z4NWUKdSbCN/phQ4elIRIuTKw=,tag:nfs8cQXd1qqKmE/oaE3zHw==,type:str]
+    lastmodified: "2026-10-28T16:04:14Z"
+    mac: ENC[AES256_GCM,data:VFtPpKnD/x2a0g00CQa/3ailg04W56LXnmR5oJo3bkK+6xXFBhwZrDa6cq8MVe3W6ztCtVyV9C29NB1UR3rCnAg0pHVLkECu1Bis7g+ud8X6BGlL3dHUnuNTT849OjvSSfl1V2y5SdLY0jo8I3OmI4tyRYVo7r6xL6ZzxUFKQbE=,iv:kHmf8GUGKTmxAHkfRjRvYkJdOYEn33ZtPSoXjKFPULk=,tag:AqrV/85IyeG+UvIEjaHvew==,type:str]
     version: 3.13.3
