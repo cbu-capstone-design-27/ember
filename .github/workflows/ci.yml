@@ -279,6 +279,12 @@ jobs:
           set -euo pipefail
           docker build -f services/gitlab-ingestion/Dockerfile -t ember-gitlab-ingestion:ci .
           docker run --rm --entrypoint python3 ember-gitlab-ingestion:ci pull.py --help > /dev/null
+          # The cluster runs enrich.py from this image (EMBER-83). Without DATABASE_URL it exits 2 after
+          # its imports, so a missing file or library fails here rather than on the cluster.
+          status=0
+          docker run --rm --entrypoint python3 ember-gitlab-ingestion:ci enrich.py 2> "$RUNNER_TEMP/gitlab-enrich.err" || status=$?
+          cat "$RUNNER_TEMP/gitlab-enrich.err"
+          test "$status" -eq 2 && grep -q "Set DATABASE_URL" "$RUNNER_TEMP/gitlab-enrich.err"
           cid=$(docker run -d -p 127.0.0.1:18083:8083 ember-gitlab-ingestion:ci)
           trap 'docker logs "$cid"; docker rm -f "$cid" > /dev/null' EXIT
           curl -fsS --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:18083/health
