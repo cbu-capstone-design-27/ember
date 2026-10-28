@@ -1,10 +1,12 @@
-"""Seed source_records with the Photon synthetic Jira and Slack data, for trying the MCP server locally.
+"""Seed source_records with the Photon synthetic Jira and Slack data, embedded, for trying the MCP server locally.
 
     DATABASE_URL=postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable \
+    EMBEDDING_URL=http://<spark>:8000 [EMBEDDING_API_KEY=...] \
         python3 apps/mcp/seed_photon.py
 
-Rows take the shapes the enrich workers store (`{"payload": ...}`), under tenant "photon".
-Reruns are no-ops: rows conflict on (source, tenant, object_id, version).
+Rows take the shapes the enrich workers store (`{"payload": ...}`), under tenant "photon". Then the
+embed worker (services/embed, EMBER-77) embeds every row that isn't yet, so it needs that service's
+requirements too. Reruns insert nothing: rows conflict on (source, tenant, object_id, version).
 """
 
 from __future__ import annotations
@@ -13,12 +15,16 @@ import asyncio
 import json
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import asyncpg
 
-FIXTURES = Path(__file__).resolve().parents[2] / "services" / "pipeline" / "fixtures" / "photon"
+REPO = Path(__file__).resolve().parents[2]
+FIXTURES = REPO / "services" / "pipeline" / "fixtures" / "photon"
+sys.path.insert(0, str(REPO / "services" / "embed"))
+import embed  # noqa: E402
 COMMENT_ISSUE = re.compile(r"/issue/(\d+)/comment/")
 
 
@@ -56,7 +62,21 @@ async def main() -> None:
         "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record)"
         " values ($1, 'photon', $2, $3, $4, $5, $6) on conflict do nothing",
         [(*row[:5], json.dumps({"payload": row[5]})) for row in rows()])
-    print(await db.fetch("select source, kind, count(*) from source_records group by 1, 2 order by 1, 2"))
+    await db.close()
+
+    client = embed.EmbeddingClient(os.environ["EMBEDDING_URL"], os.environ.get("EMBEDDING_API_KEY") or None,
+                                   os.environ.get("EMBEDDING_MODEL") or embed.DEFAULT_MODEL)
+    worker = embed.Worker(os.environ["DATABASE_URL"], client)
+    try:
+        await worker.check_identity()
+        while await worker.embed_batch():
+            pass
+    finally:
+        await worker.engine.dispose()
+
+    db = await asyncpg.connect(os.environ["DATABASE_URL"])
+    print(await db.fetch("select source, kind, count(*), count(embedding) as embedded"
+                         " from source_records group by 1, 2 order by 1, 2"))
     await db.close()
 
 

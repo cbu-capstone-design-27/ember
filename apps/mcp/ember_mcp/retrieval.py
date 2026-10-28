@@ -1,22 +1,37 @@
 """Read-only retrieval over source_records (EMBER-79).
 
-`search` is Postgres full-text search for now. EMBER-78 replaces its body with pgvector retrieval
-and keeps the signature, so the MCP layer in server.py doesn't change.
+`search` is semantic (EMBER-78): the question is embedded by the embedding service the embed worker
+uses (ADR 0001, services/embedding/README.md) and matched against source_records.embedding.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import time
+import urllib.error
+import urllib.request
 from typing import TypedDict
 
 import asyncpg
 
 MAX_RECORD_CHARS = 50_000   # get_record trims a record larger than this
+SNIPPET_CHARS = 300         # a hit's snippet is the start of its embed_text
+
+# services/embedding/README.md, Model identity. Queries get the template, documents never do.
+DIMENSION = 1024
+DEFAULT_MODEL = "qwen3-embedding-0.6b"
+TASK = "Given a question about a software project, retrieve relevant passages that answer it"
+ATTEMPTS = 3                # 429, 5xx and network errors are retried after 1 s, then 2 s
 
 
 class DatabaseError(Exception):
     """DATABASE_URL is missing or Postgres can't be reached. The message is safe to show the agent."""
+
+
+class EmbeddingError(Exception):
+    """The embedding service isn't configured, can't be reached, or returned the wrong vector. Safe to show the agent."""
 
 
 class Hit(TypedDict):
@@ -33,26 +48,6 @@ class Hit(TypedDict):
 
 # The payload object each enrich worker stores in record.payload (GitHub, Jira, GitLab, Slack)
 P = "(record->'payload')"
-
-
-def plain(path: str) -> str:
-    """SQL for the text at path in the payload. Jira's REST v3 sends rich text as an ADF document; its text nodes are joined."""
-    value = f"{P}#>'{{{path}}}'"
-    return (f"case when jsonb_typeof({value}) = 'object' then "
-            f"(select string_agg(t #>> '{{}}', ' ') from jsonb_path_query({value}, 'strict $.**.text') t) "
-            f"else {value} #>> '{{}}' end")
-
-
-# Searchable text: titles, bodies, descriptions, message text and commit messages. concat_ws skips nulls.
-TEXT = f"""coalesce(nullif(concat_ws(' ',
-    {P}#>>'{{pull_request,title}}', {P}#>>'{{pull_request,body}}',
-    {P}#>>'{{issue,key}}', {P}#>>'{{issue,title}}', {P}#>>'{{issue,body}}',
-    {P}#>>'{{issue,fields,summary}}', {plain('issue,fields,description')},
-    {plain('comment,body')}, {P}#>>'{{review,body}}',
-    {P}#>>'{{object_attributes,title}}', {P}#>>'{{object_attributes,description}}', {P}#>>'{{object_attributes,note}}',
-    {P}->>'message', {P}#>>'{{commit,message}}',
-    {P}->>'text', {P}#>>'{{event,text}}', {P}#>>'{{message,text}}'
-), ''), record::text)"""
 
 TITLE = f"""left(coalesce(
     {P}#>>'{{pull_request,title}}',
@@ -73,29 +68,20 @@ URL = f"""coalesce(
     case when kind = 'commit' then {P}->>'url' end
 )"""
 
-# The newest version of each object. SEARCH then drops it if that version is a delete
-NEWEST = """select distinct on (source, tenant, object_id) *
-    from source_records
-    where $3::text[] is null or source = any($3)
-    order by source, tenant, object_id, occurred_at desc, id desc"""
-
-# ponytail: ranks every row per query with no index. Fine for a prototype; EMBER-78 replaces it
+# Nearest embedded rows by cosine distance, ordered on the HNSW index. A row counts only while it is
+# its object's newest version and that version isn't a delete. Rows the embed worker hasn't reached are skipped.
 SEARCH = f"""
-with newest as ({NEWEST}), ranked as (
-    select newest.*, body, ts_rank(tsv, q) as score, q
-    from newest
-    cross join lateral (select {TEXT} as body) b
-    cross join lateral (select to_tsvector('english', body) as tsv) v
-    cross join websearch_to_tsquery('english', $1) as q
-    where tsv @@ q and not (record ? 'tombstone' or record ? 'deleted')
-    order by score desc, occurred_at desc
-    limit $2
-)
 select source, kind, object_id, version, occurred_at, {TITLE} as title,
-       ts_headline('english', body, q, 'StartSel=**, StopSel=**, MaxFragments=2, MaxWords=30, MinWords=10') as snippet,
-       {URL} as url, score
-from ranked
-order by score desc, occurred_at desc
+       left(embed_text, {SNIPPET_CHARS}) as snippet, {URL} as url, 1 - (embedding <=> $1::text::vector) as score
+from source_records r
+where embedding is not null
+  and ($3::text[] is null or source = any($3))
+  and not (record ? 'tombstone' or record ? 'deleted')
+  and not exists (select 1 from source_records n
+                  where (n.source, n.tenant, n.object_id) = (r.source, r.tenant, r.object_id)
+                    and (n.occurred_at, n.id) > (r.occurred_at, r.id))
+order by embedding <=> $1::text::vector
+limit $2
 """
 
 
@@ -110,11 +96,45 @@ async def connect() -> asyncpg.Connection:
         raise DatabaseError(f"Can't reach Ember's Postgres: {e}") from e
 
 
+def embed_query(question: str) -> list[float]:
+    """The question's vector, embedded with ADR 0001's query template. EMBEDDING_API_KEY is sent as a
+    bearer token only when set. Blocking, standard library only."""
+    url, key = os.environ.get("EMBEDDING_URL"), os.environ.get("EMBEDDING_API_KEY")
+    if not url:
+        raise EmbeddingError("EMBEDDING_URL is not set. Point it at Ember's embedding service.")
+    body = json.dumps({"model": os.environ.get("EMBEDDING_MODEL") or DEFAULT_MODEL,
+                       "input": [f"Instruct: {TASK}\nQuery: {question}"]}).encode()
+    headers = {"Content-Type": "application/json"} | ({"Authorization": f"Bearer {key}"} if key else {})
+    for attempt in range(ATTEMPTS):
+        request = urllib.request.Request(url.rstrip("/") + "/v1/embeddings", data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                vector = json.load(response)["data"][0]["embedding"]
+            break
+        except urllib.error.HTTPError as e:
+            e.close()
+            if (e.code != 429 and e.code < 500) or attempt == ATTEMPTS - 1:
+                raise EmbeddingError(f"The embedding service answered {e.code}: {e.reason}") from e
+        except (urllib.error.URLError, OSError) as e:
+            if attempt == ATTEMPTS - 1:
+                raise EmbeddingError(f"Can't reach the embedding service: {e}") from e
+        except (ValueError, KeyError, IndexError, TypeError) as e:
+            raise EmbeddingError(f"The embedding service sent an unexpected response: {e!r}") from e
+        time.sleep(2**attempt)
+    if len(vector) != DIMENSION:
+        raise EmbeddingError(f"The embedding service returned {len(vector)} dimensions, "
+                             f"source_records.embedding is vector({DIMENSION}) (ADR 0001)")
+    return vector
+
+
 async def search(question: str, k: int = 8, sources: list[str] | None = None) -> list[Hit]:
-    """The k source_records that best match question, newest version per object, best first."""
+    """The k embedded source_records nearest to question in meaning, newest version per object, best first."""
+    vector = await asyncio.to_thread(embed_query, question)
     conn = await connect()
     try:
-        rows = await conn.fetch(SEARCH, question, k, sources)
+        # Keep scanning the index past rows the filters drop, so k hits come back when k exist
+        await conn.execute("set hnsw.iterative_scan = strict_order")
+        rows = await conn.fetch(SEARCH, "[" + ",".join(map(str, vector)) + "]", k, sources)
     finally:
         await conn.close()
     return [Hit(**{**dict(row), "occurred_at": row["occurred_at"].isoformat()}) for row in rows]

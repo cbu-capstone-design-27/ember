@@ -24,24 +24,24 @@ async def search(question: str, k: int = 8, sources: list[str] | None = None) ->
     comments, commits and chat messages that match a question. Use it to find why something was built,
     who discussed it, or which ticket, PR or thread covers a topic.
 
-    Matching is full-text (English stemming, websearch syntax: "quoted phrase", -exclude, or).
-    Every word must appear in a hit, so pass a few key words, not a sentence, and retry with
-    fewer words or "or" when results look thin.
+    Matching is by meaning (vector search), so ask a natural-language question; hits don't need to
+    share its words. Only records the embed worker has processed are searchable, so very recent
+    activity may be missing.
 
     Args:
-        question: The words to search for.
+        question: What you want to know, as a question or description.
         k: How many hits to return, best first (1 to 50).
         sources: Only search these sources, from "github", "jira", "slack", "gitlab". Omit for all.
 
-    Each hit has source, kind, object_id, version, occurred_at, title, snippet (matches in **bold**),
-    url (link to the original, when known) and score. Pass a hit's source and object_id to get_record
-    to read it in full.
+    Each hit has source, kind, object_id, version, occurred_at, title, snippet (the start of the
+    text that was embedded), url (link to the original, when known) and score (cosine similarity,
+    higher is closer). Pass a hit's source and object_id to get_record to read it in full.
     """
     if not 1 <= k <= 50:
         raise ToolError("k must be between 1 and 50")
     try:
         return await retrieval.search(question, k, sources)
-    except retrieval.DatabaseError as e:
+    except (retrieval.DatabaseError, retrieval.EmbeddingError) as e:
         raise ToolError(str(e)) from e
 
 
