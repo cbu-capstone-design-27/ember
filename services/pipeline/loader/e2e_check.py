@@ -16,7 +16,9 @@ One run does this, in order:
 The expected file: --expected FILE, or fixtures/photon/expected-graph.json for tenant photon, which
 fixtures/photon/derive_expected.py derives from the fixtures alone. With no expected file (your own
 tenant's data) the check reports the counts, the schema-check mismatches and what extract left behind, and
-passes when there are no mismatches. No sample queries run then: they need the answers.
+passes when there are no mismatches. Five smoke queries run instead of the sample ones: same shapes, they print
+only counts and pass or fail. The output then holds no message text, names, keys or ids (worker logs are off
+unless --verbose).
 
 --memory loads into an in-memory graph instead of Neo4j: counts and the schema check only, no queries.
 
@@ -71,9 +73,13 @@ class QueryResult:
     expected: list
     actual: list | None  # None: not run
     note: str = ""
+    smoke: bool = False  # no known answer: `actual` holds counts only and smoke_ok is the verdict
+    smoke_ok: bool = False
 
     @property
     def ok(self) -> bool:
+        if self.smoke:
+            return self.actual is not None and self.smoke_ok
         return self.actual is not None and self.actual == self.expected
 
     @property
@@ -94,7 +100,8 @@ class Result:
     def failures(self) -> list[str]:
         out = [f"{row.group}: {row.what}: expected {row.expected}, got {row.actual}" for row in self.counts if not row.ok]
         out += [f"{group}: schema check: {p}" for group, ps in self.problems.items() for p in ps]
-        out += [f"query {q.id}: expected {q.expected}, got {q.actual}" for q in self.queries if q.ran and not q.ok]
+        out += [f"query {q.id}: smoke check failed" if q.smoke else f"query {q.id}: expected {q.expected}, got {q.actual}"
+                for q in self.queries if q.ran and not q.ok]
         if self.pipeline.get("unloaded"):
             out.append(f"{self.pipeline['unloaded']} episodes of {self.tenant} are still unloaded")
         if self.pipeline.get("rejected"):
@@ -125,7 +132,9 @@ class Result:
         for q in self.queries:
             status = "ok" if q.ok else ("not run: " + q.note if not q.ran else "MISMATCH")
             lines.append(f"query {q.id}: {status}  ({q.question})")
-            if q.ran and not q.ok:
+            if q.smoke and q.ran:
+                lines.append("  counts " + json.dumps(q.actual[0]))
+            elif q.ran and not q.ok:
                 lines.append(f"  expected {json.dumps(q.expected)}")
                 lines.append(f"  actual   {json.dumps(q.actual)}")
         lines.append("")
@@ -139,8 +148,8 @@ class Result:
             "counts": [{"subgraph": r.group, "what": r.what, "expected": r.expected, "actual": r.actual, "ok": r.ok}
                        for r in self.counts],
             "schema_problems": self.problems,
-            "queries": [{"id": q.id, "question": q.question, "expected": q.expected, "actual": q.actual,
-                         "ok": q.ok, "note": q.note} for q in self.queries],
+            "queries": [{"id": q.id, "question": q.question, "smoke": q.smoke, "actual": q.actual, "ok": q.ok,
+                         "note": q.note, **({} if q.smoke else {"expected": q.expected})} for q in self.queries],
         }
 
 
@@ -195,6 +204,56 @@ def run_queries(writer, tenant: str, specs: list[dict]) -> list[QueryResult]:
         ordered = bool(spec.get("ordered"))
         actual, expected = _normal_rows(rows, ordered), _normal_rows(expected, ordered)
         results.append(QueryResult(spec["id"], spec["question"], expected, actual))
+    return results
+
+
+# The five query shapes as smoke checks for data without known answers (real data). Each returns only
+# counts, so nothing a person wrote can reach the output. `ok` judges the one row of numbers.
+SMOKE_QUERIES = [
+    {"id": "comment-authors", "question": "who commented on an issue (comments with an author and an issue)",
+     "cypher": "MATCH (p:Person {group_id: $jira})-[:AUTHORED]->(m:Message)-[:REFERENCES]->(w:WorkItem {group_id: $jira}) "
+               "RETURN count(DISTINCT w) AS issues_with_comments, count(DISTINCT p) AS commenters, count(DISTINCT m) AS comments",
+     "ok": lambda r: r["comments"] >= r["issues_with_comments"] and (r["comments"] == 0 or r["commenters"] >= 1)},
+    {"id": "thread-messages", "question": "messages in a Slack thread, with their senders",
+     "cypher": "MATCH (m:Message {group_id: $slack})-[:PART_OF]->(c:Conversation {group_id: $slack}) "
+               "WITH c, count(m) AS n "
+               "WITH count(c) AS threads, coalesce(max(n), 0) AS largest_thread, coalesce(sum(n), 0) AS messages "
+               "RETURN threads, largest_thread, messages, "
+               "count { MATCH (:Identity {group_id: $slack})-[:RESOLVES_TO]->(:Person)-[:AUTHORED]->(x:Message)-[:PART_OF]->(:Conversation) } AS messages_with_sender",
+     "ok": lambda r: r["threads"] == 0 or (r["largest_thread"] >= 1 and r["messages"] >= r["threads"]
+                                          and r["messages_with_sender"] <= r["messages"])},
+    {"id": "issue-references", "question": "issues linked to other issues",
+     "cypher": "MATCH (w:WorkItem {group_id: $jira}) "
+               "WITH w, count { (w)-[:RELATES_TO]-(:WorkItem) } AS links "
+               "RETURN count(w) AS issues, sum(CASE WHEN links > 0 THEN 1 ELSE 0 END) AS linked_issues, "
+               "sum(CASE WHEN w.placeholder = true THEN 1 ELSE 0 END) AS placeholders",
+     "ok": lambda r: r["linked_issues"] <= r["issues"] and r["placeholders"] <= r["issues"]},
+    {"id": "deleted-state", "question": "deleted items keep only their keys: none still holds content",
+     "cypher": "MATCH (n) WHERE n.group_id IN [$jira, $slack] AND n.deleted = true "
+               "RETURN count(n) AS deleted, sum(CASE WHEN n.embed_text IS NOT NULL OR n.name IS NOT NULL OR n.summary IS NOT NULL "
+               "OR n.description IS NOT NULL OR n.embedding IS NOT NULL THEN 1 ELSE 0 END) AS still_holding_content",
+     "ok": lambda r: r["still_holding_content"] == 0},
+    {"id": "subgraph-isolation", "question": "no edge crosses subgraphs and every node's source matches its subgraph",
+     "cypher": "MATCH (n) WHERE n.group_id IN [$jira, $slack] "
+               "WITH count(n) AS nodes, sum(CASE WHEN (n.group_id = $jira AND n.source <> 'jira') "
+               "OR (n.group_id = $slack AND n.source <> 'slack') THEN 1 ELSE 0 END) AS wrong_source "
+               "CALL { MATCH (a)-[r]->(b) WHERE a.group_id IN [$jira, $slack] AND a.group_id <> b.group_id RETURN count(r) AS crossing } "
+               "RETURN nodes, wrong_source, crossing",
+     "ok": lambda r: r["wrong_source"] == 0 and r["crossing"] == 0},
+]
+
+
+def run_smoke_queries(writer, tenant: str) -> list[QueryResult]:
+    """Real-data mode: run the five shapes, report only the numbers they return and pass or fail."""
+    results = []
+    for spec in SMOKE_QUERIES:
+        if not hasattr(writer, "_run"):
+            results.append(QueryResult(spec["id"], spec["question"], [], None, "needs Neo4j (not --memory)", smoke=True))
+            continue
+        rows = writer._run(spec["cypher"], jira=f"{tenant}_jira", slack=f"{tenant}_slack")
+        row = {k: (v or 0) for k, v in (rows[0] if rows else {}).items()}
+        results.append(QueryResult(spec["id"], spec["question"], [], [row], smoke=True,
+                                   smoke_ok=bool(row) and bool(spec["ok"](row))))
     return results
 
 
@@ -255,8 +314,11 @@ async def run_pipeline(database_url: str, writer, tenant: str, reset: bool) -> d
                  "extracted_now": extract.counts["extracted"], "loaded_now": load.counts["loaded"],
                  "rejected": extract.counts["rejected"], "skipped": extract.counts["skipped"],
                  "load_failed": load.counts["failed"]})
-    info.update({k.replace("not_extracted:", "not extracted "): v for k, v in extract.counts.items()
-                 if k.startswith("not_extracted:")})
+    # By record kind, as counts only: never the records, their ids or the reasons
+    for key, n in extract.counts.items():
+        parts = key.split(":")
+        if len(parts) == 3 and parts[0] in ("rejected", "skipped", "not_extracted"):
+            info[f"{parts[0].replace('_', ' ')} {parts[1]}/{parts[2]}"] = n
     return info
 
 
@@ -273,6 +335,8 @@ def verify(writer, tenant: str, expected: dict | None) -> Result:
         result.problems[group] = check_graph(facts)
     if expected:
         result.queries = run_queries(writer, tenant, expected.get("queries", []))
+    else:
+        result.queries = run_smoke_queries(writer, tenant)
     return result
 
 
@@ -287,11 +351,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed-photon", action="store_true", help="first put the photon fixtures into source_records (tenant photon)")
     parser.add_argument("--reset", action="store_true", help="delete the tenant's subgraphs and reload every episode first")
     parser.add_argument("--memory", action="store_true", help="load into memory, not Neo4j: counts and schema check only")
+    parser.add_argument("--verbose", action="store_true",
+                        help="show the workers' log lines (record ids and rejection reasons: may quote real data)")
     parser.add_argument("--json", type=Path, help="also write the result here as JSON")
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.WARNING)
+    # The workers log record ids and rejection reasons, which can quote the data: silent unless --verbose
+    logging.basicConfig(level=logging.WARNING if args.verbose else logging.CRITICAL)
     for name in ("neo4j", "neo4j.notifications"):
-        logging.getLogger(name).setLevel(logging.ERROR)
+        logging.getLogger(name).setLevel(logging.ERROR if args.verbose else logging.CRITICAL)
 
     try:
         if not args.database_url:

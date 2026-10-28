@@ -110,6 +110,39 @@ class QueryTest(unittest.TestCase):
         [result] = e2e_check.run_queries(FakeGraph([{"grp": "acme_jira"}]), "acme", [spec])
         self.assertTrue(result.ok)
 
+    def test_smoke_queries_report_only_numbers_and_judge_them(self):
+        """Real-data mode: five shapes, no known answers; a row of counts passes or fails, text never shows."""
+        rows = [{"issues_with_comments": 2, "commenters": 1, "comments": 3},
+                {"threads": 2, "largest_thread": 3, "messages": 4, "messages_with_sender": 4},
+                {"issues": 5, "linked_issues": 2, "placeholders": 0},
+                {"deleted": 1, "still_holding_content": 0},
+                {"nodes": 9, "wrong_source": 0, "crossing": 0}]
+
+        class InOrder:
+            def __init__(self, rows):
+                self.rows = list(rows)
+
+            def _run(self, cypher, **params):
+                return [self.rows.pop(0)]
+
+        self.assertEqual(len(e2e_check.SMOKE_QUERIES), 5)
+        results = e2e_check.run_smoke_queries(InOrder(rows), "t")
+        self.assertTrue(all(r.ok for r in results), [r.id for r in results if not r.ok])
+        results = e2e_check.run_smoke_queries(InOrder(rows[:4] + [dict(rows[4], crossing=1)]), "t")
+        self.assertEqual([r.id for r in results if not r.ok], ["subgraph-isolation"])
+        result = e2e_check.Result("t", queries=results)
+        self.assertIn("query subgraph-isolation: smoke check failed", result.failures)
+        self.assertNotIn("expected", json.dumps(result.to_json()["queries"][0]))
+
+    def test_the_report_of_a_tenant_without_an_expected_file_has_no_message_text(self):
+        writer = MemoryWriter()
+        writer.nodes[("Message", "u1")] = {"group_id": "t_slack", "uuid": "u1", "source": "slack", "kind": "message",
+                                           "external_id": "C1:1", "embed_text": "SECRET WORDS", "name": "Some Person"}
+        text = e2e_check.verify(writer, "t", None).render()
+        self.assertNotIn("SECRET", text)
+        self.assertNotIn("Some Person", text)
+        self.assertNotIn("C1:1", text)
+
     def test_a_memory_graph_skips_the_queries(self):
         [result] = e2e_check.run_queries(MemoryWriter(), "t", [self.spec])
         self.assertFalse(result.ran)

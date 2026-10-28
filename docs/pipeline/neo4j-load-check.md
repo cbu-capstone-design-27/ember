@@ -1,0 +1,168 @@
+# Postgres to Neo4j load check (EMBER-86)
+
+Proves that source data in Postgres reaches Neo4j intact through `python -m loader extract` then `load`
+(EMBER-85), and that the graph answers questions the way the source does. One command does it:
+
+    python -m loader e2e-check --tenant <tenant> [--seed-photon] [--reset] [--memory] [--json FILE] [--verbose]
+
+Code: `services/pipeline/loader/e2e_check.py`. Expected values for the photon data:
+`services/pipeline/fixtures/photon/expected-graph.json`, written by `fixtures/photon/derive_expected.py`.
+
+## What one run does
+
+1. `--seed-photon` puts the photon Jira and Slack fixtures into `source_records` (what
+   `apps/mcp/seed_photon.py --no-embed` does; tenant `photon`).
+2. `--reset` deletes the tenant's subgraphs in Neo4j and marks its episodes unloaded, so everything loads again.
+3. Runs the extract worker and the load worker until nothing is waiting (the same code as `extract --once`, `load --once`).
+4. Reads the graph back. Per subgraph it lists every label and every (source label, relationship type, target
+   label) with its count, runs the schema check (`loader/check.py`), and runs the sample queries.
+
+Exit 0 when everything matched. 1 on any count, query or schema mismatch, any episode left unloaded, or any record
+extract rejected. 2 when the run could not start (no `DATABASE_URL`, no `NEO4J_PASSWORD`, unreadable expected file).
+
+## Run it on the photon data
+
+Needs a migrated Postgres (as `apps/mcp/README.md`; CI's `Postgres migrations match the ingestion doc` step shows the
+container and dbmate) and a Neo4j. From `services/pipeline`:
+
+    export DATABASE_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable'
+    export NEO4J_URI=bolt://127.0.0.1:7687 NEO4J_PASSWORD=...
+    python -m loader e2e-check --tenant photon --seed-photon --reset
+
+`--memory` loads into an in-memory graph instead of Neo4j: counts and the schema check only, no queries.
+
+## Expected values come from the fixtures, not the loader
+
+`derive_expected.py` is stdlib only and imports nothing from the loader. It counts the intake envelopes
+(`jira-intake.jsonl`, `slack-intake.jsonl`) by the graph rules in `docs/graph-schema.md`, and takes each sample
+query's answer from the readable transcripts (`jira.md`, `slack.md`). `test_e2e_check.py` fails if the committed
+`expected-graph.json` differs from what it derives, and checks its totals against the fixture README
+(112 issues, 29 comments, 637 messages, 5 channels). What one record becomes:
+
+- Jira issue: a WorkItem, its project's Container (CONTAINS), the creator and assignee as Identity + Person
+  (RESOLVES_TO) with AUTHORED and ASSIGNED_TO, and a RELATES_TO WorkItem edge per issue link (a link shown on both
+  issues is one edge).
+- Jira comment: a Message, REFERENCES to its issue, its author as Identity + Person with AUTHORED.
+- Slack message: a Message, its thread's Conversation (the `thread_ts`, or its own `ts` when it starts one), the
+  channel's Container, CONTAINS (channel to thread), PART_OF (message to thread), REPLIES_TO (reply to the thread's
+  first message), the sender as Identity + Person with AUTHORED.
+
+## Photon result (real Neo4j 5 community, Postgres 18 with pgvector)
+
+Extract: 778 episodes from 778 source_records (jira issue 112, jira comment 29, slack message 637); 0 rejected,
+0 skipped, 0 unloaded, 0 load failures.
+
+| Subgraph | Item | Expected | Actual |
+| --- | --- | ---: | ---: |
+| photon_jira | node WorkItem | 112 | 112 |
+| photon_jira | node Container | 1 | 1 |
+| photon_jira | node Message | 29 | 29 |
+| photon_jira | node Identity | 3 | 3 |
+| photon_jira | node Person | 3 | 3 |
+| photon_jira | Container CONTAINS WorkItem | 112 | 112 |
+| photon_jira | Person AUTHORED WorkItem | 112 | 112 |
+| photon_jira | Person ASSIGNED_TO WorkItem | 112 | 112 |
+| photon_jira | WorkItem RELATES_TO WorkItem | 14 | 14 |
+| photon_jira | Person AUTHORED Message | 29 | 29 |
+| photon_jira | Message REFERENCES WorkItem | 29 | 29 |
+| photon_jira | Identity RESOLVES_TO Person | 3 | 3 |
+| photon_slack | node Message | 637 | 637 |
+| photon_slack | node Conversation | 340 | 340 |
+| photon_slack | node Container | 5 | 5 |
+| photon_slack | node Identity | 5 | 5 |
+| photon_slack | node Person | 5 | 5 |
+| photon_slack | Container CONTAINS Conversation | 340 | 340 |
+| photon_slack | Message PART_OF Conversation | 637 | 637 |
+| photon_slack | Message REPLIES_TO Message | 297 | 297 |
+| photon_slack | Person AUTHORED Message | 637 | 637 |
+| photon_slack | Identity RESOLVES_TO Person | 5 | 5 |
+
+Both subgraphs pass the schema check with no mismatches. Every row matches; there are no labels or relationship types
+in the graph that the expected file lacks (a row is added for those too, with expected 0).
+
+## The five sample queries
+
+Parameters: `$jira` = `photon_jira`, `$slack` = `photon_slack`. The Cypher is in `expected-graph.json`
+(`queries[].cypher`); the answers are read from the transcripts. All five returned the expected rows.
+
+| # | Question | Source of the answer | Result |
+| --- | --- | --- | --- |
+| 1 | Who commented on PHO-48? | `jira.md`, PHO-48's comment lines | Daniel Reyes, Ryan Stoffel |
+| 2 | Which messages are in the #photon-bugs thread that starts "0.3.0 is bad. Photon shows up ...", and who sent them? | `slack.md`, #photon-bugs parent line and indented replies | In order: U08DREYES01 "0.3.0 is bad. ..." then U08RSTOFFEL "Filed as GH-107." |
+| 3 | Which issues are linked to PHO-19 ("relates to")? | `jira.md`, "relates to" lines of PHO-19 and of issues naming it | PHO-10, PHO-12 |
+| 4 | What are PHO-19's type and status, and how many issues are in each status? | `jira.md`, status line of every issue | PHO-19 is a Task in To Do; Done 109, In Progress 2, To Do 1 |
+| 5 | Does anything cross from the Jira subgraph into the Slack one? | the data (each source loaded alone) | photon_jira: 148 nodes, source `jira` only, 0 crossing edges; photon_slack: 992 nodes, source `slack` only, 0 crossing |
+
+The photon data has no deleted or edited Jira issue or Slack message (no `message_changed`, `message_deleted`, no
+edited subtype), so no transcript says what a deleted or edited item looks like. Query 4 covers an item's state;
+the deleted and edited cases are covered by `loader/test_pg_load.py` and `test_extract.py` (EMBER-85) and, on real
+data, by the `deleted-state` smoke query below.
+
+## Real data (any populated tenant)
+
+For a Postgres that already holds `source_records` (no seeding), give the tenant:
+
+    python -m loader e2e-check --tenant ember-development
+
+Run it from `services/pipeline` with `DATABASE_URL`, `NEO4J_URI` and `NEO4J_PASSWORD` set to the local Postgres and
+Neo4j. Add nothing else: with no expected file (only the tenant `photon` has one by default; `--expected FILE` gives
+another) it runs extract and load on whatever is waiting, then reports:
+
+- per label and per relationship type counts for each of the tenant's subgraphs (`<tenant>_jira`, `<tenant>_slack`,
+  `<tenant>_github`), reported, not compared;
+- the schema-check result (counts of mismatches by kind, such as unknown labels or missing constraints);
+- `source_records` counts by source and kind, episodes, unloaded, and `rejected`, `skipped` and `not extracted`
+  counts by `source/kind`;
+- five smoke queries, the same five shapes as above with no photon-specific answer: comment authors, thread
+  messages, issue references, deleted-item state and subgraph isolation. Each prints only a row of counts and passes
+  or fails on a rule (for example `crossing = 0`, `still_holding_content = 0`).
+
+The output holds no message text, ticket text, names, keys or ids: counts, kinds and pass/fail only. The workers'
+own log lines (record ids, rejection reasons) are silenced unless `--verbose`. `--json FILE` writes the same
+content. It never resets unless `--reset` is given. Extract and load are not limited to the tenant: they take every
+tenant's waiting rows in that Postgres.
+
+Exit 0 pass, 1 mismatch or leftovers, 2 could not start.
+
+### Real data (ember-development): results
+
+To be filled by the Lead after the run.
+
+- Date, Postgres and Neo4j used: `<fill>`
+- `source_records` by source/kind: `<fill>`
+- Episodes extracted / loaded / unloaded: `<fill>`
+- Rejected / skipped / not extracted by kind: `<fill>`
+- Nodes per label (jira, slack): `<fill>`
+- Relationships per type (jira, slack): `<fill>`
+- Schema check: `<fill>`
+- Smoke queries (comment-authors, thread-messages, issue-references, deleted-state, subgraph-isolation): `<fill>`
+- Result and follow-ups: `<fill>`
+
+## Gaps in the ontology and mapping, with suggested tickets
+
+Found by comparing what the photon fixtures carry with what lands in the graph.
+
+1. **No epic-to-child link.** 104 of the 112 photon issues have a `parent` (their epic), and the graph has no edge
+   for it: the epic is a WorkItem with nothing under it. The ontology has no WorkItem-to-WorkItem hierarchy edge
+   (`RELATES_TO` is the only one). Suggested ticket: add a hierarchy edge (for example `PART_OF` WorkItem to
+   WorkItem, or a new `CHILD_OF`) to `ontology/edges.py`, `schema.cypher` and the Jira mapper, plus the epic's
+   `item_type` handling. Needs an ontology decision first.
+2. **Jira remote links are dropped.** 179 remote links point from issues to GitHub issues and pull requests (`GH-n`),
+   and Slack text says "Filed as GH-107". Neither becomes an edge, so a Jira issue, its GitHub issue and the Slack
+   thread are never connected. Suggested ticket: cross-source reference edges (REFERENCES to a GitHub WorkItem by
+   key), which needs the GitHub subgraph and the cross-subgraph rule in `docs/graph-schema.md` settled.
+3. **Same person across sources is three Person nodes.** The photon people share an email across Slack and Jira,
+   but each subgraph gets its own Person (Slack 5, Jira 3), by design of one subgraph per source. Suggested ticket:
+   decide where identity resolution to one Person lives (a cross-subgraph SAME_AS, or a later merge stage).
+4. **Slack users and channels never reach the graph in the photon load.** `seed_photon.py` stores only messages, so
+   Slack Persons have an Identity id but no display name or email, and Containers are named by channel id. The
+   extractor supports user and channel records. Suggested ticket: make the seed (and the real Slack enrich) store
+   `user` and `channel` source_records, and add them to this check.
+5. **Not extracted: Jira worklogs, attachments, remote links, changelog, sprints, versions, watchers, votes; Slack
+   reactions, files, memberships.** Counts are reported as `not extracted` / `skipped` by kind. Suggested ticket per
+   value: decide which are graph facts (sprints and versions look like Containers; attachments like Documents).
+6. **Photon has no deleted or edited items.** The delete and late-edit rules of EMBER-85 cannot be checked against
+   a transcript. Suggested ticket: add a deleted issue, a deleted message and an edited comment to the photon
+   generator, with the transcript lines, then extend `derive_expected.py`.
+7. **Extract and load are not tenant-scoped.** `python -m loader extract` and `load` take every tenant's waiting
+   rows, so a check on one tenant also loads the rest. Suggested ticket: `--tenant` on both workers.
