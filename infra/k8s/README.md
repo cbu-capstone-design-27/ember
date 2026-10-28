@@ -38,7 +38,7 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make flux-up` | First install only, or after `make reset`: installs Flux from `clusters/homelab/flux-system`, gives it the age key, waits for the first sync, then health. Safe to re-run |
 | `make flux-components` | Regenerates `clusters/homelab/flux-system/gotk-components.yaml` after `FLUX_VERSION` in the Makefile changes. Commit the result; Flux upgrades itself from it |
 
-Day to day, `flux get all -A` (with `.venv/bin` on your `PATH`) shows the same thing as `flux-health`, and Headlamp (below) shows it in a browser. When a Kustomization is not Ready, `flux get kustomizations` shows why, and `flux logs --level=error` shows what the controllers rejected.
+Day to day, `flux get all -A` (with `.venv/bin` on your `PATH`) shows the same thing as `flux-health`. When a Kustomization is not Ready, `flux get kustomizations` shows why, and `flux logs --level=error` shows what the controllers rejected.
 
 The `local-path-retain` StorageClass is not here: k3s deploys it on start from `ansible/manifests/`. Don't redefine it in this tree, or two things will own it.
 
@@ -342,7 +342,7 @@ Service `postgres-rw` always points at the primary. Every component connects as 
 
 `ember` is not a superuser, and superuser access is off (the operator's default), so no Secret holds a superuser password. An extension only a superuser can create, such as `vector` (pgvector, EMBER-77), goes in `apps/postgres/database.yaml`, a CloudNativePG `Database` for `ember` with `extensions: [{name: ..., ensure: present}]`. The operator creates it there, and a migration's `create extension if not exists` then finds it and needs no privilege. Merge that change before the migration that uses it. The image (`imageName` in `cluster.yaml`) must ship the extension: `select * from pg_available_extensions` in the pod lists what it has.
 
-From the tailnet, `make postgres-url` prints `postgresql://ember:<password>@hv-worker-2.tail470a31.ts.net:5432/ember`. As with Neo4j, `apps/postgres/service-lb.yaml` publishes port 5432 on every node's IP through ServiceLB, tailnet sources only, so the other nodes' names work too. Reading the Secret needs the kubeconfig: Headlamp's viewer cannot see Secrets.
+From the tailnet, `make postgres-url` prints `postgresql://ember:<password>@hv-worker-2.tail470a31.ts.net:5432/ember`. As with Neo4j, `apps/postgres/service-lb.yaml` publishes port 5432 on every node's IP through ServiceLB, tailnet sources only, so the other nodes' names work too. Reading the Secret needs the kubeconfig.
 
 #### Migrations
 
@@ -362,14 +362,6 @@ docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55432:5432 pgvector
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
   python3 infra/k8s/apps/postgres/test_migrations.py
 ```
-
-### Headlamp
-
-A web UI for the cluster, with the Flux plugin for what Flux has deployed: `https://headlamp.tail470a31.ts.net`, on the tailnet only (its Ingress has no Funnel annotation). Release `headlamp` in namespace `headlamp`, from `apps/headlamp/`.
-
-Headlamp asks for a token. Get one valid for 24 hours with `make headlamp-token` (from `infra/ansible`). It signs you in as ServiceAccount `headlamp-viewer`, which has the built-in `view` role plus Flux's objects, so it can look at everything except Secrets and change nothing. Use `make sync` or `flux` for actions.
-
-The Flux plugin comes from the image `ghcr.io/headlamp-k8s/headlamp-plugin-flux`, pinned in `values.yaml`; an init container copies it into the pod.
 
 ### Monitoring
 
