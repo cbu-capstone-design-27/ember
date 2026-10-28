@@ -1,7 +1,8 @@
 // Initials on a color picked from the name, so a person keeps one color
 // everywhere (dashboard, graph, settings).
 
-const PALETTE = ["#c2410c", "#1d4ed8", "#15803d", "#7e22ce", "#be185d", "#0f766e", "#a16207", "#4338ca"];
+// Theme tokens (--avatar-1..8 in globals.css), so each tone is tuned for light and dark.
+const PALETTE = Array.from({ length: 8 }, (_, i) => `var(--avatar-${i + 1})`);
 
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
