@@ -86,19 +86,24 @@ the jobs in flight and exits. `--once` drains what is waiting and exits.
 
 Rules worth knowing:
 
-- **Scope.** Jira issues and comments, and Slack messages, users and channels. GitHub, GitLab, Teams and
-  other kinds (Jira worklogs, Slack memberships) are not extracted yet; extract logs how many are waiting
-  when it starts.
+- **Scope.** Jira issues and comments; Slack messages, users and channels; GitHub issues, pull requests
+  (with the changed files enrich fetched), reviews, issue / review / commit comments, commits and repositories
+  (EMBER-107; what each becomes: `docs/pipeline/neo4j-load-check.md`, GitHub). GitHub refs, releases, labels
+  and milestones have no home in the graph schema and are not extracted, nor are GitLab, Teams and other kinds
+  (Jira worklogs, Slack memberships); extract logs how many are waiting when it starts.
 - **Order.** Every node and edge stores the source's `occurred_at`. A version older than the stored one
   only fills properties the node lacks, so a late, older edit never undoes a newer one.
-- **Deletes.** A deleted Slack message or Jira issue or comment keeps its node but clears its content: a
+- **Deletes.** A deleted Slack message, Jira issue or comment, or GitHub issue or comment keeps its node but
+  clears its content: a
   delete not older than the node leaves only `group_id`, `uuid`, `source`, `external_id`, `kind`,
   `deleted: true` and `occurred_at`, so the text, names and embeddings are gone. A late, older edit
   cannot bring them back.
 - **Edges to nodes not loaded yet** (a comment whose issue comes in a later batch) create a bare
   `placeholder: true` node on the target's key, which the target's own episode fills in (and the
   flag removed). Readers that list nodes should skip `placeholder: true` ones; one whose target never
-  arrives stays a placeholder.
+  arrives stays a placeholder. The schema check does not count placeholders as missing `kind`; e2e-check
+  reports them as `placeholder <Label>` rows. A GitHub comment or review also writes the issue or pull request
+  its payload carries, stamped with that object's own `updated_at`, so its parent is rarely a placeholder.
 - **Reruns** change nothing: extract skips records that already have an episode from this
   `EXTRACTOR_VERSION` (`loader/extract.py`; bump it to re-extract everything), and load only takes
   episodes with `loaded_at` null.
@@ -123,15 +128,16 @@ running and waiting for new rows.
 
 One command extracts, loads and verifies the graph. On the photon data it compares per-label and
 per-relationship counts and five sample Cypher answers with values derived from the fixtures; on any
-other populated tenant it reports counts, schema-check mismatches, rejected/skipped by kind and five smoke
-queries, with no message text, names or keys in the output:
+other populated tenant it reports counts, schema-check mismatches, rejected/skipped by kind and six smoke
+queries (one for GitHub changes), with no message text, names or keys in the output:
 
     python -m loader e2e-check --tenant photon --seed-photon --reset     # photon, with expected values
     python -m loader e2e-check --tenant ember-development                # real data, counts only
 
 How to read it, the photon results and the gaps found: `docs/pipeline/neo4j-load-check.md`.
 
-Tests: `test_extract.py` runs with the unit tests. `test_pg_load.py` needs a Postgres with pgvector and
+Tests: `test_extract.py` and `test_extract_github.py` (synthetic GitHub rows in `testdata_github.py`) run
+with the unit tests. `test_pg_load.py` needs a Postgres with pgvector and
 dbmate, and is CI's `Pipeline loader against Postgres` step:
 
     PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable'         python -m unittest loader.test_pg_load -v
