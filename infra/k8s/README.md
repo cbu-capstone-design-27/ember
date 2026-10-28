@@ -32,7 +32,7 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make llm-tunnel-secret` | Temporary (EMBER-49). Writes `apps/llm-tunnel/ssh.sops.yaml` and `model-keys.sops.yaml`, encrypted, from the tunnel key and the Spark's API keys in the vault, and prints the `authorized_keys` line for the Spark ([llm-tunnel](#llm-tunnel)). Commit the result |
 | `make map-tenant SOURCE=… ACCOUNT=… TENANT=…` | Maps a source account to a tenant and hands the deliveries already stored for it to the enrich workers ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
 | `make grafana-secret` | Writes the collector's and the Grafana Operator's Secrets, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud tokens](#the-grafana-cloud-tokens)). Commit the result |
-| `make grafana-health` | Checks Grafana Cloud end to end: the operator synced the stack and the Ember dashboard, and the stack has metrics from every node, intake, Postgres and Flux, pod logs, Kubernetes events and both synthetic checks. Deploys nothing |
+| `make grafana-health` | Checks Grafana Cloud end to end: the operator synced the stack and both dashboards (Ember, Ember ingestion), and the stack has metrics from every node, intake, Postgres (including ingestion by tenant) and Flux, pod logs, Kubernetes events and both synthetic checks. Deploys nothing |
 | `make flux-preview BRANCH=<branch>` | Deploys a pushed branch instead of `develop`, to try a change before merging it. Tell the team, since it replaces what everyone else sees |
 | `make flux-preview-end` | Goes back to `develop`, removing anything only the branch had |
 | `make flux-up` | First install only, or after `make reset`: installs Flux from `clusters/homelab/flux-system`, gives it the age key, waits for the first sync, then health. Safe to re-run |
@@ -380,6 +380,7 @@ Grafana's `k8s-monitoring` chart (EMBER-91): release `k8s-monitoring` in namespa
 | What | Where |
 |---|---|
 | Nodes, pods, Postgres, webhooks, the enrich backlog, Flux | Dashboard **Ember** (folder Ember, `/d/ember`) |
+| Ingestion by source and tenant: what arrived, what was enriched, the backlog and how long enrich takes, records and how many are embedded, rate limits, which accounts are mapped and which wait for a tenant, worker logs | Dashboard **Ember ingestion** (folder Ember, `/d/ember-ingestion`). Pick sources and tenants at the top. Each panel's description says where its numbers come from |
 | One node, pod or workload in depth | The Kubernetes Monitoring app (Kubernetes in Grafana's menu). It reads the same metrics |
 | A metric or a log line | Explore. Metrics: data source `grafanacloud-zestylagoon2114-prom`, for example `up{cluster="homelab"}` or `intake_deliveries_total`. Logs: `grafanacloud-zestylagoon2114-logs`, for example `{namespace="ember", container="nginx"} \|= " event="` |
 | Kubernetes events, such as a node's Rebooted or NodeNotReady | Explore, logs: `{job="integrations/kubernetes/eventhandler"}` |
@@ -419,12 +420,14 @@ A source with no such rows exports no series, so it shows as missing rather than
 
 #### Dashboards
 
-The Grafana Operator (release `grafana-operator` in namespace `monitoring`, from `infrastructure/grafana-operator/`) keeps folder Ember and dashboard Ember on the stack. It signs in to the stack as Grafana object `grafana-cloud` (`monitoring/grafana/grafana.yaml`). The dashboard is `monitoring/grafana/dashboards/ember.json`, applied by `GrafanaDashboard` `ember`. The operator is in `infrastructure/` so that its CRDs exist before `monitoring/` uses them.
+The Grafana Operator (release `grafana-operator` in namespace `monitoring`, from `infrastructure/grafana-operator/`) keeps folder Ember and dashboards Ember and Ember ingestion on the stack. It signs in to the stack as Grafana object `grafana-cloud` (`monitoring/grafana/grafana.yaml`). The dashboards are `monitoring/grafana/dashboards/ember.json` and `ember-ingestion.json`, applied by `GrafanaDashboard`s `ember` and `ember-ingestion`. The operator is in `infrastructure/` so that its CRDs exist before `monitoring/` uses them.
 
 Git is the source of truth: the operator overwrites an edit made in Grafana at its next sync, within 10 minutes. To change the dashboard:
 
 1. Edit it in Grafana, then export it as JSON (Export in the dashboard's toolbar), with the option to share it with another instance left off.
-2. Replace `dashboards/ember.json` with the file, keeping `"uid": "ember"`, and merge.
+2. Replace `dashboards/ember.json` (or `ember-ingestion.json`) with the file, keeping its `"uid"` (`ember`, `ember-ingestion`), and merge.
+
+Ember ingestion reads Postgres through the CloudNativePG exporter's custom queries (`apps/postgres/monitoring.yaml`), labelled by source and tenant. They only count and time rows, as role `cnpg_metrics_exporter`, which is granted those columns alone and never an envelope, a record or an embedding. Rows with no tenant yet are labelled `(unmapped)`. To show something new, add a query there (each column becomes `cnpg_<query>_<column>`), and if it reads a column the role can't, grant it in a new migration and in `docs/ingestion/architecture.md`.
 
 Each panel's data source is the dashboard's Metrics or Logs variable, which finds the stack's `…-prom` and `…-logs` data sources by name. To add a dashboard, add its JSON under `dashboards/`, list it in `monitoring/grafana/kustomization.yaml` and add a `GrafanaDashboard` like `ember`'s to `dashboards.yaml`.
 
