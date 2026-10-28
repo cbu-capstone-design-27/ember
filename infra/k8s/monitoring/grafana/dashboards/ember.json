@@ -637,7 +637,8 @@
           },
           "color": {
             "mode": "palette-classic"
-          }
+          },
+          "noValue": "No restarts"
         },
         "overrides": []
       },
@@ -661,9 +662,9 @@
       }
     },
     {
-      "type": "table",
+      "type": "stat",
       "title": "Pods not running",
-      "description": "Pods stuck Pending, Failed or Unknown right now.",
+      "description": "Pods stuck Pending, Failed or Unknown right now, by name; 0 when every pod runs. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -675,35 +676,61 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "sum by (namespace, pod, phase) (kube_pod_status_phase{phase=~\"Pending|Failed|Unknown\"}) > 0",
-          "legendFormat": "",
+          "expr": "((sum by (namespace, pod, phase) (kube_pod_status_phase{phase=~\"Pending|Failed|Unknown\"}) > 0)) or on() (0 * count(kube_node_info)) or on() vector(-1)",
+          "legendFormat": "{{namespace}}/{{pod}} {{phase}}",
           "range": false,
-          "instant": true,
-          "format": "table"
+          "instant": true
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "No data",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "noValue": "No data"
+        },
         "overrides": []
       },
       "options": {
-        "showHeader": true,
-        "cellHeight": "sm"
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
       },
-      "transformations": [
-        {
-          "id": "filterFieldsByName",
-          "options": {
-            "include": {
-              "names": [
-                "namespace",
-                "pod",
-                "phase"
-              ]
-            }
-          }
-        }
-      ],
       "id": 10,
       "gridPos": {
         "x": 12,
@@ -1151,8 +1178,76 @@
     },
     {
       "type": "timeseries",
+      "title": "Slack events by type",
+      "description": "Slack deliveries intake verified and stored, by raw_events.event_name (message, message:message_changed, …), counted by the Postgres exporter (raw_events_received). Slack sends its event type only in the body, so unlike GitHub's panel this can't come from nginx: a delivery intake refused isn't here, and a retry Slack re-sent counts once. Rows from an unmapped workspace count too (Unmapped). Each bar is one interval of at least 5 min; the legend's Total covers the whole time range. An interval in which retention deleted rows can show too few.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "interval": "5m",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "expr": "sum by (event_name) (clamp_min(cnpg_raw_events_received_rows{source=\"slack\"} - cnpg_raw_events_received_rows{source=\"slack\"} offset $__interval, 0))",
+          "legendFormat": "{{event_name}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ],
+          "sortBy": "Total",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 28,
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 24,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
       "title": "Rows waiting for enrich",
-      "description": "raw_events rows with a tenant that their source's enrich worker hasn't processed. Grows until enrich runs on the cluster (EMBER-83).",
+      "description": "raw_events rows with a tenant that their source's enrich worker hasn't processed. It stays near 0 while the enrich workers keep up.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -1215,7 +1310,7 @@
       "id": 17,
       "gridPos": {
         "x": 0,
-        "y": 39,
+        "y": 47,
         "w": 8,
         "h": 8
       }
@@ -1257,7 +1352,8 @@
           "color": {
             "mode": "palette-classic"
           },
-          "unit": "s"
+          "unit": "s",
+          "noValue": "Nothing waiting"
         },
         "overrides": []
       },
@@ -1275,7 +1371,7 @@
       "id": 18,
       "gridPos": {
         "x": 8,
-        "y": 39,
+        "y": 47,
         "w": 8,
         "h": 8
       }
@@ -1360,45 +1456,9 @@
       "id": 19,
       "gridPos": {
         "x": 16,
-        "y": 39,
+        "y": 47,
         "w": 8,
         "h": 8
-      }
-    },
-    {
-      "type": "logs",
-      "title": "Webhook requests that failed",
-      "description": "nginx's log line for each webhook answered 4xx or 5xx. target= names the sender (integration:<App id>, or repository:<id> for a repo webhook); upstream= lists the intake pods tried.",
-      "datasource": {
-        "type": "loki",
-        "uid": "${loki}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "loki",
-            "uid": "${loki}"
-          },
-          "expr": "{namespace=\"ember\", container=\"nginx\"} |= \" event=\" | pattern `<_> [<_>] \"<_>\" <status> <_>` | status >= 400",
-          "legendFormat": "",
-          "queryType": "range"
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "wrapLogMessage": true,
-        "sortOrder": "Descending",
-        "enableLogDetails": true,
-        "dedupStrategy": "none",
-        "prettifyLogMessage": false
-      },
-      "id": 20,
-      "gridPos": {
-        "x": 0,
-        "y": 47,
-        "w": 24,
-        "h": 10
       }
     },
     {
@@ -1409,7 +1469,7 @@
       "id": 21,
       "gridPos": {
         "x": 0,
-        "y": 57,
+        "y": 55,
         "w": 24,
         "h": 1
       }
@@ -1417,7 +1477,7 @@
     {
       "type": "stat",
       "title": "Flux objects not Ready",
-      "description": "Kustomizations, HelmReleases and sources whose Ready condition isn't True. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
+      "description": "Kustomizations, HelmReleases and sources whose Ready condition isn't True, by name; 0 when all are. flux get all -A shows why. Red **No data** means the metric stopped arriving more than 5 minutes ago: its collector, its node or the whole cluster is down.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -1429,8 +1489,8 @@
             "type": "prometheus",
             "uid": "${prometheus}"
           },
-          "expr": "((count(gotk_resource_info{ready!=\"True\"})) or on() (0 * count(gotk_resource_info))) or on() vector(-1)",
-          "legendFormat": "not Ready",
+          "expr": "((count by (customresource_kind, exported_namespace, name) (gotk_resource_info{ready!=\"True\"}))) or on() (0 * count(gotk_resource_info)) or on() vector(-1)",
+          "legendFormat": "{{customresource_kind}} {{exported_namespace}}/{{name}}",
           "range": false,
           "instant": true
         }
@@ -1478,7 +1538,7 @@
         },
         "colorMode": "background",
         "graphMode": "none",
-        "textMode": "value",
+        "textMode": "auto",
         "justifyMode": "auto",
         "orientation": "auto",
         "wideLayout": true,
@@ -1487,8 +1547,8 @@
       "id": 22,
       "gridPos": {
         "x": 0,
-        "y": 58,
-        "w": 4,
+        "y": 56,
+        "w": 16,
         "h": 7
       }
     },
@@ -1564,102 +1624,97 @@
       },
       "id": 23,
       "gridPos": {
-        "x": 4,
-        "y": 58,
-        "w": 4,
+        "x": 16,
+        "y": 56,
+        "w": 8,
         "h": 7
       }
     },
     {
-      "type": "table",
-      "title": "Flux objects not Ready",
-      "description": "flux get all -A shows why.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${prometheus}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${prometheus}"
-          },
-          "expr": "gotk_resource_info{ready!=\"True\"}",
-          "legendFormat": "",
-          "range": false,
-          "instant": true,
-          "format": "table"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm"
-      },
-      "transformations": [
-        {
-          "id": "filterFieldsByName",
-          "options": {
-            "include": {
-              "names": [
-                "customresource_kind",
-                "exported_namespace",
-                "name",
-                "ready",
-                "suspended",
-                "revision"
-              ]
-            }
-          }
-        }
-      ],
-      "id": 24,
+      "type": "row",
+      "title": "Logs",
+      "collapsed": true,
+      "id": 29,
       "gridPos": {
-        "x": 8,
-        "y": 58,
-        "w": 16,
-        "h": 7
-      }
-    },
-    {
-      "type": "logs",
-      "title": "Kubernetes warnings and node events",
-      "description": "Kubernetes events of type Warning, plus nodes rebooting and changing readiness.",
-      "datasource": {
-        "type": "loki",
-        "uid": "${loki}"
+        "x": 0,
+        "y": 63,
+        "w": 24,
+        "h": 1
       },
-      "targets": [
+      "panels": [
         {
-          "refId": "A",
+          "type": "logs",
+          "title": "Webhook requests that failed",
+          "description": "nginx's log line for each webhook answered 4xx or 5xx. target= names the sender (integration:<App id>, or repository:<id> for a repo webhook); upstream= lists the intake pods tried.",
           "datasource": {
             "type": "loki",
             "uid": "${loki}"
           },
-          "expr": "{job=\"integrations/kubernetes/eventhandler\"} | level = \"Warning\" or reason =~ \"Rebooted|NodeNotReady|NodeReady\"",
-          "legendFormat": "",
-          "queryType": "range"
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "${loki}"
+              },
+              "expr": "{namespace=\"ember\", container=\"nginx\"} |= \" event=\" | pattern `<_> [<_>] \"<_>\" <status> <_>` | status >= 400",
+              "legendFormat": "",
+              "queryType": "range"
+            }
+          ],
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "sortOrder": "Descending",
+            "enableLogDetails": true,
+            "dedupStrategy": "none",
+            "prettifyLogMessage": false
+          },
+          "id": 20,
+          "gridPos": {
+            "x": 0,
+            "y": 64,
+            "w": 24,
+            "h": 10
+          }
+        },
+        {
+          "type": "logs",
+          "title": "Kubernetes warnings and node events",
+          "description": "Kubernetes events of type Warning, plus nodes rebooting and changing readiness.",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "${loki}"
+              },
+              "expr": "{job=\"integrations/kubernetes/eventhandler\"} | level = \"Warning\" or reason =~ \"Rebooted|NodeNotReady|NodeReady\"",
+              "legendFormat": "",
+              "queryType": "range"
+            }
+          ],
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "sortOrder": "Descending",
+            "enableLogDetails": true,
+            "dedupStrategy": "none",
+            "prettifyLogMessage": false
+          },
+          "id": 25,
+          "gridPos": {
+            "x": 0,
+            "y": 74,
+            "w": 24,
+            "h": 10
+          }
         }
-      ],
-      "options": {
-        "showTime": true,
-        "wrapLogMessage": true,
-        "sortOrder": "Descending",
-        "enableLogDetails": true,
-        "dedupStrategy": "none",
-        "prettifyLogMessage": false
-      },
-      "id": 25,
-      "gridPos": {
-        "x": 0,
-        "y": 65,
-        "w": 24,
-        "h": 10
-      }
+      ]
     }
   ]
 }
