@@ -348,7 +348,7 @@ class LoadWorker(Worker):
                 select(func.pg_try_advisory_xact_lock(func.hashtext(f"{tenant}_{source}"))))
             if not locked:
                 return False
-            stmt = (select(Episode.id, Episode.key, Episode.occurred_at, Episode.attrs)
+            stmt = (select(Episode.id, Episode.key, Episode.occurred_at, Episode.attrs, Episode.updated_at)
                     .where(Episode.tenant == tenant, Episode.source == source, Episode.loaded_at.is_(None))
                     .order_by(Episode.occurred_at, Episode.id).limit(self.batch))
             if self.given_up:
@@ -358,10 +358,22 @@ class LoadWorker(Worker):
                 return False
             loaded = await asyncio.to_thread(self._write, episodes)
             if loaded:
-                await session.execute(update(Episode).where(Episode.id.in_(loaded))
-                                      .values(loaded_at=func.clock_timestamp()))
-        self.counts["loaded"] += len(loaded)
-        LOG.info("loaded %s of %s episodes into %s_%s", len(loaded), len(episodes), tenant, source)
+                # Only rows unchanged since the read: extract may have re-extracted one meanwhile
+                # (clearing loaded_at), and that newer version still has to be written.
+                read_at = {episode.id: episode.updated_at for episode in episodes}
+                result = await session.execute(
+                    update(Episode)
+                    .where(tuple_(Episode.id, Episode.updated_at).in_([(i, read_at[i]) for i in loaded]),
+                           Episode.loaded_at.is_(None))
+                    .values(loaded_at=func.clock_timestamp()))
+                if result.rowcount < len(loaded):
+                    LOG.info("load %s_%s: %s episodes changed while loading; they load again next pass",
+                             tenant, source, len(loaded) - result.rowcount)
+                stamped = result.rowcount
+            else:
+                stamped = 0
+        self.counts["loaded"] += stamped
+        LOG.info("loaded %s of %s episodes into %s_%s", stamped, len(episodes), tenant, source)
         return True
 
     def _write(self, episodes) -> list[int]:

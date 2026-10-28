@@ -23,7 +23,8 @@ def _apply(stored: dict, props: dict, occurred_at: str | None, deletable: bool) 
             stored["occurred_at"] = occurred_at
     elif not (deletable and stored.get("deleted")):
         for key, value in props.items():
-            stored.setdefault(key, value)
+            if key != "deleted":  # an older delete must not mark newer content deleted
+                stored.setdefault(key, value)
 
 
 class MemoryWriter:

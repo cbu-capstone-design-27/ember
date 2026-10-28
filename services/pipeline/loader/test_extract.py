@@ -164,6 +164,17 @@ class OrderingRuleTests(unittest.TestCase):
         self.assertEqual(set(self.stored(writer)),
                          {"group_id", "uuid", "source", "external_id", "kind", "deleted", "occurred_at"})
 
+    def test_an_older_delete_after_a_newer_edit_leaves_the_node_live(self):
+        writer = MemoryWriter()
+        writer.write_nodes([node("edited", at=T0 + timedelta(minutes=5))])
+        writer.write_nodes([NodeRec("Message", "photon_slack", "C1:1", {"source": "slack", "kind": "message",
+                                    "external_id": "C1:1", "deleted": True},
+                                    occurred_at=ordering_time(T0 + timedelta(minutes=3)))])
+        self.assertNotIn("deleted", self.stored(writer))
+        self.assertEqual(self.stored(writer)["embed_text"], "edited")
+        writer.write_nodes([node("newest", at=T0 + timedelta(minutes=7))])
+        self.assertEqual(self.stored(writer)["embed_text"], "newest")
+
     def test_an_older_delete_does_not_clear_newer_content(self):
         writer = MemoryWriter()
         writer.write_nodes([node("kept", at=T0 + timedelta(hours=1))])

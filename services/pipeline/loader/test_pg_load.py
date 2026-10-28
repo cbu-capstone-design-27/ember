@@ -315,6 +315,71 @@ class PgLoadTest(unittest.IsolatedAsyncioTestCase):
                 neo4j.reset(tenant_subgraphs(TENANT))
                 neo4j.close()
 
+    async def test_an_older_delete_arriving_after_a_newer_edit_leaves_the_message_live(self):
+        ts = "1789353000.000100"
+        writers = [MemoryWriter()]
+        if NEO4J_URI:
+            from loader.neo4j_writer import Neo4jWriter
+            from ontology import tenant_subgraphs
+
+            neo4j = Neo4jWriter(NEO4J_URI, os.environ.get("NEO4J_USER", "neo4j"), os.environ["NEO4J_PASSWORD"])
+            neo4j.reset(tenant_subgraphs(TENANT))
+            writers.append(neo4j)
+        try:
+            steps = [("1789353300.0", T0 + timedelta(minutes=5), {"payload": message(ts, "edit at 5")}),
+                     ("deleted:1789353180.0", T0 + timedelta(minutes=3), {"payload": None, "deleted": True}),
+                     ("1789353420.0", T0 + timedelta(minutes=7), {"payload": message(ts, "edit at 7")})]
+            for index, (version, at, record) in enumerate(steps):
+                await self.insert("slack", "message", f"C1/{ts}", version, at, record)
+                await self.extract_all()
+                for writer in writers:
+                    await self.db.execute("update episodes set loaded_at = null")
+                    await self.load_all(writer)
+                for writer in writers:
+                    props = self.message_props(writer, ts)
+                    self.assertNotIn("deleted", props, f"step {index}: {type(writer).__name__}")
+                    self.assertEqual(props["embed_text"], "edit at 7" if index == 2 else "edit at 5")
+        finally:
+            if NEO4J_URI:
+                neo4j.reset(tenant_subgraphs(TENANT))
+                neo4j.close()
+
+    def message_props(self, writer, ts: str) -> dict:
+        if isinstance(writer, MemoryWriter):
+            return self.slack_message(writer, f"C1:{ts}")
+        [found] = writer._run("MATCH (m:Message {group_id: $g, external_id: $e}) RETURN properties(m) AS p",
+                              g=f"{TENANT}_slack", e=f"C1:{ts}")
+        return found["p"]
+
+    async def test_a_re_extract_during_a_load_is_not_marked_loaded(self):
+        await self.insert("slack", "message", "C1/1789353000.000100", "1",
+                          T0, {"payload": message("1789353000.000100", "v1")})
+        await self.extract_all()
+        loop, db = asyncio.get_running_loop(), self.db
+
+        class ReExtractMidWrite(MemoryWriter):
+            """Extract upserts a newer extractor version between load's read and its stamp."""
+            done = False
+
+            def write_nodes(self, nodes):
+                if not self.done:
+                    self.done = True
+                    asyncio.run_coroutine_threadsafe(db.execute(
+                        "update episodes set extractor_version = extractor_version + 1, loaded_at = null,"
+                        " text = 'v2', updated_at = clock_timestamp()"), loop).result(10)
+                return super().write_nodes(nodes)
+
+        worker = LoadWorker(database_url(), ReExtractMidWrite())
+        try:
+            self.assertTrue(await worker.load_subgraph(TENANT, "slack"))  # one pass
+            self.assertEqual(worker.counts["loaded"], 0)
+            self.assertEqual(await self.unloaded(), 1, "the re-extracted episode was marked loaded")
+            self.assertTrue(await worker.load_subgraph(TENANT, "slack"))  # the next pass writes the new version
+            self.assertEqual(worker.counts["loaded"], 1)
+            self.assertEqual(await self.unloaded(), 0)
+        finally:
+            await worker.engine.dispose()
+
     # --- worker behavior ---
 
     async def test_both_workers_catch_up_at_start_and_wake_on_notify_within_a_second(self):

@@ -48,6 +48,8 @@ def _guarded_set(var: str, deletable: bool, clears: bool = False) -> str:
             "OR row.occurred_at >= cur.occurred_at) AS newer "
             f"SET {var} += CASE WHEN {fill_ok} THEN row.props ELSE {{}} END "
             f"SET {var} += CASE WHEN newer THEN {{}} ELSE cur END "
+            # an older row never fills deleted: an older delete must not mark newer content deleted
+            f"SET {var}.deleted = CASE WHEN newer THEN {var}.deleted ELSE cur.deleted END "
             + (f"SET {var} = CASE WHEN newer AND coalesce(row.props.deleted, false) THEN "
                + "{" + ", ".join(f"{k}: {var}.{k}" for k in TOMBSTONE_KEYS) + "} "
                f"ELSE properties({var}) END " if clears else "")
