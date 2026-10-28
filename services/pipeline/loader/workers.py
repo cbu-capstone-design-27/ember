@@ -301,10 +301,6 @@ class LoadWorker(Worker):
         self.failures: Counter = Counter()  # subgraph -> transient failures in a row
         self.given_up: set[int] = set()  # episodes Neo4j refused; left alone until restart
 
-    async def close(self) -> None:
-        if hasattr(self.writer, "close"):
-            await asyncio.to_thread(self.writer.close)
-
     def idle_seconds(self) -> float:
         now = time.monotonic()
         waits = [until - now for until in self.cooldown.values() if until > now]
@@ -492,7 +488,12 @@ def main(argv: list[str]) -> int:
         if args.stage == "extract":
             worker: Worker = ExtractWorker(database_url, concurrency=concurrency)
         else:
-            worker = LoadWorker(database_url, neo4j_writer(), concurrency=concurrency, batch=batch)
+            writer = neo4j_writer()  # the caller owns the writer, so tests can reuse one across workers
+            try:
+                await serve(LoadWorker(database_url, writer, concurrency=concurrency, batch=batch), args.once)
+            finally:
+                writer.close()
+            return
         await serve(worker, args.once)
 
     asyncio.run(start())

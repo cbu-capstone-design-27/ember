@@ -3,6 +3,7 @@
     DATABASE_URL=postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable \
     EMBEDDING_URL=http://<spark>:8000 [EMBEDDING_API_KEY=...] \
         python3 apps/mcp/seed_photon.py
+    DATABASE_URL=... python3 apps/mcp/seed_photon.py --no-embed    # rows only, no embedding service needed
 
 Rows take the shapes the enrich workers store (`{"payload": ...}`), under tenant "photon". Then the
 embed worker (services/embed, EMBER-77) embeds every row that isn't yet, so it needs that service's
@@ -54,13 +55,15 @@ def rows() -> list[tuple]:
     return out
 
 
-async def main() -> None:
+async def main(embed_rows: bool = True) -> None:
     db = await asyncpg.connect(os.environ["DATABASE_URL"])
     await db.executemany(
         "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record)"
         " values ($1, 'photon', $2, $3, $4, $5, $6) on conflict do nothing",
         [(*row[:5], json.dumps({"payload": row[5]})) for row in rows()])
     await db.close()
+    if not embed_rows:  # --no-embed: rows only, e.g. for the extract and load workers (EMBER-85)
+        return
 
     # Imported here so rows() works without the embed worker's packages (the EMBER-85 loader test reuses it)
     sys.path.insert(0, str(REPO / "services" / "embed"))
@@ -83,4 +86,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(embed_rows="--no-embed" not in sys.argv[1:]))

@@ -86,7 +86,9 @@ def _endpoint(var: str, label: str, end: str, placeholders: bool) -> str:
 
 def edge_query(rel: str, src: str, dst: str, placeholders: bool = False) -> str:
     return ("UNWIND $rows AS row "
-            + _endpoint("a", src, "src", placeholders) + _endpoint("b", dst, "dst", placeholders)
+            # WITH between the endpoints: Cypher needs one between a MERGE and a following MATCH
+            + _endpoint("a", src, "src", placeholders) + "WITH row, a "
+            + _endpoint("b", dst, "dst", placeholders) + "WITH row, a, b "
             + f"MERGE (a)-[r:{_rel(rel)}]->(b) SET r.group_id = row.group_id "
             + _guarded_set("r", deletable=False) + "RETURN count(r) AS n")
 
