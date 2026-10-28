@@ -18,7 +18,7 @@ GitLab sends the data itself (`architecture.md`, [Webhooks per source](architect
 
 ## How a delivery arrives
 
-A project webhook posts JSON to `/webhook/gitlab`. Intake checks the signing token (`webhook-signature`, an HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`) or the legacy secret token (`X-Gitlab-Token`), stores the body, and answers. There is no handshake. `services/gitlab-ingestion/receiver.py` already does all of this and becomes intake's `gitlab` adapter.
+A project webhook posts JSON to `/webhook/gitlab`. Intake checks the signing token (`webhook-signature`, an HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`) or the legacy secret token (`X-Gitlab-Token`), stores the body, and answers. There is no handshake. Intake's `gitlab` adapter (`services/intake/adapters/gitlab.py`, EMBER-83) does this, with the checks `services/gitlab-ingestion/receiver.py` makes.
 
 GitLab sends deliveries "asynchronously from Sidekiq nodes" and documents no order. It wants a 200 or 201 within 10 seconds on GitLab.com. A 4xx, a 5xx or a timeout is a failure. After 4 failures in a row the webhook is temporarily disabled, for 1 minute at first and up to 24 hours. After 40 it is disabled for good, until someone re-enables it. GitLab says to "prepare for duplicate events if a webhook times out".
 
@@ -30,7 +30,7 @@ GitLab sends deliveries "asynchronously from Sidekiq nodes" and documents no ord
 | `Idempotency-Key` | The same value, under its older name | `delivery_id` when `webhook-id` is missing |
 | `X-Gitlab-Event` | `<Event> Hook`, e.g. `Merge Request Hook`. Issues and work items both send `Issue Hook` | Logged. `event_name` comes from the body instead |
 | `X-Gitlab-Event-UUID` | Unique for a non-recursive webhook. A webhook triggered by an earlier webhook shares that one's value | Logged only. Not a `delivery_id` (see [`delivery_id`](#delivery_id)) |
-| `X-Gitlab-Instance` | Hostname of the GitLab instance | The first half of `account_id` |
+| `X-Gitlab-Instance` | The GitLab instance that sent it | Its host is the first half of `account_id`. Intake accepts a bare hostname or a URL (`https://gitlab.com`), so either form gives `gitlab.com`. Confirm on a real delivery |
 | `X-Gitlab-Webhook-UUID` | The webhook itself | Not needed |
 | `webhook-timestamp` | Unix seconds when GitLab built the request | Verification (replay window) only. It is not when the change happened |
 | `webhook-signature`, `X-Gitlab-Token` | Signing token signature, or the legacy plain-text secret | Verification |

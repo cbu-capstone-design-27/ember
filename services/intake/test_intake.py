@@ -1,4 +1,4 @@
-"""intake against a real Postgres (EMBER-62). Nothing here calls GitHub or Slack.
+"""intake against a real Postgres (EMBER-62). Nothing here calls GitHub, GitLab, Jira or Slack.
 
 Needs psql, dbmate, the packages in requirements.txt, and a Postgres server it may create and drop
 a database on:
@@ -12,6 +12,7 @@ It builds the repo migrations in database ember_test_intake.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
 import hmac
@@ -43,6 +44,7 @@ sys.path.insert(0, str(REPO / "packages" / "ingestion-envelope"))
 import intake  # noqa: E402
 from adapters import Delivery, Unauthorized  # noqa: E402
 from adapters.github import RECOMMENDED_WEBHOOK_EVENTS, GitHubAdapter  # noqa: E402
+from adapters.gitlab import GitLabAdapter  # noqa: E402
 from adapters.jira import JiraAdapter  # noqa: E402
 from adapters.slack import SlackAdapter  # noqa: E402
 from models import Installation, RawEvent  # noqa: E402
@@ -58,6 +60,11 @@ SLACK_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures
 JIRA_SECRET = "test-jira-webhook-secret"
 JIRA_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "jira.json").read_text())["body"]
 JIRA_SITE = "ember-capstone.atlassian.net"  # the host of the fixture's issue.self
+GITLAB_KEY = b"test-gitlab-signing-key-0123456789"
+GITLAB_SIGNING_TOKEN = "whsec_" + base64.b64encode(GITLAB_KEY).decode()
+GITLAB_SECRET_TOKEN = "test-gitlab-secret-token"
+GITLAB_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "gitlab.json").read_text())["body"]
+GITLAB_ACCOUNT = "gitlab.com/acme"  # X-Gitlab-Instance's host and the fixture's top-level group
 
 
 def database_url() -> str:
@@ -102,6 +109,17 @@ def jira(payload: dict | bytes, identifier: str = "wh-1", secret: str = JIRA_SEC
     body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
     return body, {"X-Atlassian-Webhook-Identifier": identifier, "X-Hub-Signature": sign(body, secret),
                   "Content-Type": "application/json", **headers}
+
+
+def gitlab(payload: dict | bytes, webhook_id: str = "msg-1", key: bytes = GITLAB_KEY, timestamp: int | None = None,
+           **headers: str) -> tuple[bytes, dict]:
+    """A delivery as a GitLab webhook with a signing token sends it: v1,<base64 HMAC of "<id>.<ts>.<body>">."""
+    body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+    sent = str(int(time.time()) if timestamp is None else timestamp)
+    digest = hmac.new(key, f"{webhook_id}.{sent}.".encode() + body, hashlib.sha256).digest()
+    return body, {"webhook-id": webhook_id, "Idempotency-Key": webhook_id, "webhook-timestamp": sent,
+                  "webhook-signature": "v1," + base64.b64encode(digest).decode(), "X-Gitlab-Instance": "https://gitlab.com",
+                  "X-Gitlab-Event": "Merge Request Hook", "Content-Type": "application/json", **headers}
 
 
 def request(url: str, body: bytes | None = None, headers: dict | None = None) -> tuple[int, str]:
@@ -149,7 +167,8 @@ class Server:
         self.port = free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         app = intake.create_app(intake.create_engine(url, timeout), {"github": GitHubAdapter(SECRET), "slack": SlackAdapter(SLACK_SECRET),
-                                                                    "jira": JiraAdapter(JIRA_SECRET), "teams": FakeTeams()},
+                                                                    "jira": JiraAdapter(JIRA_SECRET), "gitlab": GitLabAdapter(GITLAB_SIGNING_TOKEN),
+                                                                    "teams": FakeTeams()},
                                 registry, deadline=deadline)
         self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning"))
 
@@ -186,7 +205,8 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
         await self.db.execute("truncate raw_events, installations restart identity cascade")
         await self.db.execute("insert into installations (source, account_id, tenant)"
                               " values ('github', '77', 'acme'), ('gitlab', '77', 'not-this-one'),"
-                              " ('slack', 'T012WORKSPACE', 'acme'), ('jira', $1, 'acme')", JIRA_SITE)
+                              " ('slack', 'T012WORKSPACE', 'acme'), ('jira', $1, 'acme'), ('gitlab', $2, 'acme')",
+                              JIRA_SITE, GITLAB_ACCOUNT)
         self.registry = CollectorRegistry()
         self.intake = await Server(database_url(), self.registry).__aenter__()
 
@@ -646,6 +666,141 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.intake.post("/webhook/jira", case_body, case_headers))[0], status)
         self.assertEqual(await self.rows(), [])
 
+    async def deliver_gitlab(self, payload: dict | bytes, webhook_id: str = "msg-1", **kwargs) -> tuple[int, str]:
+        return await self.intake.post("/webhook/gitlab", *gitlab(payload, webhook_id, **kwargs))
+
+    async def test_signed_gitlab_delivery_is_stored_as_it_arrived(self):
+        self.assertEqual(await self.deliver_gitlab(GITLAB_FIXTURE), (200, '{"status":"stored"}'))
+
+        (row,) = await self.rows()
+        self.assertEqual(
+            (row["source"], row["delivery_id"], row["account_id"], row["tenant"], row["event_name"], row["origin"]),
+            ("gitlab", "msg-1", GITLAB_ACCOUNT, "acme", "merge_request:open", "webhook"))
+        # The fixture's merge request has no updated_at, so it is ordered by arrival
+        self.assertEqual(row["occurred_at"], row["received_at"])
+        envelope = json.loads(row["envelope"])
+        self.assertEqual(envelope, {"type": "gitlab", "body": GITLAB_FIXTURE})
+        assert_valid(envelope)
+        self.assertIsNone(row["enriched_at"])
+
+    async def test_gitlab_retry_is_a_no_op_and_an_unmapped_group_waits(self):
+        self.assertEqual(await self.deliver_gitlab(GITLAB_FIXTURE), (200, '{"status":"stored"}'))
+        # A retry or a manual Resend keeps webhook-id and is signed again with a new timestamp
+        self.assertEqual(await self.deliver_gitlab(GITLAB_FIXTURE, timestamp=int(time.time()) - 60),
+                         (200, '{"status":"duplicate"}'))
+        # Idempotency-Key is the same id under its older name, used when webhook-id is missing
+        legacy = GitLabAdapter("", GITLAB_SECRET_TOKEN)
+        self.assertEqual(legacy.delivery_id(Delivery({"idempotency-key": "msg-1"}, {}, b"{}")), "msg-1")
+        other = {**GITLAB_FIXTURE, "project": {**GITLAB_FIXTURE["project"], "path_with_namespace": "other-group/app"}}
+        self.assertEqual(await self.deliver_gitlab(other, "msg-2"), (200, '{"status":"stored"}'))
+        self.assertEqual([(r["delivery_id"], r["account_id"], r["tenant"]) for r in await self.rows()],
+                         [("msg-1", GITLAB_ACCOUNT, "acme"), ("msg-2", "gitlab.com/other-group", None)])
+
+    async def test_gitlab_account_is_the_instance_and_top_level_group(self):
+        project = {"id": 7, "path_with_namespace": "acme/platform/api"}
+        cases = [
+            ("subgroup project", {"X-Gitlab-Instance": "https://gitlab.com"}, project, GITLAB_ACCOUNT),
+            ("self-managed instance", {"X-Gitlab-Instance": "https://GitLab.Example.com:8443"}, project,
+             "gitlab.example.com/acme"),
+            ("host without a scheme", {"X-Gitlab-Instance": "gitlab.com"}, project, GITLAB_ACCOUNT),
+            ("no instance header", {"X-Gitlab-Instance": ""}, project, None),
+            ("malformed instance", {"X-Gitlab-Instance": "https://[::1"}, project, None),
+            ("no project", {}, None, None),
+        ]
+        for n, (_name, headers, proj, _account) in enumerate(cases):
+            payload = {"object_kind": "push", **({"project": proj} if proj else {})}
+            self.assertEqual((await self.deliver_gitlab(payload, f"msg-{n}", **headers))[0], 200)
+        for (name, _headers, _proj, expected), row in zip(cases, await self.rows(), strict=True):
+            with self.subTest(name):
+                self.assertEqual(row["account_id"], expected)
+
+    async def test_occurred_at_follows_gitlabs_ordering_rule(self):
+        # gitlab-webhooks.md, "Ordering value": object_attributes.updated_at, except pushes and approvals
+        updated = "2026-01-16T05:56:25.123Z"
+        cases = [
+            ({"object_kind": "merge_request", "object_attributes": {"action": "update", "updated_at": updated}},
+             "merge_request:update", "2026-01-16T05:56:25.123+00:00"),
+            # Self-managed instances before GitLab 19.0
+            ({"object_kind": "issue", "object_attributes": {"action": "close", "updated_at": "2026-01-16 05:56:25 UTC"}},
+             "issue:close", "2026-01-16T05:56:25+00:00"),
+            ({"object_kind": "work_item", "object_attributes": {"action": "open", "updated_at": updated}},
+             "work_item:open", "2026-01-16T05:56:25.123+00:00"),
+            ({"object_kind": "note", "object_attributes": {"updated_at": "2026-01-16T06:56:25+01:00"}},
+             "note", "2026-01-16T05:56:25+00:00"),
+        ]
+        by_arrival = [
+            # GitLab doesn't say approvals bump updated_at, a push has only commit times, and a delete has none
+            ({"object_kind": "merge_request", "object_attributes": {"action": "approved", "updated_at": updated}},
+             "merge_request:approved"),
+            ({"object_kind": "push", "commits": [{"timestamp": updated}]}, "push"),
+            ({"object_kind": "push", "after": "0" * 40, "commits": []}, "push"),
+            ({"object_kind": "tag_push", "object_attributes": {"updated_at": updated}}, "tag_push"),
+            ({"object_kind": "issue", "object_attributes": {"action": "update", "updated_at": "not a time"}},
+             "issue:update"),
+            ({"object_kind": "issue", "object_attributes": {"action": "update", "updated_at": "2026-01-16T05:56:25"}},
+             "issue:update"),
+            ({"object_kind": "issue", "object_attributes": {"action": "update", "updated_at": 1768542985}},
+             "issue:update"),
+        ]
+        payloads = [payload for payload, *_ in cases + by_arrival]
+        for n, payload in enumerate(payloads):
+            self.assertEqual((await self.deliver_gitlab(payload, f"msg-{n}"))[0], 200)
+        rows = await self.rows()
+        for (payload, event, expected), row in zip(cases, rows, strict=False):
+            with self.subTest(event):
+                self.assertEqual(row["event_name"], event)
+                self.assertEqual(row["occurred_at"], datetime.fromisoformat(expected))
+        for (payload, event), row in zip(by_arrival, rows[len(cases):], strict=True):
+            with self.subTest(event, delivery=row["delivery_id"]):
+                self.assertEqual(row["event_name"], event)
+                self.assertEqual(row["occurred_at"], row["received_at"])
+
+    async def test_rejected_gitlab_deliveries_store_nothing(self):
+        body, headers = gitlab(GITLAB_FIXTURE)
+
+        def without(*names: str) -> dict:
+            return {k: v for k, v in headers.items() if k not in names}
+
+        cases = [
+            ("bad signature", body, {**headers, "webhook-signature": "v1," + base64.b64encode(b"0" * 32).decode()}, 401),
+            ("no signature", body, without("webhook-signature"), 401),
+            ("no timestamp", body, without("webhook-timestamp"), 401),
+            ("no webhook-id", body, without("webhook-id"), 401),
+            ("another key", *gitlab(GITLAB_FIXTURE, key=b"other"), 401),
+            ("signed for another body", body + b" ", headers, 401),
+            ("signed for another id", body, {**headers, "webhook-id": "msg-2"}, 401),
+            ("timestamp over 5 minutes old", *gitlab(GITLAB_FIXTURE, timestamp=int(time.time()) - 301), 401),
+            ("timestamp over 5 minutes ahead", *gitlab(GITLAB_FIXTURE, timestamp=int(time.time()) + 310), 401),
+            ("timestamp not a number", body, {**headers, "webhook-timestamp": "soon"}, 401),
+            ("only the legacy token", body, {**without("webhook-signature"), "X-Gitlab-Token": GITLAB_SECRET_TOKEN}, 401),
+            ("long webhook-id", *gitlab(GITLAB_FIXTURE, "i" * 8000), 400),
+            ("no object_kind", *gitlab({k: v for k, v in GITLAB_FIXTURE.items() if k != "object_kind"}), 400),
+            ("object_kind not a string", *gitlab({**GITLAB_FIXTURE, "object_kind": 3}), 400),
+            ("not an object", *gitlab(b"[]"), 400),
+            ("not json", *gitlab(b"{"), 400),
+        ]
+        for name, case_body, case_headers, status in cases:
+            with self.subTest(name):
+                self.assertEqual((await self.intake.post("/webhook/gitlab", case_body, case_headers))[0], status)
+        self.assertEqual(await self.rows(), [])
+
+    async def test_gitlab_legacy_secret_token_is_checked_with_or_without_signing(self):
+        body, headers = gitlab(GITLAB_FIXTURE)
+        legacy = GitLabAdapter("", GITLAB_SECRET_TOKEN)
+        both = GitLabAdapter(GITLAB_SIGNING_TOKEN, GITLAB_SECRET_TOKEN)
+        token = {"x-gitlab-token": GITLAB_SECRET_TOKEN}
+        legacy.verify(Delivery(token, {}, body))
+        both.verify(Delivery({**{k.lower(): v for k, v in headers.items()}, **token}, {}, body))
+        cases = [
+            ("legacy, wrong token", legacy, {"x-gitlab-token": "other"}),
+            ("legacy, no token", legacy, {}),
+            ("both, signed but no token", both, {k.lower(): v for k, v in headers.items()}),
+            ("both, token but unsigned", both, token),
+        ]
+        for name, adapter, case_headers in cases:
+            with self.subTest(name), self.assertRaises(Unauthorized):
+                adapter.verify(Delivery(case_headers, {}, body))
+
     async def test_adding_a_source_is_adding_an_adapter(self):
         self.assertEqual(await self.intake.post("/webhook/teams?validationToken=abc", b"", {}), (200, "abc"))
         body = json.dumps({"clientState": "expected", "tenantId": "t-1", "changeType": "created"}).encode()
@@ -668,7 +823,8 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
 
     def env(self, **extra: str) -> dict:
         env = {k: v for k, v in os.environ.items()
-               if k not in ("GITHUB_WEBHOOK_SECRET", "SLACK_SIGNING_SECRET", "JIRA_WEBHOOK_SECRET", "DATABASE_URL")}
+               if k not in ("GITHUB_WEBHOOK_SECRET", "SLACK_SIGNING_SECRET", "JIRA_WEBHOOK_SECRET", "DATABASE_URL",
+                             *intake.GITLAB_TOKENS)}
         return {**env, "DATABASE_URL": database_url(), **extra}
 
     def test_refuses_to_start_without_a_usable_webhook_secret(self):
@@ -680,15 +836,54 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn(f"GITHUB_WEBHOOK_SECRET {message}", result.stderr)
 
-    def test_refuses_to_start_with_an_unusable_slack_or_jira_secret(self):
-        for name in ("SLACK_SIGNING_SECRET", "JIRA_WEBHOOK_SECRET"):
+    def test_refuses_to_start_with_an_unusable_slack_jira_or_gitlab_secret(self):
+        for name in ("SLACK_SIGNING_SECRET", "JIRA_WEBHOOK_SECRET", *intake.GITLAB_TOKENS):
             for secret, message in (("  ", "is required"), ("secret\n", "has leading or trailing")):
                 with self.subTest(name, secret=repr(secret)):
                     result = subprocess.run([sys.executable, str(HERE / "intake.py")],
                                             env=self.env(GITHUB_WEBHOOK_SECRET=SECRET, **{name: secret}),
                                             capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.returncode, 2)
-                    self.assertIn(f"{name} {message}", result.stderr)
+                    self.assertIn("GITLAB_WEBHOOK_SIGNING_TOKEN or GITLAB_WEBHOOK_SECRET_TOKEN is required"
+                                  if name in intake.GITLAB_TOKENS and message == "is required" else f"{name} {message}",
+                                  result.stderr)
+        # A signing token is whsec_ and base64, as GitLab shows it
+        for token, message in (("not-whsec", "must start with whsec_"), ("whsec_!!", "is not base64")):
+            with self.subTest(token):
+                result = subprocess.run([sys.executable, str(HERE / "intake.py")],
+                                        env=self.env(GITHUB_WEBHOOK_SECRET=SECRET, GITLAB_WEBHOOK_SIGNING_TOKEN=token),
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(f"GITLAB_WEBHOOK_SIGNING_TOKEN {message}", result.stderr)
+
+    async def test_gitlab_is_served_only_with_a_token(self):
+        signed = gitlab(GITLAB_FIXTURE, "process-signed")
+        legacy = (gitlab(GITLAB_FIXTURE)[0], {"Idempotency-Key": "process-legacy", "X-Gitlab-Token": GITLAB_SECRET_TOKEN,
+                                               "Content-Type": "application/json"})
+        cases = (({}, "github", signed, 404),
+                 ({"GITLAB_WEBHOOK_SIGNING_TOKEN": GITLAB_SIGNING_TOKEN}, "github, gitlab", signed, 200),
+                 ({"GITLAB_WEBHOOK_SECRET_TOKEN": GITLAB_SECRET_TOKEN}, "github, gitlab", legacy, 200))
+        for extra, sources, (body, headers), status in cases:
+            with self.subTest(extra=sorted(extra)):
+                port = free_port()
+                process = subprocess.Popen(
+                    [sys.executable, str(HERE / "intake.py")],
+                    env=self.env(GITHUB_WEBHOOK_SECRET=SECRET, LISTEN_PORT=str(port), **extra),
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                try:
+                    for _ in range(300):
+                        try:
+                            if request(f"http://127.0.0.1:{port}/health")[0] == 200:
+                                break
+                        except OSError:
+                            pass
+                        await asyncio.sleep(0.05)
+                    reply = await asyncio.to_thread(request, f"http://127.0.0.1:{port}/webhook/gitlab", body, headers)
+                    self.assertEqual(reply[0], status, reply[1])
+                finally:
+                    process.send_signal(signal.SIGINT)
+                    output = (await asyncio.to_thread(process.communicate, timeout=30))[0]
+                self.assertIn(f"serving /webhook/{{source}} for {sources}", output)
 
     async def test_slack_and_jira_are_served_only_with_their_secrets(self):
         # Without them intake still runs for GitHub, so a rollout before an app or webhook is set up is safe

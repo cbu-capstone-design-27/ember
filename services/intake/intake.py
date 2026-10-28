@@ -40,10 +40,12 @@ from starlette.routing import Route
 
 from adapters import BadRequest, Delivery, SourceAdapter, Unauthorized
 from adapters.github import GitHubAdapter
+from adapters.gitlab import GitLabAdapter
 from adapters.jira import JiraAdapter
 from adapters.slack import SlackAdapter
 from models import Installation, RawEvent
 
+GITLAB_TOKENS = ("GITLAB_WEBHOOK_SIGNING_TOKEN", "GITLAB_WEBHOOK_SECRET_TOKEN")  # either or both, as set on the webhook
 LOG = logging.getLogger("intake")
 MAX_BODY_BYTES = 8 * 1024 * 1024  # nginx's client_max_body_size is the same
 BODIES_IN_MEMORY = 8  # deliveries handled at once; the rest wait unread, so bodies stay under 64 MiB
@@ -234,6 +236,9 @@ def main() -> int:
             adapters.append(SlackAdapter(os.environ["SLACK_SIGNING_SECRET"]))
         if os.environ.get("JIRA_WEBHOOK_SECRET"):
             adapters.append(JiraAdapter(os.environ["JIRA_WEBHOOK_SECRET"]))
+        gitlab_signing, gitlab_secret = (os.environ.get(name, "") for name in GITLAB_TOKENS)
+        if gitlab_signing or gitlab_secret:
+            adapters.append(GitLabAdapter(gitlab_signing, gitlab_secret))
     except ValueError as error:
         print(error, file=sys.stderr)
         return 2
