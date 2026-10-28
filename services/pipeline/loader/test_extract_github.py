@@ -120,7 +120,7 @@ class KindMappingTest(unittest.TestCase):
         merged = draft_for(by_kind("pull_request", f"{gh.REPO}#3")[3])
         self.assertFalse(any(label == "Module" for label, _ in nodes(merged)))
         self.assertEqual(nodes(merged)[("Change", f"{gh.REPO}#3")]["props"]["state"], "merged")
-        self.assertEqual(len(nodes(draft_for(opened))), 1 + 1 + 2 + 3)  # change, container, ada x2, modules
+        self.assertEqual(len(nodes(draft_for(opened))), 1 + 1 + 2 + 2)  # change, container, ada x2, src/app and .
 
     def test_review_with_text_is_a_message_and_every_review_a_verdict(self):
         approval, commented = by_kind("pull_request_review")[:2]
