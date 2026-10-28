@@ -8,7 +8,7 @@ import logging
 from dataclasses import asdict
 from itertools import groupby
 
-from ontology import EDGE_TYPES, ENTITY_TYPES
+from ontology import EDGE_TYPES, ENTITY_TYPES, parse_subgraph_id
 from ontology.config import SCHEMA_VERSION, EmbeddingIdentity
 
 from .facts import SCHEMA_PATH, SOURCE_BACKED, GraphFacts, parse_schema_statements
@@ -30,17 +30,35 @@ def _rel(name: str) -> str:
     return name
 
 
+# Applying a row by the source's ordering value (AGENTS.md; EMBER-85). A row whose occurred_at is not
+# older than the stored one sets its props. An older row only fills props the element lacks, and
+# changes nothing on a deleted node, so a late edit can't undo a newer one or bring back a delete.
+# A row or element without occurred_at (the JSONL loader) always applies. Rows reach a query at most
+# once per element (_rounds): Cypher runs each clause over every row before the next clause, so two
+# rows for one element in one query would both read the state before either wrote.
+def _guarded_set(var: str, deletable: bool) -> str:
+    fill_ok = "newer OR coalesce(cur.deleted, false) = false" if deletable else "true"
+    return (f"WITH {var}, row, properties({var}) AS cur "
+            f"WITH {var}, row, cur, (row.occurred_at IS NULL OR cur.occurred_at IS NULL "
+            "OR row.occurred_at >= cur.occurred_at) AS newer "
+            f"SET {var} += CASE WHEN {fill_ok} THEN row.props ELSE {{}} END "
+            f"SET {var} += CASE WHEN newer THEN {{}} ELSE cur END "
+            f"SET {var}.occurred_at = CASE WHEN newer THEN coalesce(row.occurred_at, cur.occurred_at) "
+            "ELSE cur.occurred_at END ")
+
+
 def node_query(label: str) -> str:
     """Source-backed labels merge on the key the uniqueness constraints in schema.cypher cover,
     (group_id, source, external_id), then stamp the uuid, so a node that already exists under a
     different or missing uuid is adopted instead of tripping the constraint. Labels without a
-    source (Person) merge on (group_id, uuid)."""
+    source (Person) merge on (group_id, uuid). Props apply by occurred_at (_guarded_set), and a
+    placeholder an edge created (edge_query) becomes a real node."""
     if _label(label) in SOURCE_BACKED:
         return (f"UNWIND $rows AS row MERGE (n:{label} "
                 "{group_id: row.group_id, source: row.source, external_id: row.external_id}) "
-                "SET n += row.props SET n.uuid = row.uuid")
+                + _guarded_set("n", deletable=True) + "SET n.uuid = row.uuid REMOVE n.placeholder")
     return (f"UNWIND $rows AS row MERGE (n:{label} {{group_id: row.group_id, uuid: row.uuid}}) "
-            "SET n += row.props")
+            + _guarded_set("n", deletable=True) + "REMOVE n.placeholder")
 
 
 def _node_row(node: NodeRec) -> dict:
@@ -50,15 +68,49 @@ def _node_row(node: NodeRec) -> dict:
             if not node.props.get(key):
                 raise ValueError(f"{node.label} {node.key!r} has no {key}; cannot merge on the schema key")
             row[key] = node.props[key]
+    if node.occurred_at is not None:
+        row["occurred_at"] = node.occurred_at
     return row
 
 
-def edge_query(rel: str, src: str, dst: str) -> str:
-    return (f"UNWIND $rows AS row "
-            f"MATCH (a:{_label(src)} {{group_id: row.group_id, uuid: row.src}}) "
-            f"MATCH (b:{_label(dst)} {{group_id: row.group_id, uuid: row.dst}}) "
-            f"MERGE (a)-[r:{_rel(rel)}]->(b) SET r.group_id = row.group_id SET r += row.props "
-            "RETURN count(r) AS n")
+def _endpoint(var: str, label: str, end: str, placeholders: bool) -> str:
+    """MATCH an edge's endpoint by uuid. With placeholders, a source-backed endpoint that is not in
+    the graph yet is created as a bare node (placeholder: true) on its schema key, which the node's
+    own record fills in when it loads: the Postgres loader loads one subgraph in batches, so an edge
+    can arrive before the node it points to (a Jira comment before its issue's latest version)."""
+    if placeholders and _label(label) in SOURCE_BACKED:
+        return (f"MERGE ({var}:{label} {{group_id: row.group_id, source: row.source, external_id: row.{end}_key}}) "
+                f"ON CREATE SET {var}.uuid = row.{end}, {var}.placeholder = true ")
+    return f"MATCH ({var}:{_label(label)} {{group_id: row.group_id, uuid: row.{end}}}) "
+
+
+def edge_query(rel: str, src: str, dst: str, placeholders: bool = False) -> str:
+    return ("UNWIND $rows AS row "
+            + _endpoint("a", src, "src", placeholders) + _endpoint("b", dst, "dst", placeholders)
+            + f"MERGE (a)-[r:{_rel(rel)}]->(b) SET r.group_id = row.group_id "
+            + _guarded_set("r", deletable=False) + "RETURN count(r) AS n")
+
+
+def _edge_row(edge: EdgeRec, placeholders: bool) -> dict:
+    row = {"group_id": edge.group_id, "src": edge.src_uuid, "dst": edge.dst_uuid, "props": edge.props}
+    if placeholders:
+        row.update(source=parse_subgraph_id(edge.group_id)[1], src_key=edge.src_key, dst_key=edge.dst_key)
+    if edge.occurred_at is not None:
+        row["occurred_at"] = edge.occurred_at
+    return row
+
+
+def _rounds(rows: list[dict], key) -> list[list[dict]]:
+    """Split rows so each element appears at most once per round, keeping each element's rows in order."""
+    rounds: list[list[dict]] = []
+    seen: dict = {}
+    for row in rows:
+        index = seen.get(key(row), 0)
+        seen[key(row)] = index + 1
+        if index == len(rounds):
+            rounds.append([])
+        rounds[index].append(row)
+    return rounds
 
 
 def _chunks(items: list, size: int = CHUNK):
@@ -95,23 +147,27 @@ class Neo4jWriter:
         self._run("MATCH (n) WHERE n.group_id IN $gids DETACH DELETE n", gids=group_ids)
 
     def write_nodes(self, nodes: list[NodeRec]) -> int:
+        """Rows for one node apply in the order given (sorted() is stable)."""
         for label, group in groupby(sorted(nodes, key=lambda n: n.label), key=lambda n: n.label):
             rows = [_node_row(n) for n in group]
-            for chunk in _chunks(rows):
-                self._run(node_query(label), rows=chunk)
+            for round_ in _rounds(rows, key=lambda r: (r["group_id"], r["uuid"])):
+                for chunk in _chunks(round_):
+                    self._run(node_query(label), rows=chunk)
         return len(nodes)
 
-    def write_edges(self, edges: list[EdgeRec]) -> int:
+    def write_edges(self, edges: list[EdgeRec], placeholders: bool = False) -> int:
+        """Returns how many rows matched both endpoints. With placeholders, a missing source-backed
+        endpoint is created bare instead of dropping the edge (_endpoint)."""
         def kind(e: EdgeRec):
             return (e.type, e.src_label, e.dst_label)
 
         written = 0
         for (rel, src, dst), group in groupby(sorted(edges, key=kind), key=kind):
-            rows = [{"group_id": e.group_id, "src": e.src_uuid, "dst": e.dst_uuid, "props": e.props}
-                    for e in group]
-            for chunk in _chunks(rows):
-                result = self._run(edge_query(rel, src, dst), rows=chunk)
-                written += result[0]["n"] if result else 0
+            rows = [_edge_row(e, placeholders) for e in group]
+            for round_ in _rounds(rows, key=lambda r: (r["group_id"], r["src"], r["dst"])):
+                for chunk in _chunks(round_):
+                    result = self._run(edge_query(rel, src, dst, placeholders), rows=chunk)
+                    written += result[0]["n"] if result else 0
         return written
 
     def read_embedding_identity(self):

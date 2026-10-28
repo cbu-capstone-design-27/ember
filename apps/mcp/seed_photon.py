@@ -23,8 +23,6 @@ import asyncpg
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = REPO / "services" / "pipeline" / "fixtures" / "photon"
-sys.path.insert(0, str(REPO / "services" / "embed"))
-import embed  # noqa: E402
 COMMENT_ISSUE = re.compile(r"/issue/(\d+)/comment/")
 
 
@@ -63,6 +61,10 @@ async def main() -> None:
         " values ($1, 'photon', $2, $3, $4, $5, $6) on conflict do nothing",
         [(*row[:5], json.dumps({"payload": row[5]})) for row in rows()])
     await db.close()
+
+    # Imported here so rows() works without the embed worker's packages (the EMBER-85 loader test reuses it)
+    sys.path.insert(0, str(REPO / "services" / "embed"))
+    import embed
 
     client = embed.EmbeddingClient(os.environ["EMBEDDING_URL"], os.environ.get("EMBEDDING_API_KEY") or None,
                                    os.environ.get("EMBEDDING_MODEL") or embed.DEFAULT_MODEL)

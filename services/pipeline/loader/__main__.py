@@ -1,4 +1,7 @@
-"""Load connector JSONL into Neo4j.
+"""Load connector JSONL into Neo4j, or run the extract and load workers against Postgres.
+
+  python -m loader extract [--once]   source_records -> episodes (EMBER-85; see loader/workers.py)
+  python -m loader load [--once]      episodes -> Neo4j
 
   python -m loader --tenant brandon-dev --input data/raw/brandon-dev
   python -m loader --tenant brandon-dev --input data/raw/brandon-dev --dry-run   (no Neo4j)
@@ -37,6 +40,11 @@ def _neo4j_writer():
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ("extract", "load"):
+        from .workers import main as worker_main  # needs the database packages; the JSONL loader does not
+
+        return worker_main(argv)
     parser = argparse.ArgumentParser(prog="loader", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tenant", required=True, help="tenant name, lowercase letters, digits and '-'")

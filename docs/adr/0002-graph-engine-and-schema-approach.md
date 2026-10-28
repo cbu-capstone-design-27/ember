@@ -28,6 +28,10 @@ Adopt Graphiti provisionally as the graph engine, keeping the ontology independe
 
 This ADR stays Proposed until a spike passes.
 
+## Status note (2026-10-27)
+
+The spike below has not run yet, so Graphiti is still Proposed. Meanwhile the loader runs on this ADR's fallback, deterministic structured mapping onto the same ontology, with no LLM: the JSONL loader (EMBER-45) and the extract and load workers (EMBER-85, `services/pipeline/README.md`). On that path `episodes.attrs` holds the mapped nodes and edges and `episodes.text` a human-readable summary (`docs/ingestion/architecture.md`, Stages). Nodes and edges carry the source's `occurred_at`, and a change applies only if it is not older than what is stored, which stands in for Graphiti's fact invalidation. If the spike passes, a Graphiti `GraphLoader` replaces the load stage and `replay --stage load` rebuilds the graph from the stored episodes.
+
 ## Spike (required before Accepted)
 
 Run the five fixtures in `packages/ingestion-envelope/fixtures/`, plus a small set of realistic Slack threads and GitHub PRs, through Graphiti with this ontology on the Spark-hosted LLM and embedding service. Accept only if:
