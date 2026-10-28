@@ -1216,7 +1216,8 @@
           },
           "unit": "short",
           "decimals": 0,
-          "min": 0
+          "min": 0,
+          "noValue": "No events in this range"
         },
         "overrides": []
       },
@@ -1240,6 +1241,75 @@
       "gridPos": {
         "x": 0,
         "y": 39,
+        "w": 24,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Jira events by type",
+      "description": "Jira deliveries intake verified and stored, by raw_events.event_name (jira:issue_updated, comment_created, …), counted by the Postgres exporter (raw_events_received). Jira's admin webhook sends its event type only in the body, so as with Slack this can't come from nginx: a delivery intake refused isn't here, and a retry Jira re-sent counts once. Rows from an unmapped site count too (Unmapped). Each bar is one interval of at least 5 min; the legend's Total covers the whole time range. An interval in which retention deleted rows can show too few.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "interval": "5m",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "expr": "sum by (event_name) (clamp_min(cnpg_raw_events_received_rows{source=\"jira\"} - cnpg_raw_events_received_rows{source=\"jira\"} offset $__interval, 0))",
+          "legendFormat": "{{event_name}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "No events in this range"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ],
+          "sortBy": "Total",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 30,
+      "gridPos": {
+        "x": 0,
+        "y": 47,
         "w": 24,
         "h": 8
       }
@@ -1310,7 +1380,7 @@
       "id": 17,
       "gridPos": {
         "x": 0,
-        "y": 47,
+        "y": 55,
         "w": 8,
         "h": 8
       }
@@ -1371,7 +1441,7 @@
       "id": 18,
       "gridPos": {
         "x": 8,
-        "y": 47,
+        "y": 55,
         "w": 8,
         "h": 8
       }
@@ -1456,7 +1526,7 @@
       "id": 19,
       "gridPos": {
         "x": 16,
-        "y": 47,
+        "y": 55,
         "w": 8,
         "h": 8
       }
@@ -1469,7 +1539,7 @@
       "id": 21,
       "gridPos": {
         "x": 0,
-        "y": 55,
+        "y": 63,
         "w": 24,
         "h": 1
       }
@@ -1547,7 +1617,7 @@
       "id": 22,
       "gridPos": {
         "x": 0,
-        "y": 56,
+        "y": 64,
         "w": 16,
         "h": 7
       }
@@ -1625,7 +1695,7 @@
       "id": 23,
       "gridPos": {
         "x": 16,
-        "y": 56,
+        "y": 64,
         "w": 8,
         "h": 7
       }
@@ -1637,7 +1707,7 @@
       "id": 29,
       "gridPos": {
         "x": 0,
-        "y": 63,
+        "y": 71,
         "w": 24,
         "h": 1
       },
@@ -1673,7 +1743,7 @@
           "id": 20,
           "gridPos": {
             "x": 0,
-            "y": 64,
+            "y": 72,
             "w": 24,
             "h": 10
           }
@@ -1709,7 +1779,7 @@
           "id": 25,
           "gridPos": {
             "x": 0,
-            "y": 74,
+            "y": 82,
             "w": 24,
             "h": 10
           }
