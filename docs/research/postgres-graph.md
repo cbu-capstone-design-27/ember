@@ -1,16 +1,18 @@
 # Postgres as Ember's graph store
 
-Jira: EMBER-117 (Postgres graph store), EMBER-118 (our own Graphiti on Postgres). Date: 2026-10-28. Status: research, for a team decision. If accepted it supersedes [ADR 0002](../adr/0002-graph-engine-and-schema-approach.md)'s choice of Neo4j and Graphiti, not its ontology.
+Jira: EMBER-117 (Postgres graph store), EMBER-118 (a Graphiti fork on Postgres). Date: 2026-10-28, fork design 2026-10-29. Status: research, for a team decision. If accepted it supersedes [ADR 0002](../adr/0002-graph-engine-and-schema-approach.md)'s choice of Neo4j and Graphiti, not its ontology.
 
-Diagrams (open at [excalidraw.com](https://excalidraw.com) with Open): [`ember-ingestion-to-graph`](diagrams/ember-ingestion-to-graph.excalidraw), [`ember-postgres-subgraphs`](diagrams/ember-postgres-subgraphs.excalidraw), [`ember-graphiti-postgres`](diagrams/ember-graphiti-postgres.excalidraw), [`ember-graph-options`](diagrams/ember-graph-options.excalidraw). Benchmark script: [`postgres-graph-bench.py`](postgres-graph-bench.py).
+Diagrams (dark theme; open at [excalidraw.com](https://excalidraw.com) with Open): [`ember-ingestion-to-graph`](diagrams/ember-ingestion-to-graph.excalidraw), [`ember-postgres-subgraphs`](diagrams/ember-postgres-subgraphs.excalidraw), [`ember-graphiti-postgres`](diagrams/ember-graphiti-postgres.excalidraw), [`ember-graph-options`](diagrams/ember-graph-options.excalidraw). Each diagram carries its own legend and numbered notes. Benchmark script: [`postgres-graph-bench.py`](postgres-graph-bench.py).
 
 ## Recommendation
 
 Store the graph in the Postgres we already run, as two plain tables (`graph.nodes`, `graph.edges`) with time columns on edges, queried with joins and recursive CTEs. Do not use Apache AGE, and do not wait for SQL/PGQ: AGE needs a custom CloudNativePG image and was the slowest engine here, and SQL/PGQ was pulled from PostgreSQL 19 before release. Plain tables answered every benchmark query in under 3 ms at 100 tenants, fastest or tied on all four, put vector search and graph expansion in one SQL statement, and remove Neo4j as a second database to run, back up and keep in step.
 
-Most of the pipeline already exists. `extract` (EMBER-85) maps each `source_records` row to an `episodes` row holding the ontology's nodes and edges. Only the `load` stage changes: it writes those episodes into the graph tables instead of Neo4j, in the same transaction that marks them loaded. The rest of Graphiti that Ember needs (episodes, temporal edges, hybrid search with rank fusion and graph-distance rerank) is a small Python package over these tables. LLM extraction is needed only for free text, and only later.
+Most of the pipeline already exists. `extract` (EMBER-85) maps each `source_records` row to an `episodes` row holding the ontology's nodes and edges. Only the `load` stage changes: it writes those episodes into the graph tables instead of Neo4j, in the same transaction that marks them loaded.
 
-Effort: about 2 weeks for the Postgres store, 1.5 weeks for search and the MCP tools, 2 to 3 weeks for the code graph, 1.5 weeks for LLM extraction of decisions. Details in [Effort](#effort).
+For the Graphiti side (EMBER-118), fork Graphiti (Apache-2.0) and add a Postgres driver on these same tables. Graphiti core keeps doing episodes, LLM extraction, entity resolution, bi-temporal edges, search and rerank. Ember adds its ontology, `{tenant}_{source}` group ids, and a bulk path that writes the deterministic mappers' output without LLM calls. The driver is about 100 interface methods in SQL plus seven small hooks in core where Graphiti still runs Cypher directly. Details in [Part 2](#part-2-ember-118-a-graphiti-fork-on-postgres).
+
+Effort: about 2 weeks for the Postgres store, 3 to 4 weeks for the fork and its driver, 1 week for the MCP tools, 2 to 3 weeks for the code graph. Details in [Effort](#effort).
 
 ## Where the pipeline is today
 
@@ -38,7 +40,7 @@ Checked on 2026-10-28.
 | Benchmark (100 tenants) | 0.8 to 2.8 ms, fastest or tied on all four | 524 ms for an untyped 1-hop query | Not testable | 5 to 48 ms |
 | Verdict | **Use** | No | Watch for 20; the tables can get a `CREATE PROPERTY GRAPH` over them then | Drop |
 
-Graphiti itself is not an option on Postgres: graphiti-core 0.31.2 (2026-10-20) supports Neo4j 5.26, FalkorDB, Amazon Neptune and Kuzu (deprecated). Requests for a Postgres backend ([#779](https://github.com/getzep/graphiti/issues/779), pgvector; [#1095](https://github.com/getzep/graphiti/issues/1095), AGE) were closed without one.
+Graphiti as shipped has no Postgres backend, which is why Part 2 forks it: graphiti-core 0.31.2 (2026-10-20) supports Neo4j 5.26, FalkorDB, Amazon Neptune and Kuzu (deprecated). Requests for a Postgres backend ([#779](https://github.com/getzep/graphiti/issues/779), pgvector; [#1095](https://github.com/getzep/graphiti/issues/1095), AGE) were closed without one.
 
 ### Benchmark
 
@@ -52,7 +54,7 @@ Photon as `extract` maps it (1,140 nodes, 2,327 edges, 666 messages with vectors
 | Vector top-10 messages, with thread and author | 2.5 / 2.6 | n/a | 5.8 / **47.7** |
 
 - Every query is a few milliseconds on plain tables at both sizes, because a walk only touches its neighbourhood and every edge lookup is an index range scan. Size does not matter at Ember's scale. Hubs do: a 3-hop walk from a ticket reaches 146 nodes through its project's `CONTAINS` edges.
-- AGE's untyped `-[]-` scans every edge label table. Typed patterns were fine.
+- AGE's untyped 1-hop pattern (`-[]-`) took 524 ms, while its untyped variable-length 3-hop pattern took 4.7 ms. Measured, not yet explained.
 - Neo4j's vector query has to fetch 1,100 candidates to find 10 in one tenant. Postgres filters inside the HNSW scan (`hnsw.iterative_scan`, as `apps/mcp` already does).
 - Load times at 100 tenants: Postgres 55 s (mostly the HNSW build), AGE 3 s through its CSV loader (no vectors), Neo4j 102 s including the vector index. None of this matters for incremental load.
 
@@ -77,17 +79,19 @@ create schema graph;
 -- One row per node. A subgraph is (tenant, source); source 'code' holds the code graph.
 create table graph.nodes (
   id          bigint generated always as identity primary key,
+  uuid        uuid not null unique,   -- Graphiti's id: uuid5 of (tenant, source, label, key)
   tenant      text not null,
   source      text not null,          -- github | gitlab | jira | slack | teams | code
   label       text not null,          -- ontology ENTITY_TYPES (plus File and Symbol for code)
   key         text not null,          -- the mapper's key; external_id for source-backed nodes
   name        text,
-  props       jsonb not null default '{}',
+  summary     text,                   -- Graphiti's entity summary
+  props       jsonb not null default '{}',   -- Graphiti's attributes
   placeholder boolean not null default false,   -- created by an edge before its node's own episode
   deleted     boolean not null default false,
   occurred_at timestamptz,            -- source time of the newest version applied
   embed_text  text,
-  embedding   vector(1024),           -- ADR 0001; written by the embed worker
+  embedding   vector(1024),           -- ADR 0001; Graphiti's name_embedding
   search      tsvector generated always as (to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(embed_text, ''))) stored,
   unique (tenant, source, label, key)
 );
@@ -97,9 +101,12 @@ create index nodes_search on graph.nodes using gin (search);
 -- One row per fact. valid_at/invalid_at: when it was true in the source. created_at/expired_at: when Ember held it.
 create table graph.edges (
   id             bigint generated always as identity primary key,
+  uuid           uuid not null unique,
   tenant         text not null,
   source         text not null,       -- the subgraph that asserted it; 'link' for cross-subgraph edges
-  type           text not null,       -- ontology EDGE_TYPES
+  type           text not null,       -- ontology EDGE_TYPES; Graphiti's edge name
+  fact           text,                -- one sentence, "Ryan is assigned to PHO-15"; what edge search matches
+  fact_embedding vector(1024),
   src            bigint not null references graph.nodes on delete cascade,
   dst            bigint not null references graph.nodes on delete cascade,
   props          jsonb not null default '{}',   -- verdict, link_type, confidence, method
@@ -108,8 +115,11 @@ create table graph.edges (
   created_at     timestamptz not null default now(),
   expired_at     timestamptz,
   episode_id     bigint references episodes (id) on delete set null,   -- what asserted it
-  invalidated_by bigint references episodes (id) on delete set null    -- what ended it: the "why"
+  invalidated_by bigint references episodes (id) on delete set null,   -- what ended it: the "why"
+  search         tsvector generated always as (to_tsvector('simple', coalesce(fact, ''))) stored
 );
+create index edges_fact_embedding on graph.edges using hnsw (fact_embedding vector_cosine_ops);
+create index edges_search on graph.edges using gin (search);
 create unique index edges_current on graph.edges (src, type, dst) where invalid_at is null and expired_at is null;
 create index edges_out on graph.edges (src, type) include (dst, valid_at, invalid_at) where expired_at is null;
 create index edges_in  on graph.edges (dst, type) include (src, valid_at, invalid_at) where expired_at is null;
@@ -122,7 +132,7 @@ create table graph.mentions (
 );
 ```
 
-`nodes.label` and `edges.type` stay free text, checked in code against the ontology the way `neo4j_writer.py` whitelists labels today, so a new type is a code change and not a migration. `EmberConfig` becomes one row in a `graph.config` table.
+`nodes.label` and `edges.type` stay free text, checked in code against the ontology the way `neo4j_writer.py` whitelists labels today, so a new type is a code change and not a migration. `EmberConfig` becomes one row in a `graph.config` table. The `uuid`, `summary`, `fact` and `fact_embedding` columns are what Graphiti's models need (Part 2). `episodes` gains a `uuid` column for the same reason.
 
 ### Trigger, claim and batching
 
@@ -181,78 +191,96 @@ Retrieval in phase 1 can ignore `source = 'link'` edges and search one subgraph 
 
 `search` keeps its `source_records` vector search and adds graph hits (EMBER-118, below). `get_record` adds the record's node and its current 1-hop neighbours, so an agent sees the ticket, its PRs, its Slack threads and the people involved in one call.
 
-## Part 2 (EMBER-118): our Graphiti on Postgres
+## Part 2 (EMBER-118): a Graphiti fork on Postgres
 
-### What Graphiti does, and what Ember needs from it
+Fork Graphiti instead of writing our own. Graphiti core already does the parts that are hard to get right (LLM extraction against an ontology, entity resolution, bi-temporal invalidation, hybrid search and rerank), and it is Apache-2.0. What it lacks is a Postgres backend. Everything below is from Graphiti v0.31.2 (tag `v0.31.2`, commit `d72407d`, 2026-10-20).
 
-| Graphiti | What it does | Ember's version |
+### How Graphiti abstracts storage today
+
+| Layer | Files | What it is |
 |---|---|---|
-| Episodes | Raw input with a reference time; every fact traces back to one | `episodes` exists. `graph.mentions` and `edges.episode_id` are the trace |
-| Entity and edge extraction with an LLM | Extracts entities and facts from each episode against the ontology | Deterministic mapping for everything structured (done, EMBER-85). LLM only for free text: `Decision` nodes, `DECIDED_IN`, `AFFECTS`, `SUPERSEDES`, and `REFERENCES` that keys and paths miss. Runs in extract, writes the same episode `attrs` with `props.origin = 'llm'` and a confidence |
-| Entity resolution | Embedding and LLM dedupe of extracted entities within a `group_id` | Source-backed nodes have exact keys, so no dedupe. People by email (above). LLM-extracted `Decision`s: nearest existing decision in the subgraph by embedding, merged above a threshold. `Module` by normalised path |
-| Bi-temporal edges | `valid_at`, `invalid_at`, `created_at`, `expired_at`; contradicting facts invalidate old ones, decided by the LLM | Same four columns. Invalidation is deterministic from source versions; LLM contradiction checks only for decisions |
-| Hybrid search | BM25, cosine and breadth-first search over nodes and edges | Postgres full text (`tsvector`, `ts_rank_cd`), pgvector cosine, and a depth-limited walk, in SQL. `ts_rank_cd` is not BM25; it only feeds rank fusion, which uses order, not scores. No BM25 extension ships in CNPG's images |
-| Rerankers | RRF, node distance, episode mentions, MMR, cross-encoder | RRF, node distance and mention count. MMR and cross-encoder later, if the benchmark asks for them |
-| Communities | Clusters with LLM summaries | Not needed |
+| Driver base | [`graphiti_core/driver/driver.py`](https://github.com/getzep/graphiti/blob/v0.31.2/graphiti_core/driver/driver.py) | `GraphDriver` ABC: `execute_query(cypher, **params)`, `session()`, `transaction()`, `build_indices_and_constraints()`. `GraphProvider` is a closed enum: `NEO4J`, `FALKORDB`, `KUZU`, `NEPTUNE` |
+| Drivers | `driver/neo4j_driver.py`, `falkordb_driver.py`, `kuzu_driver.py`, `neptune_driver.py` | Each wraps a client and speaks Cypher (or its dialect) |
+| Legacy hooks | [`driver/graph_operations/graph_operations.py`](https://github.com/getzep/graphiti/blob/v0.31.2/graphiti_core/driver/graph_operations/graph_operations.py) (85 methods), [`driver/search_interface/search_interface.py`](https://github.com/getzep/graphiti/blob/v0.31.2/graphiti_core/driver/search_interface/search_interface.py) (12) | Optional objects on the driver (`graph_operations_interface`, `search_interface`). Core calls them first, catches `NotImplementedError`, then falls back to Cypher. No driver in the repo sets them; the comment calls them "kept for backwards compatibility during Phase 1" |
+| New operations | `driver/operations/*.py` (11 ABCs: entity, episode, community and saga nodes; entity, episodic, community, has-episode and next-episode edges; search; graph maintenance), one implementation per driver in `driver/<provider>/operations/` | Used only by the `graphiti.nodes` and `graphiti.edges` namespaces (`namespaces/`). `add_episode` and search do not use them yet |
 
-### Package
+**Where Cypher is still hard-coded in core**, with `match driver.provider` branches:
 
-`packages/ember-graph`, Python, asyncpg. The load worker and the MCP server both use it, which is the "second consumer" `apps/mcp/README.md` waits for before moving graph code to `packages/`.
+| File | Cypher statements | Hooked? |
+|---|---|---|
+| `search/search_utils.py` | 82 | Mostly through `search_interface`. Not hooked: `get_relevant_nodes`, `get_relevant_edges`, `get_edge_invalidation_candidates` |
+| `models/edges/edge_db_queries.py`, `models/nodes/node_db_queries.py` | 58, 28 | Query builders per provider, used by the fallbacks |
+| `nodes.py`, `edges.py` | 37, 33 | Every method checks `graph_operations_interface` first |
+| `utils/bulk_utils.py` (`add_nodes_and_edges_bulk`) | per provider | Hooked (`node_save_bulk`, `edge_save_bulk`, `episodic_*_save_bulk`) |
+| `graphiti.py` | 5 | Not hooked: `_get_or_create_saga`, `summarize_saga`, `remove_episode` |
+| `utils/maintenance/edge_operations.py` | 6 | Not hooked: `filter_existing_duplicate_of_edges` |
+| `search/search_filters.py` | builder | Emits Cypher `WHERE` fragments from `SearchFilters` (dates, labels, edge types) |
+| `graph_queries.py` | DDL | Index and full-text DDL per provider |
 
-```python
-@dataclass(frozen=True)
-class Subgraph:
-    tenant: str
-    source: str                     # "github" ... "code"; ontology.subgraph_id() for the string form
+**How search is built.** [`search/search.py`](https://github.com/getzep/graphiti/blob/v0.31.2/graphiti_core/search/search.py) runs the methods a `SearchConfig` names (`cosine_similarity`, `bm25`, `breadth_first_search`, per [`search_config.py`](https://github.com/getzep/graphiti/blob/v0.31.2/graphiti_core/search/search_config.py)) for edges, nodes, episodes and communities, each a function in `search_utils.py` that hits the database. Rerankers run in Python (`rrf`, `mmr`, `cross_encoder` through a cross-encoder client), except `node_distance` and `episode_mentions`, which query the database and are hooked.
 
-class Graph:
-    def __init__(self, conn: asyncpg.Connection): ...
+**How time is built.** `add_episode` extracts edges with the LLM, then [`utils/maintenance/edge_operations.py`](https://github.com/getzep/graphiti/blob/v0.31.2/graphiti_core/utils/maintenance/edge_operations.py) `resolve_extracted_edges` fetches candidates (`get_edge_invalidation_candidates`, unhooked Cypher), asks the LLM which ones the new fact contradicts, and `_apply_temporal_invalidation` sets `invalid_at`/`expired_at` by comparing dates in Python. Only the candidate fetch touches storage.
 
-    # write: called by load, inside its transaction
-    async def apply(self, episode: Episode) -> None: ...         # nodes, edges, mentions, invalidation, tombstones
-    async def link(self, tenant: str, node_ids: list[int]) -> int: ...   # SAME_AS, cross-source REFERENCES
-    async def drop(self, sub: Subgraph) -> None: ...             # replay and purge
+**Tests.** `tests/helpers_test.py` builds the driver matrix from `GraphProvider`, and `test_graphiti_int.py`, `test_node_int.py` and `test_edge_int.py` run against every driver in it. Adding Postgres to that matrix gives the fork Graphiti's own integration tests.
 
-    # read
-    async def search(self, tenant: str, question: str, vector: list[float], *,
-                     sources: list[str] | None = None, k: int = 10, hops: int = 1,
-                     at: datetime | None = None) -> list[GraphHit]: ...
-    async def neighbours(self, node_id: int, *, types: list[str] | None = None,
-                         at: datetime | None = None) -> list[Fact]: ...
-    async def history(self, node_id: int) -> list[Change]: ...   # every version and invalidation, with its episode
+### The fork
 
-@dataclass(frozen=True)
-class GraphHit:
-    node_id: int
-    source: str; label: str; key: str; name: str
-    score: float
-    facts: list[Fact]                # current edges around it, as "Ryan AUTHORED PHO-15"
+`cbu-capstone-design-27/graphiti`, branch `ember`, on top of the upstream tag.
 
-@dataclass(frozen=True)
-class Fact:
-    type: str
-    src: str; dst: str               # names
-    valid_at: datetime
-    invalid_at: datetime | None
-    episode_key: str | None          # where it came from
-```
+**1. Postgres driver** (`graphiti_core/driver/postgres_driver.py` and `driver/postgres/`, asyncpg):
 
-`search` is one SQL statement:
+- `PostgresDriver(GraphDriver)`, `provider = GraphProvider.POSTGRES`. `execute_query` raises an error naming the caller, so any Cypher fallback the hooks miss fails a test instead of running.
+- `graph_operations_interface` and `search_interface` implemented in SQL over the Part 1 tables, so core never falls back. Then the 11 new operation ABCs for the namespaces.
+- `session()`/`transaction()` can wrap a connection the caller passes in, so Ember's load commits Graphiti's writes and `episodes.loaded_at` together.
+- `build_indices_and_constraints()` does nothing: dbmate migrations own the schema, as for every other Ember table.
 
-1. `vec`: top 50 nodes by `embedding <=> :vector` in the tenant (and `sources`), not deleted, not placeholders.
-2. `fts`: top 50 by `ts_rank_cd(search, websearch_to_tsquery('simple', :question))`.
-3. Fuse by reciprocal rank, `1 / (60 + rank)`.
-4. Expand the top 10 by `hops` over edges valid at `at` (now by default), skipping `CONTAINS` and `MEMBER_OF` so a project or channel does not pull in everything.
-5. Rerank: fused score, plus a bonus by graph distance to the best hit, plus a small one for mention count.
+| Graphiti model | Postgres |
+|---|---|
+| `EntityNode` (`uuid`, `name`, `group_id`, `labels`, `summary`, `name_embedding`, `attributes`) | `graph.nodes`: `group_id` = `tenant || '_' || source`; `labels` = `['Entity', label]`; `attributes` = `props` |
+| `EntityEdge` (`RELATES_TO`: `name`, `fact`, `fact_embedding`, `episodes`, `valid_at`, `invalid_at`, `expired_at`) | `graph.edges`: `name` = `type`; `episodes` from `episode_id` and `graph.mentions` |
+| `EpisodicNode` | The existing `episodes` table: `content` = `text`, `valid_at` = `occurred_at` |
+| `EpisodicEdge` (`MENTIONS`) | `graph.mentions` |
+| `CommunityNode`, `SagaNode` and their edges | Not stored. Methods return nothing; Ember does not call `build_communities` or pass `saga` |
 
-`at` makes every query a point-in-time query. The benchmark's vector-plus-expansion query is steps 1 and 4 and took 2.6 ms at 100 tenants.
+| Search method | SQL |
+|---|---|
+| `bm25` (nodes, edges, episodes) | `search @@ websearch_to_tsquery('simple', q)`, ranked by `ts_rank_cd`. Not true BM25, but rank fusion only uses order |
+| `cosine_similarity` | `embedding <=> $q` / `fact_embedding <=> $q` on HNSW, `hnsw.iterative_scan` for the `group_id` filter |
+| `breadth_first_search` | Recursive CTE over `graph.edges`, depth-limited, current edges only |
+| `node_distance` reranker | The same CTE, returning hop counts from the centre node |
+| `episode_mentions` reranker | `count(*)` from `graph.mentions` |
+| `SearchFilters` | A SQL translation of the same filter object (dates, labels, edge types) |
+
+**2. Core changes** (small, and each one upstreamable):
+
+- Add `POSTGRES` to `GraphProvider`.
+- Hook the seven unhooked call sites into `search_interface` or `graph_operations_interface`, the same try-then-fallback pattern core already uses.
+- Let `search_filters.py` hand the driver the `SearchFilters` object instead of only Cypher fragments.
+- Add Postgres to `tests/helpers_test.py`.
+
+**3. What stays as is:** `add_episode`, the extraction prompts, entity resolution and dedupe, `resolve_extracted_edges` and `_apply_temporal_invalidation`, `search()` with its configs and recipes, RRF, MMR and cross-encoder rerankers, the LLM, embedder and cross-encoder clients.
+
+### Ember on the fork
+
+- **Subgraphs.** `group_id` = `ontology.subgraph_id(tenant, source)`. Search takes `group_ids=ontology.tenant_subgraphs(tenant)`, plus `{tenant}_code`.
+- **Ontology.** `ENTITY_TYPES`, `EDGE_TYPES` and `EDGE_TYPE_MAP` in `services/pipeline/ontology` already have the shapes `add_episode(entity_types=, edge_types=, edge_type_map=)` takes. ADR 0002 wrote them for this.
+- **Structured records, no LLM.** Load turns an episode's `attrs` (EMBER-85's deterministic mapping) into `EntityNode`s and `EntityEdge`s with uuid5 ids and calls `add_nodes_and_edges_bulk` through the driver, inside its own transaction. Part 1's ordering, delete, placeholder and invalidation rules run in load before the call. `fact` is generated from a template per edge type ("{src} is assigned to {dst}").
+- **Free text, with the LLM.** Slack messages and comment bodies also go to `add_episode` with a narrowed ontology (`Decision`, `Module`, and `REFERENCES`/`DECIDED_IN`/`AFFECTS`/`SUPERSEDES`), so Graphiti extracts decisions and resolves them against existing nodes. Its contradiction check then invalidates superseded decision facts. This is the only place Ember pays for LLM calls.
+- **Links.** Part 1's link step (`SAME_AS` by email, keys, paths, symbols) writes through the same bulk call.
+- **Code.** The code subgraph's records arrive like any other source and use the structured path.
+- **Search.** `graphiti.search_(query, config=COMBINED_HYBRID_SEARCH_RRF, group_ids=...)`, with `center_node_uuid` set to the top hit for a node-distance pass when the agent asks about one object.
 
 ### MCP tools
 
-- `search(question, k, sources)` keeps its arguments and its `Hit` shape. It runs today's `source_records` vector search and `Graph.search` with the same query vector, fuses both lists by reciprocal rank, and adds `related` to each hit: up to five facts around the hit's node. A hit from either list resolves to its `source_records` row for `url` and `snippet`.
-- `get_record(source, object_id)` adds `node` (label, key, name) and `facts` (current 1-hop edges, with `valid_at`).
-- One new tool, `history(source, object_id)`, returns `Graph.history`: what changed, when, and from which record. It is the "why did it change" question in ADR 0002.
-- All three stay read-only (`default_transaction_read_only`) and run under the tenant's row-level security role.
+- `search(question, k, sources)` keeps its arguments and its `Hit` shape. It runs today's `source_records` vector search and Graphiti's hybrid search, fuses both lists by reciprocal rank, and adds `related` to each hit: up to five facts (edge `fact` strings with `valid_at`) around the hit's node.
+- `get_record(source, object_id)` adds `node` (label, key, name, summary) and `facts` (current 1-hop edges), read through `graphiti.nodes` and `graphiti.edges`.
+- One new tool, `history(source, object_id)`: every fact about the object, including invalidated ones, with the episode that set or ended it.
+- All three stay read-only and run under the tenant's row-level security role.
+
+### Upstream
+
+- **Tracking.** Keep our changes as three commits on `ember`: core hooks, Postgres driver, tests. On each upstream release, rebase `ember` onto the new tag, run Graphiti's integration tests on Postgres and Ember's e2e-check, then bump the pinned tag in `services/pipeline/requirements.txt` (`graphiti-core @ git+https://github.com/cbu-capstone-design-27/graphiti@ember-v0.31.2`). The hooks touch files upstream edits often (`search_utils.py`, `graphiti.py`), so expect small conflicts each rebase.
+- **Upstreaming.** Offer the core hooks first: they help every driver and need no Postgres knowledge from the maintainers. Offer the driver as a `graphiti-core[postgres]` extra after it passes their test matrix. Postgres requests ([#779](https://github.com/getzep/graphiti/issues/779), [#1095](https://github.com/getzep/graphiti/issues/1095)) were closed without a backend, so ask in an issue before opening the PR.
 
 ### Code graph
 
@@ -292,7 +320,7 @@ Our clone only needs the tree-sitter pass, with explicit kinds and keys that joi
 
 Rationale comments become `props.doc` on their symbol. Communities and god nodes are skipped: they are views, not facts.
 
-**Ingest.** A push to the default branch already reaches `enrich:github`, which holds the only GitHub credential. It fetches the changed files at the pushed SHA, parses them, and writes one `source_records` row per file (`source = 'code'`, `kind = 'file'`, `object_id = 'org/repo:path'`, `version = SHA`). Extract maps it deterministically, and load applies it like any other episode. A symbol missing from a file's new version gets `invalid_at` = the commit time, so "what did `extract()` call last month" works the same way as every other time query. A first import of a repository is a reconcile over the tree at `HEAD`.
+**Ingest.** A push to the default branch already reaches `enrich:github`, which holds the only GitHub credential. It fetches the changed files at the pushed SHA, parses them, and writes one `source_records` row per file (`source = 'code'`, `kind = 'file'`, `object_id = 'org/repo:path'`, `version = SHA`). Extract maps it deterministically, and load writes it through the fork's bulk path like any other structured record. A symbol missing from a file's new version gets `invalid_at` = the commit time, so "what did `extract()` call last month" works the same way as every other time query. A first import of a repository is a reconcile over the tree at `HEAD`.
 
 **Cross-subgraph links** (source `link`, made by the link step):
 
@@ -311,29 +339,33 @@ One developer who knows `services/pipeline`. Days are working days.
 
 | Phase | Work | Days |
 |---|---|---|
-| A. Postgres store | Migration for `graph.*`; `PgGraphWriter` ported from `neo4j_writer.py` (ordering rule, tombstones, placeholders, mentions); edge invalidation per mapper; link step (email, keys); e2e-check in SQL; deploy extract and load | 9 to 11 |
-| B. Search | `packages/ember-graph` search, neighbours, history; embed worker also embeds `graph.nodes`; MCP `search`, `get_record`, `history`; the retrieval suite in `docs/benchmarks.md` with and without the graph | 7 to 8 |
-| C. Code graph | Tree-sitter extractor for Python and TypeScript (Ember's own languages); `code` kind in `enrich:github`; mapper; the four cross links | 10 to 15 |
-| D. LLM extraction | Decisions and missed references from free text, in extract, through `services/pipeline/models` | 7 to 8 |
+| A. Postgres store | Migration for `graph.*`; load's writer ported from `neo4j_writer.py` (ordering rule, tombstones, placeholders, mentions); edge invalidation per mapper; link step; e2e-check in SQL; deploy extract and load | 9 to 11 |
+| B. Fork and driver | Core hooks and enum; `PostgresDriver` with the two legacy interfaces (97 methods, many one query each) and the 11 operation ABCs; Graphiti's integration tests on Postgres | 15 to 20 |
+| C. Ember on the fork | Bulk path from episode `attrs`; fact templates; `add_episode` for free text with the narrowed ontology; MCP `search`, `get_record`, `history`; retrieval suite with and without the graph | 7 to 9 |
+| D. Code graph | Tree-sitter extractor for Python and TypeScript; `code` kind in `enrich:github`; mapper; the four cross links | 10 to 15 |
 
-A and B replace what Graphiti and Neo4j were for. C and D can follow in either order.
+A comes first and stands alone. B and C replace what Neo4j and Graphiti were for. D can follow either.
 
 ## Risks
 
-- **We own the temporal logic.** Graphiti would have given us invalidation; ours is deterministic and testable, but its rules (which edges a record lists in full) are per mapper and need tests per source.
+- **Graphiti's storage layer is mid-migration.** Core has two driver abstractions (the legacy hooks and the new operations) and still runs Cypher directly in seven places. Our driver is the first to rely on the hooks, so we will find gaps, and upstream may move them under us. Rebases will conflict in `search_utils.py` and `graphiti.py`.
+- **Structured invalidation is still ours.** The bulk path skips Graphiti's LLM contradiction check, so the per-mapper rules in Part 1 (which edges a record lists in full) need tests per source.
+- **Two writers of the same tables.** Load's bulk path and `add_episode` both write `graph.*`. The per-subgraph advisory lock must cover both.
 - **Hubs in walks.** A project's `CONTAINS` edges reach every ticket. Walks skip container edges and cap depth; the benchmark's 3-hop query shows the size of the problem (146 nodes from one ticket).
 - **One database is one failure domain.** CNPG runs one instance on local storage, and `cluster.yaml` has no backup configured. That is true today for everything else in Ember; moving the graph in raises the stakes but not the work.
 - **Ontology changes.** `SAME_AS`, `File`, `Symbol`, `CALLS`, `IMPORTS` and `INHERITS`, and new `CONTAINS`/`TOUCHES`/`REFERENCES` pairs, need a schema decision ([`docs/graph-schema.md`](../graph-schema.md), Extending).
 - **The graphify clone can grow without end.** Upstream supports about 40 languages. Two cover Ember.
 - **Neo4j work is retired.** `neo4j_writer.py`, `schema.cypher`, the Neo4j HelmRelease and the Neo4j half of the benchmarks go away once phase A lands. That is Brandon's code; the decision needs him.
+- **LLM cost on free text.** `add_episode` makes several LLM calls per message. Narrowing the ontology and sending only messages longer than a threshold keeps it bounded; the local model's structured output is ADR 0002's open risk.
 
 ## Open questions for the team
 
 1. Do we add `SAME_AS` (Person → Person) to the ontology, or merge people into one tenant-level `Person` with per-source `Identity` nodes?
-2. Does ADR 0002 get superseded by a new ADR for "graph in Postgres, Graphiti-like package of our own"? This doc is the input, not the decision.
+2. Does ADR 0002 get superseded by a new ADR for "graph in Postgres, Graphiti fork with a Postgres driver"? This doc is the input, not the decision.
 3. How long are `episodes` kept? Replays and node history read them.
-4. Which free-text facts justify the LLM pass: decisions only, or also references the key and path rules miss?
+4. Which free-text records go through `add_episode`: every Slack message and comment, or only those over a length threshold?
 5. Is Python plus TypeScript enough for the first code graph, and is the default branch enough, or do open PR branches need their own code state?
+6. Do we ask Zep before forking whether they would take a Postgres driver upstream?
 
 ## Sources
 
@@ -343,5 +375,5 @@ Fetched 2026-10-28.
 - Apache AGE: [release notes](https://age.apache.org/release-notes/) (1.7.0 for PG18, 2026-01-21), [GitHub releases](https://github.com/apache/age/releases) (`PG18/v1.8.0-rc0`, 2026-07-08), [EDB 1.8.0 notes](https://www.enterprisedb.com/docs/pg_extensions/apache_age/rel_notes/apache_age_1.8.0_rel_notes/) (2026-08-11, PG18 only), [roadmap discussion #2305](https://github.com/apache/age/discussions/2305).
 - CloudNativePG: [image volume extensions](https://cloudnative-pg.io/docs/current/imagevolume_extensions/) (PG18+), [extension images](https://github.com/cloudnative-pg/postgres-extensions-containers) (no AGE).
 - pgvector: [iterative index scans](https://github.com/pgvector/pgvector#iterative-index-scans).
-- Graphiti: [README](https://github.com/getzep/graphiti) (drivers), [search config](https://github.com/getzep/graphiti/blob/main/graphiti_core/search/search_config.py) (methods and rerankers), [graphiti-core on PyPI](https://pypi.org/project/graphiti-core/) (0.31.2, 2026-10-20), issues [#779](https://github.com/getzep/graphiti/issues/779) and [#1095](https://github.com/getzep/graphiti/issues/1095).
+- Graphiti: [v0.31.2 source](https://github.com/getzep/graphiti/tree/v0.31.2) (commit `d72407d`, read 2026-10-29: `driver/`, `search/`, `nodes.py`, `edges.py`, `utils/bulk_utils.py`, `utils/maintenance/edge_operations.py`, `tests/helpers_test.py`), [README](https://github.com/getzep/graphiti) (drivers), [search config](https://github.com/getzep/graphiti/blob/main/graphiti_core/search/search_config.py) (methods and rerankers), [graphiti-core on PyPI](https://pypi.org/project/graphiti-core/) (0.31.2, 2026-10-20), issues [#779](https://github.com/getzep/graphiti/issues/779) and [#1095](https://github.com/getzep/graphiti/issues/1095).
 - graphify: [README](https://github.com/Graphify-Labs/graphify), [ARCHITECTURE.md](https://github.com/Graphify-Labs/graphify/blob/v8/ARCHITECTURE.md), [graphifyy on PyPI](https://pypi.org/project/graphifyy/) (0.9.97, 2026-10-27).
