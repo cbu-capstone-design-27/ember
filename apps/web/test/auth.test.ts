@@ -90,7 +90,17 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
         "select table_name from information_schema.tables where table_schema = $1",
         [POSTGRES_SCHEMA],
       );
-      assert.deepEqual(rows.map((r) => r.table_name).sort(), ["account", "deviceCode", "rateLimit", "session", "user", "verification"]);
+      assert.deepEqual(rows.map((r) => r.table_name).sort(), [
+        "account",
+        "deviceCode",
+        "invitation",
+        "member",
+        "organization",
+        "rateLimit",
+        "session",
+        "user",
+        "verification",
+      ]);
     });
 
     // Sign-up writes the user, then its password account; a failure between them must leave neither
@@ -269,7 +279,12 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
         assert.equal(token.status, 200, JSON.stringify(token.json));
         assert.equal(token.json.token_type, "Bearer");
         assert.ok(token.json.expires_in > 0);
-        assert.deepEqual(await whoami(auth, bearer(token.json.access_token)), { name: "Ada", email });
+        assert.deepEqual(await whoami(auth, bearer(token.json.access_token)), {
+          name: "Ada",
+          email,
+          organizations: [],
+          active: null,
+        });
       });
 
       test("a code gives out one token: using it again is refused", async () => {
@@ -309,7 +324,12 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
         assert.deepEqual(await findDeviceRequest(auth, user_code), { state: "approved" });
         const token = await poll(device_code);
         assert.equal(token.status, 200, JSON.stringify(token.json));
-        assert.deepEqual(await whoami(auth, bearer(token.json.access_token)), { name: "Eve", email: eve.email });
+        assert.deepEqual(await whoami(auth, bearer(token.json.access_token)), {
+          name: "Eve",
+          email: eve.email,
+          organizations: [],
+          active: null,
+        });
       });
 
       test("a code another account claimed first can't be decided by anyone else", async () => {

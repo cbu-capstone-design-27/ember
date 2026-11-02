@@ -26,27 +26,9 @@
   border-radius: var(--radius-sm);
 }
 
+/* Holds the organization switcher (components/org-switcher.tsx). */
 .workspace {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  height: var(--control-sm);
-  padding: 0 var(--space-2);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-}
-
-.workspaceName {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.workspace code {
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-regular);
-  color: var(--text-3);
+  min-width: 0;
 }
 
 .nav {

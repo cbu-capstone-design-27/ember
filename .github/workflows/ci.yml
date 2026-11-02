@@ -352,7 +352,7 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: "1"
         run: npm run build
-      - name: Auth tests (SQLite and Postgres)
+      - name: Auth and organization tests (SQLite and Postgres)
         env:
           TEST_POSTGRES_URL: postgres://postgres:ci@localhost:5432/ember
         run: npm test

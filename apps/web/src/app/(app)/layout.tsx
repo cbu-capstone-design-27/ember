@@ -1,19 +1,21 @@
 // The signed-in app: sidebar on wide screens, top bar on narrow ones.
-// Every page under (app) needs a user who has finished onboarding.
+// Every page under (app) needs a user who has finished onboarding and belongs
+// to an organization (EMBER-124); the sidebar shows which one and switches.
 
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Avatar } from "../../components/avatar.tsx";
 import { SourceLogo, Wordmark } from "../../components/brand.tsx";
 import { NavLinks, SignOutButton } from "../../components/nav.tsx";
+import { OrgSwitcher } from "../../components/org-switcher.tsx";
 import { PreviewProvider } from "../../components/preview/store.tsx";
-import { requireOnboardedUser } from "../../lib/session.ts";
+import { requireOrganization } from "../../lib/session.ts";
 import { sourceInfo } from "../../lib/sources.ts";
 import { loadPreviewWorkspace } from "../../lib/workspace/load.ts";
 import styles from "./shell.module.css";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
-  const user = await requireOnboardedUser();
+  const user = await requireOrganization();
   const { workspace, now } = loadPreviewWorkspace(user.sources);
   return (
     <PreviewProvider snapshot={workspace} serverNow={now} me={{ id: user.id, name: user.name, email: user.email }}>
@@ -23,10 +25,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             <Wordmark size={20} />
           </Link>
 
-          <p className={styles.workspace}>
-            <span className={styles.workspaceName}>Kestrel Labs</span>
-            <code>preview</code>
-          </p>
+          <div className={styles.workspace}>
+            <OrgSwitcher
+              organizations={user.memberships.map(({ id, name, slug }) => ({ id, name, slug }))}
+              activeId={user.organization.id}
+            />
+          </div>
 
           <NavLinks className={styles.nav} linkClassName={styles.navLink} />
 

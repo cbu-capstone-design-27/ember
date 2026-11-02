@@ -65,6 +65,27 @@ struct TokenAnswer {
 #[derive(Deserialize)]
 struct WhoAmI {
     email: String,
+    /// The user's organizations (EMBER-124). `None` from a web app older than them.
+    organizations: Option<Vec<Organization>>,
+    /// The slug of the organization this session works in.
+    active: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Organization {
+    name: String,
+    slug: String,
+}
+
+impl WhoAmI {
+    /// The organization this session works in, if the user is in one.
+    fn active_organization(&self) -> Option<&Organization> {
+        let active = self.active.as_deref()?;
+        self.organizations
+            .as_ref()?
+            .iter()
+            .find(|org| org.slug == active)
+    }
 }
 
 // ---- login ----
@@ -103,7 +124,7 @@ pub async fn login(url: Option<String>, no_browser: bool) -> Result<(), Error> {
     println!("Waiting for you to approve it in the browser...");
 
     let token = wait_for_token(&client, &url, &code).await?;
-    let email = who_am_i(&client, &url, &token).await?;
+    let email = who_am_i(&client, &url, &token).await?.email;
     let credentials = Credentials { url, token, email };
     save(&credentials)?;
     println!("Successfully authenticated as {}", credentials.email);
@@ -165,8 +186,16 @@ pub async fn status() -> Result<(), Error> {
     let Some(credentials) = load()? else {
         return Err(not_logged_in());
     };
-    let email = who_am_i(&client()?, &credentials.url, &credentials.token).await?;
-    println!("Logged in to {} as {email}", credentials.url);
+    let url = &credentials.url;
+    let who = who_am_i(&client()?, url, &credentials.token).await?;
+    println!("Logged in to {url} as {}", who.email);
+    match (who.active_organization(), &who.organizations) {
+        (Some(org), _) => println!("Organization: {} ({})", org.name, org.slug),
+        (None, Some(_)) => {
+            println!("No organization yet. Create or join one at {url}/organizations")
+        }
+        (None, None) => {} // the web app predates organizations
+    }
     Ok(())
 }
 
@@ -214,7 +243,7 @@ pub async fn logout() -> Result<(), Error> {
 }
 
 /// Asks the web app who owns `token`. A 401 means it expired or was revoked, so we are not logged in.
-async fn who_am_i(client: &Client, url: &str, token: &str) -> Result<String, Error> {
+async fn who_am_i(client: &Client, url: &str, token: &str) -> Result<WhoAmI, Error> {
     let response = client
         .get(format!("{url}/api/whoami"))
         .bearer_auth(token)
@@ -232,7 +261,7 @@ async fn who_am_i(client: &Client, url: &str, token: &str) -> Result<String, Err
             "{url} answered whoami with something unexpected. Is it the Ember web app?"
         ))
     })?;
-    Ok(who.email)
+    Ok(who)
 }
 
 // ---- the web app's address ----

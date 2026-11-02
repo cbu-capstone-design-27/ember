@@ -2,7 +2,7 @@
 
 The Ember web app: sign-up and onboarding, the dashboard, the knowledge graph explorer, and settings. Jira: EMBER-51 (scaffold), epic EMBER-13 (dashboard and onboarding). Stack decision: [ADR 0006](../../docs/adr/0006-web-app-stack.md).
 
-Next.js (App Router, TypeScript) serves the pages and the auth API from one Node server. Auth is [Better Auth](https://www.better-auth.com/) with email and password. GitHub OAuth (EMBER-12) and organizations/tenants are later additions. The Electron desktop app (EMBER-17) will wrap this same app; it doesn't get a second UI.
+Next.js (App Router, TypeScript) serves the pages and the auth API from one Node server. Auth is [Better Auth](https://www.better-auth.com/) with email and password, plus [organizations](#organizations) (EMBER-124). GitHub OAuth (EMBER-12) is a later addition. The Electron desktop app (EMBER-17) will wrap this same app; it doesn't get a second UI.
 
 ## What's in it
 
@@ -14,10 +14,12 @@ Next.js (App Router, TypeScript) serves the pages and the auth API from one Node
 | `/login` | Email and password. Goes back to `?next=` (same-site paths only). |
 | `/dashboard` | **Needs attention** (where the sources disagree, with the evidence from each, and a one-click fix), summary numbers, **work in flight** (each ticket with its PR and where it was last discussed), your sources, and recent activity. Everything is clickable: cards, evidence, rows, numbers and activity open a detail drawer. |
 | `/graph` | The knowledge graph, one shaded region per source (GitHub, Jira, Slack) with people in the middle and the cross-source links between them. Drag, zoom, search, filter by subgraph and node type. Click a node for the same details and actions as the drawer. `?focus=<node id>` opens on one node, and every "Show in graph" link uses it. |
-| `/settings` | Name, sources, preview data (reset), password, log out. |
+| `/organizations` | Create or join an organization. Anyone signed in who belongs to none lands here. Lists invites sent to your email and the organizations you're in ([Organizations](#organizations)). |
+| `/invite/<id>` | An invite link: log in or sign up, then accept or decline. Only the invited email can. |
+| `/settings` | The organization (name, slug, tenant, your role), its members, invites (owners and admins), the linked tenant (Ember admins), then name, sources, preview data (reset), password, log out. |
 | `/device` | Where `ember auth login` sends the browser: check the code matches the terminal, then approve or deny ([CLI sign-in](#cli-sign-in)). Signed-out users log in or sign up first and come back. |
-| `/api/auth/*` | Better Auth's endpoints (`sign-up/email`, `sign-in/email`, `sign-out`, `get-session`, `update-user`, `change-password`, `device/*`, …). |
-| `/api/whoami` | The name and email a CLI token belongs to ([CLI sign-in](#cli-sign-in)). |
+| `/api/auth/*` | Better Auth's endpoints (`sign-up/email`, `sign-in/email`, `sign-out`, `get-session`, `update-user`, `change-password`, `device/*`, `organization/*`, …). |
+| `/api/whoami` | The name, email and organizations a CLI token belongs to ([CLI sign-in](#cli-sign-in)). |
 
 Light and dark mode follow the system setting (`prefers-color-scheme`), in CSS only, so there's no flash.
 
@@ -72,7 +74,7 @@ The rest is real code that keeps working when the data comes from the graph inst
 | `file:./data/ember.db` (default) | SQLite, through Node's built-in `node:sqlite` (no native module) |
 | `postgres://user:pass@host:5432/db` | Postgres |
 
-The auth tables (`user`, `session`, `account`, `verification`, `deviceCode` for CLI sign-in, and `rateLimit`) are created or updated when the server starts (`src/instrumentation.ts`), which also logs where they are, e.g. `[db] Auth database: Postgres, schema web, on hv-worker-1.tail470a31.ts.net:5432/ember`, or `SQLite file … (DATABASE_URL not set)`. The password is never logged. An existing database gains the `sources` column on the next start, and its users are asked to pick sources when they next log in.
+The auth tables (`user`, `session`, `account`, `verification`, `deviceCode` for CLI sign-in, `rateLimit`, and `organization`, `member` and `invitation`) are created or updated when the server starts (`src/instrumentation.ts`), which also logs where they are, e.g. `[db] Auth database: Postgres, schema web, on hv-worker-1.tail470a31.ts.net:5432/ember`, or `SQLite file … (DATABASE_URL not set)`. The password is never logged. An existing database gains the `sources` column on the next start, and its users are asked to pick sources when they next log in.
 
 Better Auth's rate limits are counted in the `rateLimit` table, not in memory, so every copy of the app shares them. They apply in production only: sign-in and sign-up allow 3 requests per 10 seconds per client IP, then answer `429`. The IP comes from `x-forwarded-for`, which `next start` sets itself. Behind a reverse proxy that appends to it, set `advanced.ipAddress.trustedProxies` in `src/lib/auth.ts`; otherwise Better Auth logs a warning and every client shares one limit.
 
@@ -151,7 +153,7 @@ Every request below is JSON (`content-type: application/json`) to the web app's 
 
    Once approved: `200 {"access_token": "…", "token_type": "Bearer", "expires_in": 604800, "scope": ""}`. The token is a normal session. It stops working after 7 days without use, and any use more than a day after its last refresh (`whoami`, for one) moves that to 7 days from then, so a CLI in regular use stays signed in. When a call answers 401, the CLI asks for `ember auth login` again. Store the token (EMBER-87 keeps it in the config directory with `0600`). The code is deleted at this point, so reopening the link in the browser shows it as unknown.
 
-4. **Who am I.** `GET /api/whoami` with `Authorization: Bearer <token>` answers `200 {"name": "Ada Lovelace", "email": "ada@example.com"}`, or `401 {"error": "unauthorized", …}` for a missing, wrong or expired token. Accounts have no username, so `Successfully authenticated as <username>` prints the email. `ember auth status` is the same call.
+4. **Who am I.** `GET /api/whoami` with `Authorization: Bearer <token>` answers `200 {"name": "Ada Lovelace", "email": "ada@example.com", "organizations": [{"name": "Kestrel Labs", "slug": "kestrel-labs", "tenant": "ember-development", "role": "owner"}], "active": "kestrel-labs"}`, or `401 {"error": "unauthorized", …}` for a missing, wrong or expired token. Accounts have no username, so `Successfully authenticated as <username>` prints the email. `ember auth status` is the same call, and prints the `active` organization. `active` is the slug of the organization this session works in, or `null` when the user is in none. The CLI's session is its own, so it is the first organization the user joined.
 
 5. **Log out.** `POST /api/auth/sign-out` with `Authorization: Bearer <token>` and body `{}` ends the session on the server (`200 {"success": true}`). Then delete the stored token.
 
@@ -166,6 +168,21 @@ curl -s -X POST $B/api/auth/device/token -H 'content-type: application/json' \
 curl -s $B/api/whoami -H 'authorization: Bearer <access_token>'
 ```
 
+## Organizations
+
+An organization is a project (EMBER-124). Its members see the same data, and a person can belong to several. They come from Better Auth's [organization plugin](https://www.better-auth.com/docs/plugins/organization), with roles `owner`, `admin` and `member`. `src/lib/organizations.ts` adds Ember's rules on top.
+
+- **Tenant.** Each organization owns one tenant, the id ingestion files its records under (`raw_events.tenant`, `source_records.tenant`, the `{tenant}_{source}` subgraphs). It's the `tenant` column on `organization`, unique. A new organization's tenant is its slug, so slugs follow the tenant rules (`[a-z0-9][a-z0-9-]*`, at most 63 characters, `src/lib/tenant.ts`) and can't change after creation. A slug is refused if another organization holds that tenant or, on Postgres, if ingestion already has data under it (`installations`, `raw_events` or `source_records`). That data can only be reached by linking.
+- **Creating.** Anyone signed in can create one at `/organizations` and becomes its owner. A user in no organization is sent there from every page of the signed-in app.
+- **Inviting.** Owners and admins invite by email in Settings. Ember doesn't send email yet, so the inviter copies the link (`/invite/<id>`) and sends it. The invite also shows on `/organizations` when someone with that email logs in. Only an account with the invited email can accept, invites last a week, and owners and admins can revoke them. Re-inviting an email replaces its open invite.
+- **Switching.** The sidebar's menu switches between your organizations. The choice is the session's `activeOrganizationId`, so it persists. If it's unset, or you've left that organization, the first one you joined is active.
+
+Emails aren't verified yet, so anyone who signs up with an invited address can accept that invite. The invite email follow-up should add verification.
+
+### Linking a tenant
+
+To give an organization data that's already stored, such as the team's `ember-development`, an Ember admin (an email in `EMBER_ADMIN_EMAILS`) sets its tenant in Settings → Linked tenant. The slug stays the same. A tenant belongs to one organization at most. Only admins can link, because a link hands over every record under that tenant.
+
 ## Settings
 
 | Variable | Required | Meaning |
@@ -173,6 +190,7 @@ curl -s $B/api/whoami -H 'authorization: Bearer <access_token>'
 | `BETTER_AUTH_SECRET` | yes | Signs session cookies. Generate with `openssl rand -hex 32`. Never commit it. |
 | `BETTER_AUTH_URL` | yes, outside local dev | The address users open, e.g. `http://localhost:3000`. Used for cookie and origin checks. |
 | `DATABASE_URL` | no | See above. The container defaults to `file:/data/ember.db`. |
+| `EMBER_ADMIN_EMAILS` | no | Comma-separated emails of Ember admins, who can [link an organization to an existing tenant](#linking-a-tenant). Unset means nobody can. |
 
 ## Run
 
@@ -212,6 +230,12 @@ Give the tests a database of their own: they leave their test accounts behind. W
   - saving and validating `sources`
   - CLI sign-in, called the way the CLI calls it: a token after approval and `whoami` naming the user; a used, denied or expired code; polling too fast; an unknown `client_id`; a made-up token; logging out with the token; browser sign-in not exposing the session token in a header
   - the `/device` page: showing a code claims nothing, so the user can switch accounts before approving; a code another account claimed can't be decided; deciding after signing out or a second time
+- `test/organizations.test.ts` covers organizations, on SQLite and Postgres:
+  - creating one: the creator is its owner, the slug is the tenant, and it becomes active
+  - slugs that aren't valid tenant ids, taken by another organization, or naming a tenant ingestion holds data for (Postgres with the ingestion migrations applied); the slug can't change
+  - invites: shown to the invited email, accepted only by it, members can't invite, revoked and expired invites can't be used, and invites last a week
+  - switching between two organizations, and the choice persisting in the session
+  - linking a tenant: Ember admins only, one organization per tenant (also enforced by the database)
 - `test/workspace.test.ts` covers:
   - reading references and signals out of text
   - the preview data's consistency

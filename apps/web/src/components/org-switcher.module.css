@@ -1,0 +1,106 @@
+/* The sidebar's organization menu: a row like the nav links, opening a list below it. */
+
+.switcher {
+  position: relative;
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  list-style: none;
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary:hover {
+  background: var(--surface-2);
+}
+
+.summary code {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-regular);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+.summary svg {
+  flex: none;
+  color: var(--text-3);
+  transform: rotate(90deg);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.switcher[open] .summary svg {
+  transform: rotate(-90deg);
+}
+
+.name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu {
+  position: absolute;
+  z-index: var(--z-overlay);
+  top: calc(100% + var(--space-1));
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: var(--space-0-5);
+  padding: var(--space-1);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.menu ul {
+  margin: 0;
+  padding: 0 0 var(--space-1);
+  list-style: none;
+  display: grid;
+  gap: var(--space-0-5);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.item:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.item[aria-current="true"] {
+  color: var(--text);
+}

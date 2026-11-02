@@ -4,7 +4,8 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { getAuth } from "./auth.ts";
+import { activeOrganizationId, getAuth } from "./auth.ts";
+import { activeMembership, listMemberships, type Membership, type OrgAdapter } from "./organizations.ts";
 import { userSources, type SourceId } from "./sources.ts";
 
 export interface CurrentUser {
@@ -15,11 +16,15 @@ export interface CurrentUser {
   createdAt: Date;
 }
 
-export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
+const getSession = cache(async () => {
   // Read the request first: it marks the page dynamic, so the build never
   // creates the auth instance (which needs the runtime secret) to prerender.
   const requestHeaders = await headers();
-  const session = await getAuth().api.getSession({ headers: requestHeaders });
+  return getAuth().api.getSession({ headers: requestHeaders });
+});
+
+export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
+  const session = await getSession();
   if (!session) return null;
   const { id, name, email, createdAt } = session.user;
   return { id, name, email, createdAt, sources: userSources(session.user) };
@@ -37,6 +42,32 @@ export async function requireOnboardedUser(next?: string): Promise<CurrentUser> 
   const user = await requireUser(next);
   if (user.sources.length === 0) redirect("/onboarding");
   return user;
+}
+
+export interface CurrentOrganizations {
+  memberships: Membership[];
+  /** The organization this session works in (lib/organizations.ts activeMembership). */
+  active: Membership | null;
+}
+
+/** The signed-in user's organizations (EMBER-124). Empty when signed out. */
+export const getCurrentOrganizations = cache(async (): Promise<CurrentOrganizations> => {
+  const session = await getSession();
+  if (!session) return { memberships: [], active: null };
+  const { adapter } = await getAuth().$context;
+  const memberships = await listMemberships(adapter as unknown as OrgAdapter, session.user.id);
+  return { memberships, active: activeMembership(memberships, activeOrganizationId(session.session)) };
+});
+
+/**
+ * Like requireOnboardedUser, and sends users who belong to no organization to
+ * the create-or-join screen. Every page in the signed-in app works in one.
+ */
+export async function requireOrganization(next?: string): Promise<CurrentUser & { organization: Membership; memberships: Membership[] }> {
+  const user = await requireOnboardedUser(next);
+  const { memberships, active } = await getCurrentOrganizations();
+  if (!active) redirect("/organizations");
+  return { ...user, organization: active, memberships };
 }
 
 /** Only same-site paths are allowed after log-in, never another origin. */
