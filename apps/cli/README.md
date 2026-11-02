@@ -1,9 +1,10 @@
 # apps/cli
 
-`ember`, the Ember command-line interface. Epic EMBER-11; the scaffold and `ember status` are EMBER-82, `ember auth` is EMBER-87. Written in Rust ([ADR 0007](../../docs/adr/0007-cli-in-rust.md)).
+`ember`, the Ember command-line interface. Epic EMBER-11; the scaffold and `ember status` are EMBER-82, `ember auth` is EMBER-87, the terminal UI is EMBER-120. Written in Rust ([ADR 0007](../../docs/adr/0007-cli-in-rust.md)).
 
 | Command | What it does |
 | --- | --- |
+| `ember` | In a terminal, opens the [terminal UI](#terminal-ui). Anywhere else (a pipe, a script), prints the help and exits 2. |
 | `ember status` | What ingestion data is in Postgres: for each source, how many `source_records` rows there are and the newest `occurred_at`. |
 | `ember auth login` | Sign in to the web app through the browser, and store the token. |
 | `ember auth status` | Who you're logged in as, and on which web app. |
@@ -102,6 +103,19 @@ Logged out of http://localhost:3000
 - `logout` ends the session on the web app, then deletes the file. If the web app can't be reached or no longer accepts the token, it still deletes the file and warns you that the session may still be open there. With nothing stored it says "Not logged in" and exits 0.
 - The token is never printed.
 
+### Checking sign-in against the cluster
+
+EMBER-120 checks this flow against the web app on the cluster, which is tailnet-only (EMBER-112). Run it once that deploy lands, and again after changing sign-in on either side:
+
+1. Join the cluster's tailnet, as in [`apps/web/README.md`](../web/README.md#cluster-postgres) step 1.
+2. Point the CLI at the deployed web app. Its address is in the EMBER-112 deploy docs (`infra/k8s/README.md`): `export EMBER_URL=<web app address>`.
+3. `ember auth login`. The browser opens the web app's `/device` page with the same code the terminal shows. Sign in, approve, and the terminal prints `Successfully authenticated as <your email>`.
+4. `ember auth status` prints `Logged in to <web app address> as <your email>`, then your organization. On a fresh cluster you have none until you create one, or an Ember admin adds you to the one linked to `ember-development`.
+5. `ember` opens the terminal UI. The Workspace screen shows the same account and organization.
+6. `ember auth logout` prints `Logged out of <web app address>`, and `ember auth status` then says `Not logged in`.
+
+If a step fails, the error names the address and the reason (unreachable, HTTP status). The [request reference](../web/README.md#cli-sign-in) has a `curl` version of the same flow, to tell a CLI problem from a web app one.
+
 The credentials file is `credentials.json`, holding the web app's address, the token and your email. The directory is created if it's missing.
 
 | OS | Default location |
@@ -118,11 +132,29 @@ On Linux and macOS the file is created with mode `0600` and the directory with `
 | 1 | Not logged in; sign-in denied, expired or already used; the token was rejected; the web app couldn't be reached or answered something unexpected. Every request gives up after 10 s. |
 | 2 | Configuration: the web app address isn't an http(s) URL, or there's no config directory. Also bad arguments. |
 
+## Terminal UI
+
+`ember` with no command, in a terminal, opens a full-screen UI (EMBER-120, built with [ratatui](https://ratatui.rs)). It's a skeleton for now:
+
+- **Status**: each source's record count, newest record and state (live, backfilling, not connected), like `ember status`.
+- **Workspace**: who you're signed in as and the organization the CLI works in, as `ember auth status` reports them. Below that, the organization's members and what it ingests.
+
+| Key | Does |
+| --- | --- |
+| `Tab`, `→`, `l` / `Shift+Tab`, `←`, `h` | Next / previous screen |
+| `1`, `2` | Jump to a screen |
+| `q`, `Esc`, `Ctrl+C` | Quit |
+
+The sign-in is real: the UI opens straight away and asks the web app in the background, so the corner says "checking sign-in…" for a moment. Everything else is preview data, the made-up Kestrel Labs team from the web app's preview, labelled as such on screen. That data is in `src/tui/data.rs` (`Preview::stub`). When the API decision (EMBER-115) lands, a call to that API replaces it, and the screens stay as they are.
+
+Quitting puts the terminal back as it was, and so does a crash. Exit codes: 0 when you quit, 1 when the terminal can't be used, 2 for plain `ember` without a terminal (it prints the help instead).
+
 ## Development
 
 ```sh
 cd apps/cli
-cargo run -- status                           # build and run
+cargo run                                     # build and open the terminal UI
+cargo run -- status                           # build and run a command
 cargo test                                    # unit tests, and the end-to-end tests that need no database
 cargo fmt                                     # format
 cargo clippy --all-targets -- -D warnings     # lint
@@ -144,8 +176,14 @@ They use the databases `ember_test_cli_status` and `ember_test_cli_unmigrated`. 
 | `src/db.rs` | `DATABASE_URL`, connecting, and wording errors without the password |
 | `src/status.rs` | `ember status`: the query and the table |
 | `src/auth.rs` | `ember auth`: the device flow, `whoami`, sign-out, and the credentials file |
+| `src/tui/mod.rs` | The terminal UI: taking over the terminal, the event loop, asking for the sign-in in the background |
+| `src/tui/app.rs` | Its state and what each key does |
+| `src/tui/data.rs` | What it shows: the sign-in, and the preview data that stands in for the API |
+| `src/tui/view.rs` | The tab bar and key hints, and the formatting the screens share |
+| `src/tui/status.rs`, `src/tui/workspace.rs` | The two screens. Their tests draw them on ratatui's test backend and read the text back |
 | `tests/status.rs` | Runs the built binary, against Postgres for the ignored tests |
 | `tests/auth.rs` | Runs the built binary against a fake web app; needs no database |
+| `tests/tui.rs` | Plain `ember` without a terminal prints the help instead of opening the UI |
 | `rust-toolchain.toml` | The Rust version everyone and CI build with |
 
 ## Conventions

@@ -3,18 +3,25 @@
 mod auth;
 mod db;
 mod status;
+mod tui;
 
 use std::fmt;
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 /// The Ember command-line interface.
 #[derive(Parser)]
-#[command(name = "ember", version, about)]
+#[command(
+    name = "ember",
+    version,
+    about,
+    after_help = "Run `ember` with no command in a terminal to open the terminal UI."
+)]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -54,13 +61,15 @@ pub enum Error {
     Database(String),
     /// Signing in failed, or the web app could not be reached or did not accept the token. Exits 1.
     Auth(String),
+    /// The terminal UI could not take over the terminal. Exits 1.
+    Terminal(String),
 }
 
 impl Error {
     fn exit_code(&self) -> ExitCode {
         match self {
             Error::Config(_) => ExitCode::from(2),
-            Error::Database(_) | Error::Auth(_) => ExitCode::from(1),
+            Error::Database(_) | Error::Auth(_) | Error::Terminal(_) => ExitCode::from(1),
         }
     }
 }
@@ -68,9 +77,10 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Config(message) | Error::Database(message) | Error::Auth(message) => {
-                f.write_str(message)
-            }
+            Error::Config(message)
+            | Error::Database(message)
+            | Error::Auth(message)
+            | Error::Terminal(message) => f.write_str(message),
         }
     }
 }
@@ -79,8 +89,17 @@ impl fmt::Display for Error {
 async fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Status => status::run().await,
-        Command::Auth { command } => match command {
+        // The UI needs a keyboard and a screen. Piped or in a script, print the help instead,
+        // the way `ember` with no command always did.
+        None if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() => {
+            tui::run().await
+        }
+        None => {
+            eprint!("{}", Cli::command().render_help());
+            return ExitCode::from(2);
+        }
+        Some(Command::Status) => status::run().await,
+        Some(Command::Auth { command }) => match command {
             AuthCommand::Login { url, no_browser } => auth::login(url, no_browser).await,
             AuthCommand::Status => auth::status().await,
             AuthCommand::Logout => auth::logout().await,
