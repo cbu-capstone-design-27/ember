@@ -89,3 +89,96 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Organization (EMBER-124): facts, then lists of members and open invites. */
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-4);
+  padding: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.facts dt {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.facts dd {
+  margin: var(--space-0-5) 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  border-top: var(--border-width) solid var(--border);
+}
+
+.aside + .list {
+  border-top: 0;
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+}
+
+.listRow + .listRow {
+  border-top: var(--border-width) solid var(--border);
+}
+
+.listText {
+  display: grid;
+  gap: var(--space-0-5);
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.listText b {
+  font-weight: var(--weight-medium);
+}
+
+.listText span {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.listActions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.listAlert {
+  margin: 0 var(--space-4) var(--space-4);
+}
+
+.empty {
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--border-width) solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+
+.inviteRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 10rem;
+  gap: var(--space-4);
+}
+
+@media (max-width: 600px) {
+  .facts,
+  .inviteRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

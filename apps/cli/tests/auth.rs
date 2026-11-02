@@ -11,6 +11,10 @@ use std::sync::{Arc, Mutex};
 
 const TOKEN: &str = "tok_9f8e7d6c5b4a";
 const EMAIL: &str = "ada@example.com";
+/// Tokens whose whoami answers differ from TOKEN's (EMBER-124): a user in no
+/// organization, and a web app from before organizations existed.
+const TOKEN_NO_ORG: &str = "tok_no_org";
+const TOKEN_OLD_SERVER: &str = "tok_old_server";
 
 /// One request the fake received.
 #[derive(Clone, Debug)]
@@ -152,12 +156,28 @@ fn authorized(request: &Request) -> bool {
 
 fn whoami(request: &Request) -> (u16, String) {
     if authorized(request) {
-        (
+        return (
+            200,
+            format!(
+                r#"{{"name":"Ada Lovelace","email":"{EMAIL}","organizations":[
+                    {{"name":"Kestrel Labs","slug":"kestrel-labs","tenant":"ember-development","role":"owner"}},
+                    {{"name":"Photon","slug":"photon","tenant":"photon","role":"member"}}
+                ],"active":"photon"}}"#
+            ),
+        );
+    }
+    match request.header("authorization") {
+        Some(h) if h == format!("Bearer {TOKEN_NO_ORG}") => (
+            200,
+            format!(
+                r#"{{"name":"Ada Lovelace","email":"{EMAIL}","organizations":[],"active":null}}"#
+            ),
+        ),
+        Some(h) if h == format!("Bearer {TOKEN_OLD_SERVER}") => (
             200,
             format!(r#"{{"name":"Ada Lovelace","email":"{EMAIL}"}}"#),
-        )
-    } else {
-        (401, r#"{"error":"unauthorized"}"#.into())
+        ),
+        _ => (401, r#"{"error":"unauthorized"}"#.into()),
     }
 }
 
@@ -434,7 +454,7 @@ fn bad_ember_url_is_a_config_error_and_the_flag_wins_over_it() {
 // ---- status ----
 
 #[test]
-fn status_names_the_account_and_server() {
+fn status_names_the_account_server_and_active_organization() {
     let app = web_app(|_| token_ok());
     let dir = tempfile::tempdir().unwrap();
     sign_in_with(dir.path(), &app.url, TOKEN);
@@ -442,9 +462,41 @@ fn status_names_the_account_and_server() {
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(
         stdout(&output),
-        format!("Logged in to {} as {EMAIL}\n", app.url)
+        format!(
+            "Logged in to {} as {EMAIL}\nOrganization: Photon (photon)\n",
+            app.url
+        )
     );
     assert_no_token(&output);
+}
+
+#[test]
+fn status_without_an_organization_says_where_to_get_one() {
+    let app = web_app(|_| token_ok());
+    let dir = tempfile::tempdir().unwrap();
+    sign_in_with(dir.path(), &app.url, TOKEN_NO_ORG);
+    let output = ember(dir.path(), &["auth", "status"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "Logged in to {url} as {EMAIL}\nNo organization yet. Create or join one at {url}/organizations\n",
+            url = app.url
+        )
+    );
+}
+
+#[test]
+fn status_against_a_web_app_without_organizations_names_only_the_account() {
+    let app = web_app(|_| token_ok());
+    let dir = tempfile::tempdir().unwrap();
+    sign_in_with(dir.path(), &app.url, TOKEN_OLD_SERVER);
+    let output = ember(dir.path(), &["auth", "status"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        format!("Logged in to {} as {EMAIL}\n", app.url)
+    );
 }
 
 #[test]

@@ -265,6 +265,7 @@ services:
       DATABASE_URL: "${DATABASE_URL:-file:/data/ember.db}"
       BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:-}"
       BETTER_AUTH_URL: "${BETTER_AUTH_URL:-http://localhost:3000}"
+      EMBER_ADMIN_EMAILS: "${EMBER_ADMIN_EMAILS:-}"
     volumes:
       - web-data:/data
 

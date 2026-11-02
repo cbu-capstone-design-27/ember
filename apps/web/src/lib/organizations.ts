@@ -1,0 +1,162 @@
+// Organizations (EMBER-124). An organization is a project: its members share
+// one tenant, the id ingestion files every record under (`raw_events.tenant`,
+// `source_records.tenant`, the `{tenant}_{source}` subgraphs). A person can
+// belong to several. Better Auth's organization plugin stores them (tables
+// `organization`, `member`, `invitation`); this module adds the tenant checks
+// (the id rules themselves are in tenant.ts), the active organization, and
+// linking an organization to a tenant that already holds data.
+
+import type { Auth } from "./auth.ts";
+import { isPostgresDatabase } from "./db.ts";
+import { tenantProblem } from "./tenant.ts";
+
+export { slugFromName, TENANT_MAX_LENGTH, TENANT_PATTERN, tenantProblem } from "./tenant.ts";
+
+/**
+ * Ember admins: the emails in EMBER_ADMIN_EMAILS, comma-separated. Only they
+ * can link an organization to an existing tenant, because the link hands over
+ * every record stored under it.
+ */
+export function isEmberAdmin(email: string, setting = process.env.EMBER_ADMIN_EMAILS): boolean {
+  if (!setting) return false;
+  const wanted = email.trim().toLowerCase();
+  return setting.split(",").some((entry) => entry.trim().toLowerCase() === wanted);
+}
+
+export function canInvite(role: string): boolean {
+  return role.split(",").some((r) => r === "owner" || r === "admin");
+}
+
+/**
+ * Whether ingestion already files data under `tenant` (Postgres only; SQLite
+ * has no ingestion tables). A new organization can't take such a tenant by
+ * choosing its slug: only an Ember admin can link to it. `raw_events` counts
+ * too, so deliveries enrich hasn't reached yet already hold their tenant. It
+ * has no index on `tenant`, which is fine for a check that runs once per new
+ * organization.
+ */
+export async function tenantHasData(db: unknown, tenant: string): Promise<boolean> {
+  if (!isPostgresDatabase(db)) return false;
+  const { rows: tables } = await db.pool.query<{ name: string }>(
+    "select name from unnest(array['installations', 'raw_events', 'source_records']) as name where to_regclass('public.' || name) is not null",
+  );
+  for (const { name } of tables) {
+    // `name` comes from the fixed list above, never from the request
+    const { rowCount } = await db.pool.query(`select 1 from public.${name} where tenant = $1 limit 1`, [tenant]);
+    if (rowCount) return true;
+  }
+  return false;
+}
+
+export interface Membership {
+  id: string;
+  name: string;
+  slug: string;
+  tenant: string;
+  role: string;
+}
+
+interface OrganizationRow {
+  id: string;
+  name: string;
+  slug: string;
+  tenant: string;
+}
+
+interface MemberRow {
+  organizationId: string;
+  role: string;
+  createdAt: Date;
+}
+
+/** The slice of Better Auth's adapter this module uses. */
+export interface OrgAdapter {
+  findMany<T>(data: {
+    model: string;
+    where?: { field: string; value: string | string[]; operator?: "in" | "eq" | "ne" }[];
+    sortBy?: { field: string; direction: "asc" | "desc" };
+  }): Promise<T[]>;
+  findOne<T>(data: { model: string; where: { field: string; value: string }[] }): Promise<T | null>;
+  update<T>(data: { model: string; where: { field: string; value: string }[]; update: Record<string, unknown> }): Promise<T | null>;
+}
+
+/** Every organization `userId` belongs to, oldest membership first. */
+export async function listMemberships(adapter: OrgAdapter, userId: string): Promise<Membership[]> {
+  const members = await adapter.findMany<MemberRow>({
+    model: "member",
+    where: [{ field: "userId", value: userId }],
+    sortBy: { field: "createdAt", direction: "asc" },
+  });
+  if (members.length === 0) return [];
+  const organizations = await adapter.findMany<OrganizationRow>({
+    model: "organization",
+    where: [{ field: "id", operator: "in", value: members.map((m) => m.organizationId) }],
+  });
+  const byId = new Map(organizations.map((o) => [o.id, o]));
+  return members.flatMap((m) => {
+    const org = byId.get(m.organizationId);
+    return org ? [{ id: org.id, name: org.name, slug: org.slug, tenant: org.tenant, role: m.role }] : [];
+  });
+}
+
+/**
+ * The organization a session works in: the one it last switched to, while the
+ * user still belongs to it, else their first. Null for a user in none.
+ */
+export function activeMembership(memberships: Membership[], activeOrganizationId: string | null | undefined) {
+  return memberships.find((m) => m.id === activeOrganizationId) ?? memberships[0] ?? null;
+}
+
+export type LinkResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Point an organization at an existing tenant, such as `ember-development`,
+ * so its members see the data stored there. Ember admins only. A tenant
+ * belongs to one organization at most (the column is unique too).
+ */
+export async function linkTenant(
+  adapter: OrgAdapter,
+  { actorEmail, organizationId, tenant }: { actorEmail: string; organizationId: string; tenant: string },
+): Promise<LinkResult> {
+  if (!isEmberAdmin(actorEmail)) return { ok: false, error: "Only Ember admins can link a tenant." };
+  const problem = tenantProblem(tenant);
+  if (problem) return { ok: false, error: problem };
+  const org = await adapter.findOne<OrganizationRow>({ model: "organization", where: [{ field: "id", value: organizationId }] });
+  if (!org) return { ok: false, error: "That organization no longer exists." };
+  if (org.tenant === tenant) return { ok: true };
+  const holder = await adapter.findOne<OrganizationRow>({ model: "organization", where: [{ field: "tenant", value: tenant }] });
+  if (holder) return { ok: false, error: `${tenant} is already linked to ${holder.name}.` };
+  await adapter.update({ model: "organization", where: [{ field: "id", value: organizationId }], update: { tenant } });
+  return { ok: true };
+}
+
+export interface PendingInvitation {
+  id: string;
+  email: string;
+  role: string;
+  organizationId: string;
+  organizationName?: string;
+  expiresAt: Date;
+}
+
+function stillOpen<T extends { status: string; expiresAt: Date | string }>(invitations: T[], now = new Date()) {
+  return invitations
+    .filter((i) => i.status === "pending" && new Date(i.expiresAt) > now)
+    .map((i) => ({ ...i, expiresAt: new Date(i.expiresAt) }));
+}
+
+/**
+ * Open invitations addressed to `email`, shown when that person logs in.
+ * Looked up on the server: the plugin's own endpoint refuses accounts whose
+ * email isn't verified, and Ember doesn't verify emails yet.
+ */
+export async function invitationsFor(auth: Auth, email: string): Promise<PendingInvitation[]> {
+  const invitations = await auth.api.listUserInvitations({ query: { email } });
+  return stillOpen(invitations);
+}
+
+/** An organization's open invitations, for its owners and admins (the plugin checks the role). */
+export async function invitationsOf(auth: Auth, organizationId: string, headers: Headers): Promise<PendingInvitation[]> {
+  const invitations = await auth.api.listInvitations({ query: { organizationId }, headers });
+  return stillOpen(invitations);
+}

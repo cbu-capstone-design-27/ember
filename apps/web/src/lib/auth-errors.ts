@@ -9,6 +9,12 @@ const MESSAGES: Record<string, string> = {
   PASSWORD_TOO_LONG: "That password is too long.",
   INVALID_PASSWORD: "Your current password isn't right.",
   CREDENTIAL_ACCOUNT_NOT_FOUND: "This account doesn't use a password.",
+  // Organizations (EMBER-124)
+  ORGANIZATION_ALREADY_EXISTS: "That slug is taken. Pick another.",
+  ORGANIZATION_SLUG_ALREADY_TAKEN: "That slug is taken. Pick another.",
+  INVITATION_NOT_FOUND: "This invite was revoked, has expired, or was already used.",
+  YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION: "This invite is for a different email address.",
+  USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION: "They're already a member.",
 };
 
 export function authErrorMessage(

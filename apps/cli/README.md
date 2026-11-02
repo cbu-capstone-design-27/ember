@@ -86,6 +86,7 @@ Waiting for you to approve it in the browser...
 Successfully authenticated as ada@example.com
 $ ember auth status
 Logged in to http://localhost:3000 as ada@example.com
+Organization: Kestrel Labs (kestrel-labs)
 $ ember auth logout
 Logged out of http://localhost:3000
 ```
@@ -97,6 +98,7 @@ Logged out of http://localhost:3000
 - `--url <address>` or `EMBER_URL` picks the web app (`--url` wins). It must be an `http://` or `https://` address. The address is stored with the token, so `status` and `logout` talk to the server that issued it.
 - Running `login` while logged in goes through the flow again and replaces the token.
 - `status` asks the web app whether the token still works. A token expires after 7 days without use, and `status` counts as use. If it has expired or was revoked, `status` says "Not logged in. Run `ember auth login`." and leaves the file for `login` to replace.
+- `status` also prints the organization the CLI works in (EMBER-124). The CLI has a session of its own, so switching in the web app's sidebar doesn't change it: it's the first organization you joined, until the CLI can switch. With none, it says where to create or join one.
 - `logout` ends the session on the web app, then deletes the file. If the web app can't be reached or no longer accepts the token, it still deletes the file and warns you that the session may still be open there. With nothing stored it says "Not logged in" and exits 0.
 - The token is never printed.
 
