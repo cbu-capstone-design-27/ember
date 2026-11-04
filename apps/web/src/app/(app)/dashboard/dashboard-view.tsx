@@ -1,71 +1,80 @@
-"use client";
-
-// The dashboard. Everything on it is live against the preview workspace:
-// numbers open the items behind them, rows and activity open the drawer, and
-// insight actions change the data (see components/preview/store.tsx).
+// The dashboard (EMBER-125): the active organization's real records, read from
+// `source_records` for its tenant (lib/source-records.ts). Nothing here changes
+// anything, so it is a plain server component.
+//
+// "Needs attention" and "Work in flight" are not here: both need tickets linked
+// to pull requests, which doesn't exist yet. The graph page still shows the
+// preview workspace.
 
 import Link from "next/link";
-import { useMemo } from "react";
-import { Avatar } from "../../../components/avatar.tsx";
 import { SourceLogo } from "../../../components/brand.tsx";
-import { ArrowRightIcon, CheckIcon, ChevronRightIcon, DraftIcon, MergeIcon, PullRequestIcon, XIcon } from "../../../components/icons.tsx";
-import { usePreview } from "../../../components/preview/store.tsx";
-import { sourceInfo, type SourceId } from "../../../lib/sources.ts";
-import { changeId, contextRefs, nodeId } from "../../../lib/workspace/model.ts";
-import { activity, sourceSummaries, stats, workInFlight, type WorkRow } from "../../../lib/workspace/summary.ts";
+import { ArrowRightIcon } from "../../../components/icons.tsx";
+import {
+  MESSAGE_WINDOW_DAYS,
+  type ActivityItem,
+  type Breakdown,
+  type Dashboard,
+  type SourceCount,
+} from "../../../lib/source-records.ts";
+import { SOURCE_IDS, sourceInfo, type SourceId } from "../../../lib/sources.ts";
 import { ago, stamp } from "../../../lib/workspace/time.ts";
 import styles from "./dashboard.module.css";
-import { InsightsPanel } from "./insights.tsx";
 
-function listOf(names: string[]): string {
-  if (names.length <= 1) return names.join("");
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+/** What the page managed to read: records, a server with nowhere to read them, or a failed read. */
+export type DashboardState =
+  | { kind: "records"; dashboard: Dashboard }
+  | { kind: "unavailable" }
+  | { kind: "failed" };
+
+function isSourceId(source: string): source is SourceId {
+  return (SOURCE_IDS as readonly string[]).includes(source);
 }
 
-function scrollTo(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+function sourceName(source: string): string {
+  return isSourceId(source) ? sourceInfo(source).name : source;
 }
 
-export function DashboardView({ sources }: { sources: SourceId[] }) {
-  const { model, insights, editCount, reset } = usePreview();
-  const withData = model.sources;
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+}
 
+export function DashboardView({
+  organization,
+  picked,
+  state,
+  now,
+}: {
+  organization: { name: string; tenant: string };
+  /** The sources the user chose in onboarding, shown on the sources card even before they have records. */
+  picked: SourceId[];
+  state: DashboardState;
+  now: number;
+}) {
+  const dashboard = state.kind === "records" ? state.dashboard : null;
+  const empty = dashboard !== null && dashboard.sources.length === 0;
   return (
     <div className={styles.page}>
       <header className={styles.header}>
         <h1>Dashboard</h1>
         <p className={styles.note}>
-          <Link className="link" href="/settings#preview-data" title="About preview data">
-            Preview data
-          </Link>
           <span>
-            {model.ws.organization.name} is a made-up team. Changes stay in this browser.
-            {editCount > 0 && (
-              <>
-                {" "}
-                {editCount} change{editCount === 1 ? "" : "s"} made.{" "}
-                <button type="button" className={styles.inlineLink} onClick={reset}>
-                  Start over
-                </button>
-              </>
-            )}
+            {organization.name} · tenant <span className="mono">{organization.tenant}</span>
           </span>
         </p>
       </header>
 
-      {withData.length === 0 ? (
-        <NoPreviewData sources={sources} />
-      ) : (
+      {state.kind === "unavailable" && <Unavailable />}
+      {state.kind === "failed" && <Failed />}
+      {empty && <NoRecords organization={organization.name} tenant={organization.tenant} />}
+      {dashboard && !empty && (
         <>
-          <StatCards />
+          <Summary dashboard={dashboard} />
           <div className={styles.columns}>
             <div className={styles.mainCol}>
-              <InsightsPanel />
-              {model.ws.jira && <WorkTable rows={workInFlight(model, insights)} />}
+              <ActivityFeed items={dashboard.activity} now={now} />
             </div>
             <div className={styles.sideCol}>
-              <SourcesCard sources={sources} />
-              <ActivityFeed />
+              <SourcesCard counts={dashboard.sources} picked={picked} now={now} />
             </div>
           </div>
         </>
@@ -74,264 +83,97 @@ export function DashboardView({ sources }: { sources: SourceId[] }) {
   );
 }
 
-function NoPreviewData({ sources }: { sources: SourceId[] }) {
+function Unavailable() {
   return (
     <section className={styles.empty}>
-      <h2>No preview data for {listOf(sources.map((s) => sourceInfo(s).name))} yet</h2>
+      <h2>This server can't read records</h2>
       <p>
-        The preview workspace has GitHub, Jira and Slack data. Add one of them to your sources to explore the dashboard
-        and the graph while the other connectors are built.
+        Records live in Postgres, next to the ingestion pipeline. This copy of the app runs on a local SQLite file, so there is nothing to
+        show. Point <span className="mono">DATABASE_URL</span> at the Postgres that ingestion writes to.
       </p>
-      <Link className="btn btn-primary" href="/settings">
-        Manage sources <ArrowRightIcon />
+    </section>
+  );
+}
+
+function Failed() {
+  return (
+    <section className={styles.empty} role="alert">
+      <h2>Couldn't read your records</h2>
+      <p>The database didn't answer, or doesn't have the ingestion tables. Reload to try again; the details are in the server log.</p>
+    </section>
+  );
+}
+
+function NoRecords({ organization, tenant }: { organization: string; tenant: string }) {
+  return (
+    <section className={styles.empty}>
+      <h2>No records for {organization} yet</h2>
+      <p>
+        Ember files everything a connected source sends under the tenant <span className="mono">{tenant}</span>. Nothing is filed there yet:
+        connect a source, or wait for the first delivery to be processed. If your team's data is under another tenant, an Ember admin can
+        link it in Settings.
+      </p>
+      <Link className="btn btn-primary" href="/settings#sources">
+        Connect a source <ArrowRightIcon />
       </Link>
     </section>
   );
 }
 
-function StatCards() {
-  const { model, insights, open } = usePreview();
-  const s = stats(model, insights);
-  const openPrs = [...model.changes.values()]
-    .filter((p) => p.state === "open" || p.state === "draft")
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .map((p) => nodeId.change(changeId(p)));
-  const linkedMessages = [...model.messages.values()]
-    .filter((m) => {
-      const r = contextRefs(model, m);
-      return r.issues.length > 0 || r.changes.length > 0;
-    })
-    .sort((a, b) => b.at.localeCompare(a.at))
-    .map((m) => nodeId.message(m.ts));
+function breakdownText(b: Breakdown, none: string): string {
+  const parts = Object.entries(b.bySource).map(([source, n]) => `${sourceName(source)} ${n}`);
+  return parts.length > 0 ? parts.join(" · ") : none;
+}
 
+function Summary({ dashboard: { summary } }: { dashboard: Dashboard }) {
   const cards = [
-    {
-      label: "Needs attention",
-      value: s.attention.total,
-      detail: s.attention.high ? `${s.attention.high} high priority` : "Nothing urgent",
-      tone: s.attention.high ? "danger" : "neutral",
-      missing: null,
-      onClick: () => scrollTo("attention"),
-      hint: "Go to the list",
-    },
-    {
-      label: "Open pull requests",
-      value: s.pullRequests?.open,
-      detail: s.pullRequests && `${s.pullRequests.awaitingReview} waiting for review · ${s.pullRequests.drafts} drafts`,
-      tone: "neutral",
-      missing: "GitHub",
-      onClick: () => open({ kind: "list", title: "Open pull requests", ids: openPrs }),
-      hint: "See them",
-    },
-    {
-      label: "Tickets in flight",
-      value: s.inFlight?.total,
-      detail: s.inFlight && `${s.inFlight.inReview} in review`,
-      tone: "neutral",
-      missing: "Jira",
-      onClick: () => scrollTo("work"),
-      hint: "Go to the table",
-    },
-    {
-      label: "Messages about work",
-      value: s.conversations?.linked,
-      detail: s.conversations && `of ${s.conversations.total} mention a ticket or PR`,
-      tone: "neutral",
-      missing: "Slack",
-      onClick: () => open({ kind: "list", title: "Messages about work", ids: linkedMessages }),
-      hint: "Read them",
-    },
+    { label: "Open pull requests", value: summary.openPullRequests, none: "None open" },
+    { label: "Open issues", value: summary.openIssues, none: "None open" },
+    { label: `Messages, last ${MESSAGE_WINDOW_DAYS} days`, value: summary.messages, none: "No messages" },
   ];
   return (
     <section className={styles.stats} aria-label="Summary">
-      {cards.map(({ label, value, detail, tone, missing, onClick, hint }) =>
-        value === undefined ? (
-          <Link key={label} href="/settings" className={styles.stat} data-tone="neutral">
-            <span className={styles.statLabel}>{label}</span>
-            <span className={`${styles.statValue} subtle`}>—</span>
-            <span className={styles.statDetail}>Add {missing} to see this</span>
-          </Link>
-        ) : (
-          <button key={label} type="button" className={styles.stat} data-tone={tone} onClick={onClick}>
-            <span className={styles.statLabel}>
-              {label}
-              <span className={styles.statHint}>
-                {hint} <ChevronRightIcon />
-              </span>
-            </span>
-            <span className={styles.statValue}>{value}</span>
-            <span className={styles.statDetail}>{detail}</span>
-          </button>
-        ),
-      )}
+      {cards.map(({ label, value, none }) => (
+        <div key={label} className={`${styles.stat} ${styles.statStatic}`} data-tone="neutral">
+          <span className={styles.statLabel}>{label}</span>
+          <span className={styles.statValue}>{value.total.toLocaleString("en-US")}</span>
+          <span className={styles.statDetail}>{breakdownText(value, none)}</span>
+        </div>
+      ))}
     </section>
   );
 }
 
-const STAGE_BADGE: Record<WorkRow["stage"], string> = {
-  todo: "badge",
-  in_progress: "badge badge-info",
-  in_review: "badge badge-warning",
-  done: "badge badge-success",
-};
-
-function ChangeCell({ change }: { change: NonNullable<WorkRow["change"]> }) {
-  const Icon = change.state === "merged" ? MergeIcon : change.state === "draft" ? DraftIcon : PullRequestIcon;
-  const review = {
-    approved: "Approved",
-    changes_requested: "Changes requested",
-    waiting: "Waiting for review",
-    none: change.state === "draft" ? "Draft" : "No reviewers",
-  }[change.review];
-  return (
-    <span className={styles.changeCell}>
-      <span className={styles.changeState} data-state={change.state}>
-        <Icon />
-      </span>
-      <span className={styles.changeText}>
-        <span className="mono">{change.id}</span>
-        <span className={styles.changeMeta}>
-          {change.state === "merged" ? "Merged" : review}
-          {change.state !== "merged" && change.checks !== "pending" && (
-            <span className={styles.checks} data-checks={change.checks} title={`Checks ${change.checks}`}>
-              {change.checks === "passing" ? <CheckIcon /> : <XIcon />}
-            </span>
-          )}
-        </span>
-      </span>
-    </span>
-  );
-}
-
-function WorkTable({ rows }: { rows: WorkRow[] }) {
-  const { model, now, openItem } = usePreview();
-  const lastMention = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const row of rows) {
-      const m = [...model.messages.values()]
-        .filter((x) => contextRefs(model, x).issues.includes(row.key))
-        .sort((a, b) => b.at.localeCompare(a.at))[0];
-      if (m) map.set(row.key, nodeId.message(m.ts));
-    }
-    return map;
-  }, [rows, model]);
-
-  return (
-    <section id="work" className={styles.panel} aria-labelledby="work-title">
-      <div className={styles.panelHead}>
-        <h2 id="work-title">Work in flight</h2>
-        <span className={styles.panelCount}>{rows.length}</span>
-      </div>
-      <div className={styles.tableWrap}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th scope="col">Ticket</th>
-              <th scope="col">Status</th>
-              <th scope="col">Pull request</th>
-              <th scope="col" className={styles.hideNarrow}>
-                Last discussed
-              </th>
-              <th scope="col" className={styles.hideNarrow}>
-                <span className="visually-hidden">Assignee</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.key} className={styles.clickableRow} onClick={(e) => !(e.target as Element).closest("button") && openItem(row.nodeId)}>
-                <td>
-                  <button type="button" className={styles.ticket} onClick={() => openItem(row.nodeId)}>
-                    <span className={styles.ticketKey}>
-                      {row.key}
-                      {row.insights > 0 && (
-                        <span className={styles.flag} title={`${row.insights} insight${row.insights > 1 ? "s" : ""}`}>
-                          {row.insights}
-                        </span>
-                      )}
-                    </span>
-                    <span className={styles.ticketSummary}>{row.summary}</span>
-                  </button>
-                </td>
-                <td>
-                  <span className={STAGE_BADGE[row.stage]}>{row.status}</span>
-                </td>
-                <td>
-                  {row.change ? (
-                    <button type="button" className={styles.cellButton} onClick={() => openItem(nodeId.change(row.change!.id))}>
-                      <ChangeCell change={row.change} />
-                    </button>
-                  ) : (
-                    <span className="subtle">None linked</span>
-                  )}
-                </td>
-                <td className={styles.hideNarrow}>
-                  {row.lastMention ? (
-                    <button
-                      type="button"
-                      className={`${styles.cellButton} ${styles.mention}`}
-                      title={stamp(row.lastMention.at)}
-                      onClick={() => openItem(lastMention.get(row.key)!)}
-                    >
-                      <SourceLogo source="slack" size={14} />
-                      <span>#{row.lastMention.channel}</span>
-                      <span className={styles.mentionTime}>{ago(row.lastMention.at, now)}</span>
-                    </button>
-                  ) : (
-                    <span className="subtle">Not discussed</span>
-                  )}
-                </td>
-                <td className={styles.hideNarrow}>
-                  <Avatar name={row.assignee} size="sm" title={row.assignee} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function SourcesCard({ sources }: { sources: SourceId[] }) {
-  const { model, openItem } = usePreview();
-  const summaries = sourceSummaries(model, sources);
-  // Each source opens its main container: the project, the busiest repo or channel.
-  const target = (id: SourceId): string | null => {
-    if (id === "jira" && model.ws.jira) return nodeId.project(model.ws.jira.project.key);
-    if (id === "github" && model.ws.github) return nodeId.repository(model.ws.github.repositories[0].name);
-    if (id === "slack" && model.ws.slack) return nodeId.channel(model.ws.slack.channels[0].id);
-    return null;
-  };
+function SourcesCard({ counts, picked, now }: { counts: SourceCount[]; picked: SourceId[]; now: number }) {
+  const bySource = new Map(counts.map((c) => [c.source, c]));
+  // The catalog's order, then anything else the data holds
+  const order = [...SOURCE_IDS.filter((id) => bySource.has(id) || picked.includes(id)), ...counts.map((c) => c.source).filter((s) => !isSourceId(s))];
   return (
     <section className={styles.panel} aria-labelledby="sources-title">
       <div className={styles.panelHead}>
         <h2 id="sources-title">Your sources</h2>
-        <Link className={styles.panelAction} href="/settings">
+        <Link className={styles.panelAction} href="/settings#sources">
           Manage
         </Link>
       </div>
       <ul className={styles.sourceList}>
-        {summaries.map(({ id, detail }) => {
-          const to = target(id);
-          const content = (
-            <>
-              <SourceLogo source={id} size={18} />
-              <span className={styles.sourceName}>{sourceInfo(id).name}</span>
-              <span className={styles.sourceDetail}>{detail ?? "No preview data yet"}</span>
-            </>
-          );
+        {order.map((source) => {
+          const count = bySource.get(source);
           return (
-            <li key={id}>
-              {to ? (
-                <button type="button" className={styles.sourceRow} onClick={() => openItem(to)}>
-                  {content}
-                </button>
-              ) : (
-                <Link href="/settings" className={styles.sourceRow}>
-                  {content}
-                </Link>
-              )}
+            <li key={source}>
+              <Link href="/settings#sources" className={styles.sourceRow}>
+                {isSourceId(source) ? <SourceLogo source={source} size={18} /> : <span />}
+                <span className={styles.sourceName}>{sourceName(source)}</span>
+                <span className={styles.sourceDetail}>
+                  {count ? (
+                    <>
+                      {plural(count.records, "record")} · <time dateTime={count.lastActivity.toISOString()} title={stamp(count.lastActivity.toISOString())}>{ago(count.lastActivity.toISOString(), now)}</time>
+                    </>
+                  ) : (
+                    "No records yet"
+                  )}
+                </span>
+              </Link>
             </li>
           );
         })}
@@ -340,34 +182,49 @@ function SourcesCard({ sources }: { sources: SourceId[] }) {
   );
 }
 
-function ActivityFeed() {
-  const { model, now, openItem } = usePreview();
-  const items = activity(model, 14);
+function ActivityFeed({ items, now }: { items: ActivityItem[]; now: number }) {
   return (
     <section className={styles.panel} aria-labelledby="activity-title">
       <div className={styles.panelHead}>
         <h2 id="activity-title">Recent activity</h2>
       </div>
-      <ol className={styles.activity}>
-        {items.map((item) => (
-          <li key={item.id}>
-            <button type="button" className={styles.activityItem} onClick={() => openItem(item.nodeId)}>
-              <span className={styles.activityLogo}>
-                <SourceLogo source={item.source} size={14} />
-              </span>
-              <span className={styles.activityBody}>
-                <span className={styles.activityLine}>
-                  <b>{item.actor}</b> {item.action} <span className={styles.activityTarget}>{item.target}</span>
-                </span>
-                {item.text && <span className={styles.activityText}>{item.text}</span>}
-              </span>
-              <time className={styles.activityTime} dateTime={item.at} title={stamp(item.at)}>
-                {ago(item.at, now)}
-              </time>
-            </button>
-          </li>
-        ))}
-      </ol>
+      {items.length === 0 ? (
+        <p className={styles.quiet}>Nothing yet that Ember shows here: pull requests, issues, comments, reviews and messages.</p>
+      ) : (
+        <ol className={styles.activity}>
+          {items.map((item) => (
+            <li key={item.id}>
+              <ActivityRow item={item} now={now} />
+            </li>
+          ))}
+        </ol>
+      )}
     </section>
+  );
+}
+
+function ActivityRow({ item, now }: { item: ActivityItem; now: number }) {
+  const iso = item.at.toISOString();
+  const meta = [item.label, item.target, item.status, item.actor].filter((part): part is string => !!part);
+  const content = (
+    <>
+      <span className={styles.activityLogo}>{isSourceId(item.source) ? <SourceLogo source={item.source} size={14} /> : null}</span>
+      <span className={styles.activityBody}>
+        <span className={styles.activityTitle}>{item.title}</span>
+        <span className={styles.activityText}>{meta.join(" · ")}</span>
+        {item.excerpt && <span className={styles.activityText}>{item.excerpt}</span>}
+      </span>
+      <time className={styles.activityTime} dateTime={iso} title={stamp(iso)}>
+        {ago(iso, now)}
+      </time>
+    </>
+  );
+  // Records come from outside Ember: the link opens in a new tab and sends no referrer
+  return item.url ? (
+    <a className={styles.activityItem} href={item.url} target="_blank" rel="noopener noreferrer" title={`Open in ${sourceName(item.source)}`}>
+      {content}
+    </a>
+  ) : (
+    <div className={`${styles.activityItem} ${styles.activityStatic}`}>{content}</div>
   );
 }
