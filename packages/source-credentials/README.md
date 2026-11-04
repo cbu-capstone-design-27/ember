@@ -30,6 +30,8 @@ There is one ring per kind, so ADR 0004's rule holds: the credential that verifi
 
 The value is `<key id>:<base64 of 32 bytes>`, comma-separated. The first key seals and every key opens. A key id is 1 to 32 of `A-Z a-z 0-9 _ -`, e.g. a month such as `2026-11`. Make a key with `openssl rand -base64 32`.
 
+On the cluster the rings come from the vault through `make source-credentials-secret` (`infra/k8s/README.md`, Source credential keys).
+
 **Rotating:**
 
 1. Put the new key first and keep the old one after it, everywhere that ring is used.

@@ -148,6 +148,7 @@ Secrets live in Git only as SOPS-encrypted `*.sops.yaml` files. Flux decrypts th
 - `infrastructure/tailscale-operator/operator-oauth.sops.yaml`: the Tailscale operator's OAuth client.
 - `apps/intake/webhooks.sops.yaml`: the GitHub App's webhook secret (`make intake-secret`).
 - `apps/web/auth.sops.yaml`: the web app's session secret (`make web-secret`).
+- `apps/source-credentials/api.sops.yaml` and `webhook.sops.yaml`: the key rings that seal source credentials (`make source-credentials-secret`).
 - `monitoring/k8s-monitoring/grafana-cloud.sops.yaml`: the Grafana Cloud push credentials.
 - `monitoring/grafana/grafana-operator.sops.yaml`: the Grafana Operator's service account token.
 

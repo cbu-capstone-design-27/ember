@@ -1,0 +1,10 @@
+# The key rings that seal source_credentials rows (EMBER-147, ADR 0010), one Secret per kind, so the
+# key intake verifies with and the key enrich calls with never sit in the same pod (ADR 0004).
+# make source-credentials-secret writes both from the vault (k8s/README.md, Source credential keys).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # SOURCE_CREDENTIALS_API_KEYS: the web app and the enrich workers
+  - api.sops.yaml
+  # SOURCE_CREDENTIALS_WEBHOOK_KEYS: the web app and intake
+  - webhook.sops.yaml

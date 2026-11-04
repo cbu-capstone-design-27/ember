@@ -10,6 +10,8 @@ resources:
   - enrich-gitlab
   - embed
   - web
+  # EMBER-147: the key rings that seal per-account source credentials
+  - source-credentials
   # TEMPORARY (EMBER-49): SSH tunnel to the Spark's chat model
   - llm-tunnel
   - neo4j

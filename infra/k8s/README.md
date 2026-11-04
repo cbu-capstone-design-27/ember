@@ -30,6 +30,7 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make enrich-slack-secret` | Writes `apps/enrich-slack/slack-bot.sops.yaml`, encrypted, from the Slack app's bot token in the vault ([enrich-slack](#enrich-slack)). Commit the result |
 | `make enrich-jira-secret` | Writes `apps/enrich-jira/jira-api.sops.yaml`, encrypted, from the Atlassian account and API token in the vault ([enrich-jira](#enrich-jira)). Commit the result |
 | `make web-secret` | Writes `apps/web/auth.sops.yaml`, encrypted, from the web app's session secret in the vault ([web](#web)). Commit the result |
+| `make source-credentials-secret` | Writes `apps/source-credentials/api.sops.yaml` and `webhook.sops.yaml`, encrypted, from the two key rings in the vault ([Source credential keys](#source-credential-keys)). Commit the result |
 | `make web-test-accounts` | Creates the web app's test accounts on the cluster, or checks they are there ([Test accounts](#test-accounts)). Safe to re-run |
 | `make web-serve` | Serves the web app at `https://<node>.tail470a31.ts.net` on every node with `tailscale serve` ([web](#web)). Host config, so re-run it after a node is rebuilt. Safe to re-run |
 | `make llm-tunnel-secret` | Temporary (EMBER-49). Writes `apps/llm-tunnel/ssh.sops.yaml` and `model-keys.sops.yaml`, encrypted, from the tunnel key and the Spark's API keys in the vault, and prints the `authorized_keys` line for the Spark ([llm-tunnel](#llm-tunnel)). Commit the result |
@@ -253,6 +254,7 @@ Neither goes through nginx, because nginx sits behind the public Funnel Ingress 
 - **Image.** `deployment.yaml` pins a `develop-<run>-<sha>` tag of `ghcr.io/cbu-capstone-design-27/ember/web`, as intake does. CI publishes a new one only when `apps/web/` changes (`docs/container-images.md`). To deploy it, change the tag and merge.
 - **Postgres.** `DATABASE_URL` comes from Secret `postgres-app`. Accounts, sessions and organizations live in schema `web` of database `ember`, next to ingestion's tables in `public` (`apps/web/README.md`, Database). Each start creates or updates those tables before the server listens, which is why there is one replica: two pods starting at once would race on it. A rollout starts the new pod first, so the old one serves until the new one is ready. The pod logs `[db] Auth database: Postgres, schema web, on postgres-rw.ember:5432/ember` at start, and `make apps-health` checks for it.
 - **Session secret.** `BETTER_AUTH_SECRET` comes from Secret `web-auth` (`apps/web/auth.sops.yaml`). It signs session cookies and the CLI's tokens. The pod stays in `CreateContainerConfigError` until it exists. To set or rotate it: generate one (`openssl rand -hex 32`), keep it in the vault as `vault_web_better_auth_secret`, run `make web-secret`, commit and merge the file, then `kubectl --context homelab -n ember rollout restart deploy/web`. A new secret signs everyone out, CLI included.
+- **Source credential keys.** `SOURCE_CREDENTIALS_API_KEYS` and `SOURCE_CREDENTIALS_WEBHOOK_KEYS` come from Secrets `source-credentials-api` and `source-credentials-webhook` ([Source credential keys](#source-credential-keys)). The web app seals what an owner connects a source with. Without them the pod stays in `CreateContainerConfigError`.
 - **Addresses.** `BETTER_AUTH_URL` in `deployment.yaml` is `https://pi-cp.tail470a31.ts.net`, the address the CLI's device sign-in sends people to. pi-cp because the cluster is down whenever it is. Better Auth refuses a sign-in (403 `Invalid origin`) whose `Origin` is neither that nor in `BETTER_AUTH_TRUSTED_ORIGINS`, which lists the other nodes' `https` names and `https://ember-web.tail470a31.ts.net`; `make apps-health` checks each node's. A new node needs adding there and `make web-serve`. Session cookies are `Secure`. Each address has its own cookies, so signing in on one doesn't sign you in on another. If the Tailscale device ever comes back as `ember-web-1`, remove the stale `ember-web` device in the admin console, then `kubectl --context homelab -n ember delete ingress web` and `make sync`, as for `ember` ([Troubleshooting the public route](#troubleshooting-the-public-route)).
 - **Rate limits.** Sign-in and sign-up allow 3 requests per 10 s per client IP. Through `ember-web`, the Tailscale proxy sends the client's tailnet address as a single `X-Forwarded-For`, which Better Auth trusts as it is, so each device has its own limit and `trustedProxies` stays unset. Through a node's name, `tailscale serve` sends the client's tailnet address the same way, so the limit is per device there too. `web-local` passes TCP, so it leaves that header alone.
 - **Probes.** All three ask Better Auth's `/api/auth/ok`, which doesn't touch Postgres. A database outage shows as errors on the pages, not as a pod restarting in a loop.
@@ -275,6 +277,32 @@ kubectl --context homelab -n ember logs deploy/web
 All three use the password in the vault as `vault_web_test_password` (`.venv/bin/ansible-vault view group_vars/all/vault.yml` from `infra/ansible`). It isn't in Git. Their sources are GitHub, Jira and Slack, so the dashboard shows the preview workspace. None of them is an Ember admin, so they can't link a tenant.
 
 Running it again changes nothing and says each account is there. Postgres is wiped now and then; run it again afterwards to recreate them. It refuses to go on if an account exists with another password, which means the vault's password changed after the accounts were made. Because they share one known password, use them only for testing, never for real data.
+
+#### Source credential keys
+
+Per-account source credentials (a Jira token pair, a Slack bot token, a GitLab token) live in Postgres, in `source_credentials`, sealed with AES-256-GCM by the application (EMBER-147, [ADR 0010](../../docs/adr/0010-connecting-sources.md#credentials)). The keys are in `apps/source-credentials/`, one Secret per kind, so the key intake verifies with and the key enrich calls with never sit in the same pod:
+
+| Secret | Variable | Vault value | Pods |
+|---|---|---|---|
+| `source-credentials-api` | `SOURCE_CREDENTIALS_API_KEYS` | `vault_source_credentials_api_keys` | web; each enrich worker once it reads `source_credentials` (`enrich-jira` from EMBER-131) |
+| `source-credentials-webhook` | `SOURCE_CREDENTIALS_WEBHOOK_KEYS` | `vault_source_credentials_webhook_keys` | web; intake once it verifies with a per-account token (GitLab, EMBER-149) |
+
+Each value is a key ring: `<key id>:<base64 of 32 bytes>`, comma-separated, the sealing key first (`packages/source-credentials/README.md`). To set one up:
+
+1. Make a key with `echo "$(date +%Y-%m):$(openssl rand -base64 32)"`, a different one for each ring.
+2. Add both to the vault with `.venv/bin/ansible-vault edit group_vars/all/vault.yml`.
+3. Run `make source-credentials-secret`. It refuses a malformed ring, or two rings that share a key.
+4. Commit and merge the two files.
+
+**Losing a key loses every row it sealed.** Owners would have to connect those sources again. The vault is the only other copy.
+
+**To rotate:**
+
+1. Put a new key first in the ring and keep the old one after it.
+2. Run `make source-credentials-secret` and merge.
+3. Restart the pods that use that ring.
+4. Re-seal the rows whose `key_id` is the old one.
+5. Drop the old key the same way.
 
 ### llm-tunnel
 

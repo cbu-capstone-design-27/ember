@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: source-credentials-api
+    namespace: ember
+stringData:
+    SOURCE_CREDENTIALS_API_KEYS: ENC[AES256_GCM,data:ryTktrKKeCV7X+mAkSzRF7/JlssNQ+PtQ5dYTTDea4yve/9Da2XS8leUBOZbCux5YgMWoA==,iv:vQHJUA1O0q3IqPSVOeHlf9gGOxEyvp/cI1JoACM/5Rc=,tag:Dnrv7a0+mCEa17qBWd3u1w==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAwUC8xclFDQkJteFE0cWRw
+            c2VFWjdoMWFMS3JNOEdpQU9zeEdQaTVuNng4ClJSRjdJOHRIMUFubWFLM2tlWmJq
+            KzZSc1VqR2tNaGVueDd6SWF1ZHNzUXcKLS0tIFNlN1NFVGs3MjBta2xlMnc5VnE4
+            MCt1WUIySHBiWlMweTBrSFR6SDZoWmMK6JtKnteZSRHHR42QWKWRR6G351FEeLS8
+            w8dF3xczKKHAOmL/vmtBAgc4De3W5Dk7tXVUQND/VBuPPPlZSBVjDw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-11-04T22:42:31Z"
+    mac: ENC[AES256_GCM,data:XaV6ma+5D5uPfmYGc/X6UW6eANe4PrCAJ+TVSNrC8tq+SZVoOLYAXUx18ABkjrwWep2oI7VcSVED6HmPcqqhH9q3eOFFqsYWjKD/ilaz1Z+96X9FOw0mBnyReLkRIvtg3tTyZxcgQFhmPkBCw1LfOKTK1KX/1tBPNmGjYx1o6+c=,iv:TAdBwGgnp3LLwgnT7gBDWphAs7/cdjpXOfCbg+wQXF0=,tag:2IgB1bsYvCQbPG7Ncp3XwQ==,type:str]
+    version: 3.13.3
