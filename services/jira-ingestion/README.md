@@ -42,7 +42,9 @@ When the payload includes them, the process log also records `cloudId`, `issue.f
 
 An admin webhook receiver, same shape as the GitHub App receiver: verify, wrap, stdout. Backfill is a separate local script.
 
-Registration later, once a public URL exists:
+A site connected from the web app (Settings → Connections → Connect Jira, EMBER-131) needs none of this: the web app registers a dynamic webhook for the projects the owner picks ([`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md#how-a-delivery-arrives)). The admin webhook below stays for sites set up before that.
+
+Registering an admin webhook, once a public URL exists:
 
 1. Jira Administration → System → Webhooks → Create a webhook. The same record can be created with `POST /rest/webhooks/1.0/webhook`.
 2. URL: `https://<public-host>/webhook/jira`. Jira only delivers admin webhooks to an allow-listed port (`443`, `8080`, `8443`, and the rest of the list in the Atlassian doc). The local listener defaults to `8081` so it can sit beside `intake` on `8080`. A tunnel should terminate TLS on `443` and forward to `8081`. This PR does not start a tunnel.

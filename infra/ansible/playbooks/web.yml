@@ -3,7 +3,9 @@
 # secret: writes k8s/apps/web/auth.sops.yaml, Secret web-auth, from vault_web_better_auth_secret,
 #   encrypted with the public key in .sops.yaml. Commit the file it writes. Use make web-secret.
 #   With vault_web_github_client_id and vault_web_github_client_secret (the ember-ingest App's OAuth
-#   client, EMBER-130), it holds those too, and Settings offers Connect GitHub.
+#   client, EMBER-130), it holds those too, and Settings offers Connect GitHub. With
+#   vault_jira_oauth_client_id and vault_jira_oauth_client_secret (the Atlassian 3LO app, EMBER-131),
+#   it holds those too, and Settings offers Connect Jira.
 # test-accounts: creates the test accounts (files/web_test_accounts.py) on the deployed app, with the
 #   password in vault_web_test_password, or checks they are there. Use make web-test-accounts.
 # serve: on each node, `tailscale serve` answers https://<node>.<tailnet_domain> with a certificate
@@ -25,12 +27,18 @@
       metadata:
         name: web-auth
         namespace: ember
-      stringData: "{{ web_auth | combine(web_github if vault_web_github_client_id is defined else {}) }}"
+      stringData: >-
+        {{ web_auth
+           | combine(web_github if vault_web_github_client_id is defined else {})
+           | combine(web_jira if vault_jira_oauth_client_id is defined else {}) }}
     web_auth:
       BETTER_AUTH_SECRET: "{{ vault_web_better_auth_secret | default('') }}"
     web_github:
       GITHUB_APP_CLIENT_ID: "{{ vault_web_github_client_id | default('') }}"
       GITHUB_APP_CLIENT_SECRET: "{{ vault_web_github_client_secret | default('') }}"
+    web_jira:
+      JIRA_OAUTH_CLIENT_ID: "{{ vault_jira_oauth_client_id | default('') }}"
+      JIRA_OAUTH_CLIENT_SECRET: "{{ vault_jira_oauth_client_secret | default('') }}"
   tasks:
     - name: Secret
       tags: [secret]
@@ -57,6 +65,22 @@
               Set both vault_web_github_client_id and vault_web_github_client_secret (the ember-ingest App's
               Client ID and a client secret from its settings page) with
               .venv/bin/ansible-vault edit group_vars/all/vault.yml, or neither
+            quiet: true
+          no_log: true
+
+        - name: Require both halves of the Atlassian app's OAuth client, or neither
+          ansible.builtin.assert:
+            that:
+              - (vault_jira_oauth_client_id is defined) == (vault_jira_oauth_client_secret is defined)
+              - >-
+                vault_jira_oauth_client_id is not defined or
+                (vault_jira_oauth_client_id | length > 0 and vault_jira_oauth_client_secret | length > 0
+                 and vault_jira_oauth_client_id == vault_jira_oauth_client_id | trim
+                 and vault_jira_oauth_client_secret == vault_jira_oauth_client_secret | trim)
+            fail_msg: >-
+              Set both vault_jira_oauth_client_id and vault_jira_oauth_client_secret (the Atlassian 3LO app's
+              Client ID and Secret, from its Settings page in the developer console), without spaces around
+              them, with .venv/bin/ansible-vault edit group_vars/all/vault.yml, or neither
             quiet: true
           no_log: true
 

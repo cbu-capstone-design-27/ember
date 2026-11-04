@@ -3,7 +3,8 @@
 # then hands the deliveries intake already stored for it, with tenant null, to the enrich workers.
 # Interim, until `ember-admin map` (docs/ingestion/architecture.md). The SQL is map-tenant.sql, run
 # with psql inside the primary's pod, so no credential leaves the cluster. Running it again changes
-# nothing. Use make map-tenant SOURCE=github ACCOUNT=<installation id> TENANT=<tenant>.
+# nothing. Use make map-tenant SOURCE=github ACCOUNT=<installation id> TENANT=<tenant>; make
+# unmap-tenant removes a mapping (unmap-tenant.sql).
 - name: Tenants
   hosts: localhost
   gather_facts: false
@@ -62,3 +63,44 @@
             msg:
               - "{{ mapped.stdout }}"
               - "Watch them enrich: kubectl --context {{ cluster_context }} -n {{ pg_ns }} logs -f deploy/enrich-{{ source }}"
+
+    # Removes the mapping so another tenant can connect the account; what it stored stays put
+    # (unmap-tenant.sql). Refuses a connected account: disconnect that in Settings.
+    - name: Unmap
+      tags: [unmap]
+      block:
+        - name: Require a source, an account and the tenant it is mapped to
+          ansible.builtin.assert:
+            that:
+              - source | default('') in sources
+              - account | default('') is match('^[A-Za-z0-9][A-Za-z0-9._:/-]*$')
+              - tenant | default('') is match('^[a-z0-9][a-z0-9-]*$')
+            fail_msg: >-
+              Use make unmap-tenant SOURCE=<{{ sources | join('|') }}> ACCOUNT=<account id> TENANT=<the tenant it is mapped to>.
+              Got SOURCE={{ source | default('') }} ACCOUNT={{ account | default('') }} TENANT={{ tenant | default('') }}
+            quiet: true
+
+        - name: Read the primary's pod
+          ansible.builtin.command: "{{ kubectl }} -n {{ pg_ns }} get cluster {{ pg_name }} -o jsonpath={.status.currentPrimary}"
+          register: primary
+          changed_when: false
+
+        - name: Unmap the account
+          ansible.builtin.command:
+            argv: >-
+              {{ kubectl.split() + ['-n', pg_ns, 'exec', '-i', primary.stdout, '-c', 'postgres', '--',
+                 'psql', '-X', '-q', '-d', pg_db,
+                 '-v', 'source=' ~ source, '-v', 'account=' ~ account, '-v', 'tenant=' ~ tenant] }}
+            stdin: "{{ lookup('ansible.builtin.file', 'unmap-tenant.sql') }}"
+          register: unmapped
+          changed_when: "unmapped.stdout is search('^unmapped: .* from ', multiline=true)"
+
+        - name: Require the account to be unmapped
+          ansible.builtin.assert:
+            that: "unmapped.stdout is search('^unmapped: ', multiline=true)"
+            fail_msg: "{{ unmapped.stdout }}"
+            quiet: true
+
+        - name: Say what happened
+          ansible.builtin.debug:
+            msg: "{{ unmapped.stdout }}"

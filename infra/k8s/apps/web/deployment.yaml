@@ -70,6 +70,24 @@ spec:
                   name: web-auth
                   key: GITHUB_APP_CLIENT_SECRET
                   optional: true
+            # The Atlassian 3LO app's OAuth client, for Connect Jira (EMBER-131, apps/web/README.md). Without
+            # them Settings says Connect Jira isn't set up. The app's callback URL is BETTER_AUTH_URL below +
+            # /connect/jira/callback
+            - name: JIRA_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: JIRA_OAUTH_CLIENT_ID
+                  optional: true
+            - name: JIRA_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: JIRA_OAUTH_CLIENT_SECRET
+                  optional: true
+            # Where the webhooks Connect Jira registers send to: intake, through the public Funnel address
+            - name: JIRA_WEBHOOK_URL
+              value: https://ember.tail470a31.ts.net/webhook/jira
             # Seal the credentials an owner connects a source with into source_credentials (EMBER-147,
             # ADR 0010). The web app holds both kinds; enrich gets only api, intake only webhook. From
             # k8s/apps/source-credentials (make source-credentials-secret). The pod waits until both exist

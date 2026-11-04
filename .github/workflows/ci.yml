@@ -384,7 +384,7 @@ jobs:
           echo "$DBMATE_SHA256  $RUNNER_TEMP/dbmate" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/dbmate"
           "$RUNNER_TEMP/dbmate" --migrations-dir ../../infra/k8s/apps/postgres/migrations --no-dump-schema up
-      - name: Auth, organization and Connect GitHub tests (SQLite and Postgres)
+      - name: Auth, organization and Connect tests (SQLite and Postgres)
         env:
           TEST_POSTGRES_URL: postgres://postgres:ci@localhost:5432/ember
         run: npm test

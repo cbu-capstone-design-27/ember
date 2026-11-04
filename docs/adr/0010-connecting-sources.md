@@ -102,6 +102,17 @@ Ember moves from a site admin webhook to an Atlassian OAuth 2.0 (3LO) app:
 - **The 3LO app falls under Atlassian's points-based quotas** instead of the API-token burst limits (`jira.md`). `rate_limits` keeps one bucket per site.
 - **Confirm in EMBER-131:** whether these deliveries still carry the site host in `self` URLs, or only in the JWT's claims. Intake's `account_id` depends on it.
 
+**As built (EMBER-131, 2026-11-04):**
+
+- **The owner picks a site and its projects** after consent (`/connect/jira/pick`). The JQL is `project in (<ids>)`, by id because a key changes on rename. One webhook per site carries the issue, comment and issue property events. Dynamic webhooks aren't offered worklog, attachment or issue link events, so those come from reconcile (`jira-webhooks.md`).
+- **Settings asks owners to consent as a Jira user kept for integrations,** because the token and webhook are that user's. Atlassian service accounts were considered: they need an organization admin, a pasted client-credentials secret and a webhook registered by hand. They stay a possible second path.
+- **Between the callback and the picker, the tokens wait server side.** They are sealed with the `api` key ring in Better Auth's `verification` table for 15 minutes, so they never reach the browser.
+- **The `api` credential holds** the token pair, the cloud id, the webhook ids and the JQL (`jira-webhooks.md`, The `api` credential). Whoever refreshes it locks the row and commits the rotated pair before using it.
+- **Disconnect deletes the webhooks** with the stored token before deleting the credential. If Jira refuses, the webhook lapses within 30 days.
+- **`scheduler:jira` is a daily Kubernetes CronJob** in the jira-ingestion image, not part of EMBER-128's sweeper.
+- **The app's client secret sits in intake and in enrich.** Intake verifies deliveries with it, and enrich and the keep-alive need it to refresh tokens. That bends ADR 0004's rule that the verifying and the calling credential never share a pod: Atlassian uses one secret for both. Enrich could forge a delivery, but intake still holds no token to call Jira with.
+- **The `self` URL question is still open.** Atlassian's examples show site hosts, so intake keeps reading them. Intake logs the token's claim names on its first dynamic delivery, to settle this and whether the claims name the site.
+
 #### GitLab
 
 GitLab has no install flow that works across GitLab.com and self-managed instances without registering an OAuth app on each instance, so its connection is pasted:

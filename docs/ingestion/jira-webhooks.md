@@ -18,7 +18,12 @@ Jira sends the data itself (`architecture.md`, [Webhooks per source](architectur
 
 ## How a delivery arrives
 
-Ember uses a Jira **admin webhook**, one per site (Jira Administration → System → Webhooks). Forge, Connect and OAuth 2.0 dynamic webhooks are a different path and aren't implemented. Jira posts JSON to `/webhook/jira`. Intake checks `X-Hub-Signature` (`sha256=` plus the HMAC-SHA256 of the raw body with the webhook's secret), stores the body, and answers. There is no handshake.
+Jira posts JSON to `/webhook/jira` one of two ways. Intake verifies the delivery, stores the body, and answers. There is no handshake.
+
+- **A dynamic webhook, from Connect Jira (EMBER-131, [ADR 0010](../adr/0010-connecting-sources.md#jira-ember-131)).** An owner consents to Ember's Atlassian OAuth 2.0 (3LO) app and picks a site and projects. The web app registers one webhook on the site with that user's token (`POST /rest/api/3/webhook`), filtered by `project in (<ids>)`. Each delivery carries `Authorization: Bearer <JWT>`, signed HS256 with the app's client secret. The webhook lapses 30 days after it was registered or last extended, so the keep-alive extends it ([below](#keeping-dynamic-webhooks-alive)).
+- **An admin webhook, one per site** (Jira Administration → System → Webhooks), for sites set up before Connect Jira. It carries `X-Hub-Signature`: `sha256=` plus the HMAC-SHA256 of the raw body with the webhook's secret. It stays until each site is reconnected through Connect Jira.
+
+`services/intake/README.md`, Jira adapter, has both checks. Every other rule on this page applies to both paths, except where it says otherwise.
 
 **Intake must answer exactly 200.** Atlassian: "All other response codes should be treated as an unsuccessful attempt." Today's `services/jira-ingestion/receiver.py` answers 202. Intake as `architecture.md` describes it answers 200.
 
@@ -29,7 +34,8 @@ Ember uses a Jira **admin webhook**, one per site (Jira Administration → Syste
 | `X-Atlassian-Webhook-Identifier` | "Unique within a Jira Cloud tenant and is the same across retries" (Atlassian) | `delivery_id`, with the site ([below](#delivery_id)) |
 | `X-Atlassian-Webhook-Retry` | The retry count, present only on a retry | Logged. Not needed, because the identifier repeats |
 | `X-Atlassian-Webhook-Flow` | `Primary` or `Secondary`. Primary deliveries arrive within 30 s, Secondary within 15 minutes | Logged. Explains late arrivals ([Ordering value](#ordering-value-ember-63)) |
-| `X-Hub-Signature` | HMAC of the body | Verification |
+| `X-Hub-Signature` | HMAC of the body. Admin webhooks only | Verification |
+| `Authorization` | `Bearer <JWT>`. Dynamic webhooks only | Verification |
 
 **Top-level body fields:**
 
@@ -48,13 +54,15 @@ Ember uses a Jira **admin webhook**, one per site (Jira Administration → Syste
 
 ## Event types: payload and what enrich fetches
 
-The subscription list is in `services/jira-ingestion/README.md` (registration step 4). Unlike GitHub there is no list in code: `receiver.py` accepts any JSON object and doesn't read `webhookEvent` except to log it. The webhook's JQL is empty, so every project on the site is sent.
+**Admin webhook:** the subscription list is in `services/jira-ingestion/README.md` (registration step 4). Intake accepts any JSON object and doesn't read `webhookEvent` except to store it. The webhook's JQL is empty, so every project on the site is sent.
+
+**Dynamic webhook:** `WEBHOOK_EVENTS` in `apps/web/src/lib/jira-connect.ts`. A dynamic webhook can carry only issue, comment, issue property, sprint and version events. So Connect Jira subscribes to the issue, comment and issue property events below, and **worklog, attachment and issue link events never arrive** from it. Each of those changes the issue too (time spent, the attachment list, the links), so a `jira:issue_updated` with that edit in its `changelog` arrives instead, and reconcile reads the worklogs, attachments and links themselves. Sprint and version events are left out, as they are on the admin webhook ([open questions](#open-questions)). The JQL names the projects the owner ticked, by id, because a key changes when a project is renamed. A project created later isn't sent until the owner reconnects and ticks it.
 
 Atlassian's webhook page documents only `issue`, `user`, `changelog` and `comment`. The other payload shapes below follow Jira's REST objects of the same name and must be confirmed on a real delivery before EMBER-66 relies on them ([open questions](#open-questions)).
 
 **Rules enrich follows:**
 - **Fetch only what's missing.** The payload is the record of that moment and is kept as it is. Fetched data is added beside it in `source_records.record`.
-- **Every call uses basic auth** (account email and API token) and **goes through the shared limiter** (`rate_limits`, bucket = site). `Retry-After` waits and doesn't count as a failure, as in `pull_test.py`.
+- **Every call goes through the shared limiter** (`rate_limits`, bucket = site). A site connected through Connect Jira is called at `api.atlassian.com/ex/jira/<cloud id>` with the [`api` credential's](#the-api-credential) bearer token. A site on an admin webhook uses basic auth (account email and API token) on its own host. `Retry-After` waits and doesn't count as a failure, as in `pull_test.py`.
 - **Watchers, votes and remote links have no webhook.** Fetching them on every issue event would be three calls per edit. Reconcile reads them instead.
 
 | API call | Enrich uses it for |
@@ -97,7 +105,7 @@ Intake's key is `unique (source, delivery_id)` (`architecture.md`, [Storage](arc
 | Any webhook | `<site>:<X-Atlassian-Webhook-Identifier>` | Atlassian makes the identifier unique only **within one Jira Cloud tenant**, and one intake serves many sites, so the site is the prefix. A retry repeats the identifier, so retries become no-ops |
 | Reconcile or backfill | `<object id>@<version>`, as `architecture.md` defines | An issue: `<issue id>@<fields.updated>`. A comment: `<issue id>/comment/<id>@<updated>` |
 
-**`<site>`** is the host of the payload's site, e.g. `ember-capstone.atlassian.net`, and is also `account_id`. Admin bodies often lack `cloudId`, so intake reads the host from the main object's `self` URL (`issue.self`, `comment.self`, `worklog.self`, …). See [open questions](#open-questions).
+**`<site>`** is the host of the payload's site, e.g. `ember-capstone.atlassian.net`, and is also `account_id`. Admin bodies often lack `cloudId`, so intake reads the host from the main object's `self` URL (`issue.self`, `comment.self`, `worklog.self`, …). Atlassian's examples for dynamic webhooks show the same `https://<site>/rest/api/2/issue/<id>` URLs, so both paths derive it the same way. That is unconfirmed until a real dynamic delivery is captured ([open questions](#open-questions)).
 
 An issue read by both paths gets two `raw_events` rows but one `source_records` row, because `unique (source, tenant, object_id, version)` folds the copies together.
 
@@ -131,7 +139,7 @@ Workers need the time Jira says the thing happened. EMBER-63 stores it in `raw_e
 
 Catch-up is the Jira reconcile (today's `services/jira-ingestion/pull_test.py`, becoming `Enricher.reconcile`). It runs per project from a cursor (`cursors`, stream `project:<id>`). It searches `POST /rest/api/3/search/jql` with `project = <key> AND updated >= "<cursor>" ORDER BY updated ASC`, then reads each issue with its comments, changelog pages, worklogs, remote links, watchers and votes, as the backfill does today. JQL dates have **minute precision** in the account's time zone, so the cursor steps back one minute and the version key folds the overlap.
 
-Jira's "Get failed webhooks" (`GET /rest/api/3/webhook/failed`) would list deliveries that ran out of retries, but "only Connect and OAuth 2.0 apps can use this operation". It doesn't cover an admin webhook, so reconcile is the only catch-up.
+Jira's "Get failed webhooks" (`GET /rest/api/3/webhook/failed`) would list deliveries that ran out of retries, but its reference now says "only Connect apps can use this operation". It covers neither an admin webhook nor a 3LO app's, so reconcile is the only catch-up.
 
 | Gap | What happens | Catch-up |
 |---|---|---|
@@ -146,17 +154,46 @@ Jira's "Get failed webhooks" (`GET /rest/api/3/webhook/failed`) would list deliv
 | **Attachments added in the create dialog** | No `attachment_created` (an Atlassian known issue) | Nothing extra: they are in `jira:issue_created`'s `fields.attachment` |
 | **Out of order** (two edits swapped, a comment before its issue, an edit after a delete) | Each is still written as its own versioned row | The [ordering value](#ordering-value-ember-63) decides which is current |
 | **Watchers, votes, remote links** | No webhook | Reconcile only. They are as fresh as the reconcile schedule |
-| **Site not mapped to a tenant** | Stored with `tenant = null`, not processed | `ember-admin map` assigns the tenant and enqueues what was stored |
+| **Site not mapped to a tenant** | Stored with `tenant = null`, not processed | Connect Jira, or `make map-tenant`, assigns the tenant and hands over what was stored |
+| **Dynamic webhook lapsed** (the keep-alive didn't extend it within 30 days) | Jira stops sending | Reconnect the site, which registers a new webhook. Reconcile fills the gap |
+| **The consenting user lost access to the site** | Jira stops sending, and the token refresh fails | Reconnect as another user. Reconcile fills the gap |
+| **Worklog, attachment and issue link events** (dynamic webhook only) | Not offered to dynamic webhooks. The issue's own `jira:issue_updated` arrives | Reconcile |
+
+## The `api` credential
+
+Connect Jira stores one `api` row per site in `source_credentials` (`account_id` = the site's host), sealed as [`packages/source-credentials`](../../packages/source-credentials/README.md) describes. Its plaintext is this JSON object. The web app writes it, and enrich and the keep-alive read and update it:
+
+| Field | Meaning |
+|---|---|
+| `access_token` | Bearer token for `api.atlassian.com/ex/jira/<cloud_id>`. Lasts about an hour |
+| `refresh_token` | Gets a new pair. **Atlassian rotates it**: each refresh returns a new one, and the old one works for only 10 more minutes. Unused for 90 days, it expires |
+| `expires_at` | When `access_token` expires, in epoch seconds |
+| `scope` | The scopes granted, space-separated |
+| `cloud_id` | The site's cloud id, as in `installations.external_id` |
+| `webhook_ids` | The dynamic webhooks Ember registered on the site, to extend and to delete |
+| `jql` | The webhook's filter, `project in (<ids>)` |
+| `atlassian_account_id`, `atlassian_name` | The Atlassian user who consented. The token and the webhooks are theirs |
+
+**Refreshing:** lock the row (`select … for update`), refresh if `expires_at` is less than 5 minutes away, write the new pair back, and commit before using it. Two workers refreshing the same token at once would leave one with a refresh token that no longer works. `freshJiraCredential` in `apps/web/src/lib/jira-connect.ts` is the reference.
+
+## Keeping dynamic webhooks alive
+
+A dynamic webhook lapses 30 days after it was registered or last extended (`PUT /rest/api/3/webhook/refresh`, which adds 30 days). A refresh token expires after 90 days without use. A daily Kubernetes CronJob refreshes each connected site's token and extends its `webhook_ids`. When the refresh is refused (`invalid_grant`: the user lost access or revoked the app), it marks the connection disconnected and Settings asks for a reconnect. The CronJob is the next part of EMBER-131.
 
 ## Open questions
 
 1. **Payload shapes Atlassian doesn't document:** `worklog`, `attachment`, `issueLink`, `property`, and the reduced `issue` on comment events. Capture one real delivery of each (the smoke script's bodies are hand-written) and fix this doc before EMBER-66 relies on them. In particular, does `attachment_created` name its issue?
 2. **Status code:** today's receiver answers 202, and Atlassian counts anything but 200 as unsuccessful. Intake answers 200. Should the stub receiver change now, before a real webhook is registered?
-3. **Site for `delivery_id` and `account_id`:** read from the `self` URL as proposed, or give each site its own path (`/webhook/jira/<site>`)? The second changes `architecture.md`'s HTTP contract.
+3. **Site for `delivery_id` and `account_id`:** read from the `self` URL as proposed, or give each site its own path (`/webhook/jira/<site>`)? The second changes `architecture.md`'s HTTP contract. For dynamic webhooks, also: do the `self` URLs carry the site's host, as Atlassian's examples show, or `api.atlassian.com/ex/jira/<cloud id>`? And which claims does the bearer token carry (perhaps the cloud id, which would bind a delivery to its site)? Intake logs the claim names on its first dynamic delivery. Capture one and settle both.
 4. **Version events:** subscribe to `jira:version_*`? The backfill already stores versions, and the README mentions them as optional.
 5. **Deleted projects and issues:** worth a periodic check that compares stored issue ids with a search, to tombstone what disappeared without a webhook?
 
 ## Sources
+
+Checked on 2026-11-04, for dynamic webhooks (EMBER-131):
+- [Jira Cloud webhooks](https://developer.atlassian.com/cloud/jira/platform/webhooks/): the events a dynamic webhook supports; the JQL subset (`issueKey`, `project`, `issuetype`, `status`, `assignee`, `reporter`, `issue.property`, `cf[id]`; `=`, `!=`, `IN`, `NOT IN`); expiry 30 days after registration or refresh; 5 webhooks per app per user on a site for an OAuth 2.0 app; "secured by bearer authentication", the token "signed with the app's client secret"
+- [OAuth 2.0 (3LO) apps](https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/): `audience=api.atlassian.com` and `prompt=consent`; accessible-resources lists each site's `id`, `name`, `url` and `scopes`; refresh tokens rotate, with a 10-minute reuse interval and a 90-day inactivity expiry; an expired or reused one gets 403 `invalid_grant`; apps are private until sharing is enabled
+- [Jira REST API v3, Webhooks](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-webhooks/) (the OpenAPI spec): register, list, delete and extend, with the `manage:jira-webhook` and `read:jira-work` scopes; "for non-public OAuth apps, webhooks are delivered only if there is a match between the app owner and the user who registered a dynamic webhook"; Get failed webhooks is "only Connect apps"
 
 Checked on 2026-10-13:
 - [Jira Cloud webhooks](https://developer.atlassian.com/cloud/jira/platform/webhooks/): event names; `webhookEvent` and `timestamp` on every callback; `issue` as the no-expand REST shape; `changelog` only on `jira:issue_updated`; `comment` on comment events; `X-Atlassian-Webhook-Identifier` ("unique within a Jira Cloud tenant and is the same across retries"); `X-Atlassian-Webhook-Retry`; `X-Atlassian-Webhook-Flow` and its 30 s / 15 min delivery targets; retries (up to 5, 5 to 15 minutes apart, on 408, 409, 425, 429, 5xx, timeouts); 20 concurrent deliveries per site and host; "a response code of 200"; known issues (25 MB, project deletion, create-dialog attachments); secure admin webhooks (`X-Hub-Signature`)

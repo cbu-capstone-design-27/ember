@@ -5,8 +5,10 @@ import { SignOutButton } from "../../../components/nav.tsx";
 import { getAuth } from "../../../lib/auth.ts";
 import { listConnections, type Connection } from "../../../lib/connections.ts";
 import { githubAppConfig, GITHUB_WEB } from "../../../lib/github-connect.ts";
+import { jiraAppConfig } from "../../../lib/jira-connect.ts";
 import { canConnectSources, canInvite, invitationsOf, isEmberAdmin } from "../../../lib/organizations.ts";
-import { ingestionPool } from "../../connect/github/server.ts";
+import { apiKeyRing } from "../../connect/jira/server.ts";
+import { ingestionPool } from "../../connect/server.ts";
 import { requireOrganization } from "../../../lib/session.ts";
 import { DisconnectForm } from "./connection-forms.tsx";
 import { PasswordForm, PreviewDataForm, ProfileForm } from "./forms.tsx";
@@ -50,6 +52,35 @@ function githubNotice(params: { github?: string | string[]; account?: string | s
   return { error: notice.error, text: notice.text.replace("{account}", account) };
 }
 
+/** What the Connect Jira routes report back (connect/jira, `?jira=`). `{account}` is the site's host. */
+const JIRA_NOTICES: Record<string, { error: boolean; text: string }> = {
+  connected: {
+    error: false,
+    text: "Connected {account}. Jira now sends changes to the projects you ticked. Earlier issues arrive with the backfill.",
+  },
+  expired: { error: true, text: "That Jira consent expired, or started in another browser. Start again." },
+  cancelled: { error: true, text: "Jira consent was cancelled." },
+  scopes: { error: true, text: "Atlassian granted Ember fewer permissions than it needs. Ask an Ember operator to check the app's scopes." },
+  "no-sites": { error: true, text: "The Atlassian account you consented with can't use any Jira site." },
+  "other-tenant": { error: true, text: "{account} is connected to another Ember organization. A site can't move between organizations." },
+  limit: {
+    error: true,
+    text: "Jira refused another webhook for {account}: it allows 5 per app for each Jira user. Consent as another user, or disconnect an earlier connection first.",
+  },
+  forbidden: { error: true, text: "Only owners and admins of this organization can connect sources." },
+  unavailable: { error: true, text: "Connecting Jira isn't set up on this server." },
+  error: { error: true, text: "Jira didn't answer as expected, so {account} wasn't connected. Try again." },
+};
+
+function jiraNotice(params: { jira?: string | string[]; account?: string | string[] }) {
+  const key = typeof params.jira === "string" ? params.jira : undefined;
+  const notice = key ? JIRA_NOTICES[key] : undefined;
+  if (!notice) return null;
+  // A host name only: the URL is the browser's, so it can't put other text here
+  const host = typeof params.account === "string" && /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(params.account) ? params.account : "the site";
+  return { error: notice.error, text: notice.text.replace("{account}", host) };
+}
+
 const SOURCE_NAMES: Record<string, string> = { github: "GitHub", jira: "Jira", slack: "Slack", gitlab: "GitLab", teams: "Teams" };
 
 function sourceName(source: string): string {
@@ -87,6 +118,18 @@ function disconnectNotice(params: SettingsParams, connections: Connection[], git
   const c = connections.find((x) => x.source === params.source && x.accountId === params.account);
   if (!c?.disconnectedAt) return null;
   const name = connectionName(c);
+  if (c.source === "jira" && params.hook === "deleted") {
+    return {
+      error: false,
+      text: `Disconnected ${name}. Ember stopped ingesting it, deleted its Jira webhook, and deleted its tokens. The Jira user who consented can also remove Ember from their Atlassian account's connected apps.`,
+    };
+  }
+  if (c.source === "jira" && params.hook === "failed") {
+    return {
+      error: false,
+      text: `Disconnected ${name}. Ember stopped ingesting it and deleted its tokens, but couldn't delete its Jira webhook. The webhook stops on its own within 30 days. Until then, Ember stores what it sends without assigning it to an organization.`,
+    };
+  }
   if (c.source === "github") {
     return {
       error: false,
@@ -108,6 +151,9 @@ function connectedByName(c: Connection, names: Map<string, string>): string {
 
 type SettingsParams = {
   github?: string | string[];
+  jira?: string | string[];
+  /** After a Jira disconnect: whether its webhook was `deleted`, `failed` to be, or there was `none`. */
+  hook?: string | string[];
   account?: string | string[];
   disconnect?: string | string[];
   source?: string | string[];
@@ -131,9 +177,11 @@ export default async function SettingsPage({
   ]);
   const params = await searchParams;
   const githubApp = githubAppConfig();
-  const notice: DisconnectNotice | null = githubNotice(params) ?? disconnectNotice(params, connections, githubApp?.slug ?? "ember-ingest");
+  const notice: DisconnectNotice | null =
+    githubNotice(params) ?? jiraNotice(params) ?? disconnectNotice(params, connections, githubApp?.slug ?? "ember-ingest");
   const canConnect = canConnectSources(org.role);
-  const connectable = pool !== null && githubApp !== null;
+  const githubReady = pool !== null && githubApp !== null;
+  const jiraReady = pool !== null && jiraAppConfig() !== null && apiKeyRing() !== null;
   const memberNames = new Map(members.map((m) => [m.user.id, m.user.name]));
   return (
     <div className={styles.page}>
@@ -221,7 +269,7 @@ export default async function SettingsPage({
         <div className={styles.connectActions}>
           {!canConnect ? (
             <span className="field-hint">Owners and admins connect and disconnect sources.</span>
-          ) : !connectable ? (
+          ) : !githubReady ? (
             <span className="field-hint">
               Connecting GitHub needs {pool ? "the App's client ID and secret (GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET)" : "the Postgres database ingestion uses"}.
             </span>
@@ -237,6 +285,29 @@ export default async function SettingsPage({
             </>
           )}
         </div>
+        {canConnect && (
+          <div className={styles.connectActions}>
+            {!jiraReady ? (
+              <span className="field-hint">
+                Connecting Jira needs{" "}
+                {pool
+                  ? "the Atlassian app's client ID and secret, intake's address and the api key ring (JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET, JIRA_WEBHOOK_URL, SOURCE_CREDENTIALS_API_KEYS)"
+                  : "the Postgres database ingestion uses"}
+                .
+              </span>
+            ) : (
+              <>
+                <span className="field-hint">
+                  Ember reads Jira as the person who consents, and stops if they lose access. Consent as a Jira user kept for integrations, who can see
+                  the projects you want, rather than as yourself.
+                </span>
+                <a className="btn btn-primary" href="/connect/jira">
+                  Connect Jira
+                </a>
+              </>
+            )}
+          </div>
+        )}
       </section>
 
       <section className={styles.section} aria-labelledby="members">

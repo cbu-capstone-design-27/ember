@@ -25,16 +25,17 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make sync` | Fetch `develop` and apply it now instead of within the next minute |
 | `make apps-diff` | Shows what this checkout's `infrastructure/`, `apps/` and `monitoring/` would change on the cluster. Deploys nothing |
 | `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Also checks each enrich worker logged that it is listening, and that the web app uses Postgres, answers over HTTPS on every node's name and at `https://ember-web.tail470a31.ts.net`, accepts each node's name as a sign-in origin, and has no public DNS record ([web](#web)). Deploys nothing |
-| `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret, the Slack app's signing secret and the Jira webhook's secret in the vault ([The webhook secret](#the-webhook-secret), [The Slack signing secret](#the-slack-signing-secret), [The Jira webhook secret](#the-jira-webhook-secret)). Commit the result |
+| `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret, the Slack app's signing secret, the Jira webhook's secret, the GitLab signing token and, if set, the Atlassian app's client secret in the vault ([The webhook secret](#the-webhook-secret), [The Slack signing secret](#the-slack-signing-secret), [The Jira webhook secret](#the-jira-webhook-secret), [The Atlassian app's client secret](#the-atlassian-apps-client-secret)). Commit the result |
 | `make enrich-github-secret` | Writes `apps/enrich-github/github-app.sops.yaml`, encrypted, from the GitHub App's private key in the vault ([enrich-github](#enrich-github)). Commit the result |
 | `make enrich-slack-secret` | Writes `apps/enrich-slack/slack-bot.sops.yaml`, encrypted, from the Slack app's bot token in the vault ([enrich-slack](#enrich-slack)). Commit the result |
 | `make enrich-jira-secret` | Writes `apps/enrich-jira/jira-api.sops.yaml`, encrypted, from the Atlassian account and API token in the vault ([enrich-jira](#enrich-jira)). Commit the result |
-| `make web-secret` | Writes `apps/web/auth.sops.yaml`, encrypted, from the web app's session secret in the vault ([web](#web)). Commit the result |
+| `make web-secret` | Writes `apps/web/auth.sops.yaml`, encrypted, from the web app's session secret and, if set, the GitHub App's and the Atlassian app's OAuth clients in the vault ([web](#web), [The Atlassian app's client secret](#the-atlassian-apps-client-secret)). Commit the result |
 | `make source-credentials-secret` | Writes `apps/source-credentials/api.sops.yaml` and `webhook.sops.yaml`, encrypted, from the two key rings in the vault ([Source credential keys](#source-credential-keys)). Commit the result |
 | `make web-test-accounts` | Creates the web app's test accounts on the cluster, or checks they are there ([Test accounts](#test-accounts)). Safe to re-run |
 | `make web-serve` | Serves the web app at `https://<node>.tail470a31.ts.net` on every node with `tailscale serve` ([web](#web)). Host config, so re-run it after a node is rebuilt. Safe to re-run |
 | `make llm-tunnel-secret` | Temporary (EMBER-49). Writes `apps/llm-tunnel/ssh.sops.yaml` and `model-keys.sops.yaml`, encrypted, from the tunnel key and the Spark's API keys in the vault, and prints the `authorized_keys` line for the Spark ([llm-tunnel](#llm-tunnel)). Commit the result |
 | `make map-tenant SOURCE=… ACCOUNT=… TENANT=…` | Maps a source account to a tenant and hands the deliveries already stored for it to the enrich workers ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
+| `make unmap-tenant SOURCE=… ACCOUNT=… TENANT=…` | Removes that mapping so another tenant can connect the account. Its stored data stays with the old tenant ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
 | `make grafana-secret` | Writes the collector's and the Grafana Operator's Secrets, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud tokens](#the-grafana-cloud-tokens)). Commit the result |
 | `make grafana-health` | Checks Grafana Cloud end to end: the operator synced the stack and both dashboards (Ember, Ember ingestion), and the stack has metrics from every node, intake, Postgres (including ingestion by tenant) and Flux, pod logs, Kubernetes events and both synthetic checks. Deploys nothing |
 | `make flux-preview BRANCH=<branch>` | Deploys a pushed branch instead of `develop`, to try a change before merging it. Tell the team, since it replaces what everyone else sees |
@@ -153,6 +154,17 @@ A Jira admin webhook signs each delivery with the secret saved on it (`X-Hub-Sig
 5. On the site (`ember-capstone.atlassian.net`), **Jira Administration → System → Webhooks**: create or edit the webhook with URL `https://ember.tail470a31.ts.net/webhook/jira`, the same secret, no JQL filter, and the events in `services/jira-ingestion/README.md`. Only a Jira admin can.
 
 Between steps 4 and 5 Jira's deliveries are refused with 401. Jira retries each one up to 5 times over roughly an hour; what it drops, reconcile picks up by `updated` (`docs/ingestion/jira-webhooks.md`, Known gaps).
+
+#### The Atlassian app's client secret
+
+Connect Jira (EMBER-131) registers dynamic webhooks, and Jira signs each of their deliveries with a bearer token made with the Atlassian 3LO app's client secret. Intake checks it with `JIRA_OAUTH_CLIENT_SECRET` (`services/intake/README.md`, Jira adapter). The web app holds the app's client ID and secret too, for the consent flow (`apps/web/README.md`, Connect Jira). They live in the developer console, the vault (`vault_jira_oauth_client_id`, `vault_jira_oauth_client_secret`), `apps/web/auth.sops.yaml` and `apps/intake/webhooks.sops.yaml`. To set or rotate them:
+
+1. In the [developer console](https://developer.atlassian.com/console/myapps/), the app's **Settings**: copy the Client ID, and the Secret (or rotate it).
+2. Keep both in the vault, each on one line.
+3. `make web-secret` and `make intake-secret`. Both leave the Jira keys out while the vault has none, and Settings then says Connect Jira isn't set up.
+4. Commit and merge both files, then `kubectl --context homelab -n ember rollout restart deploy/web deploy/intake`.
+
+While intake is on the old secret, dynamic webhook deliveries are refused with 401, and Jira retries each one for about an hour. So restart intake promptly after rotating. The app stays private until EMBER-154 (personal data reporting): a private app's webhooks are delivered only when its owner consented.
 
 #### The GitLab signing token
 
@@ -356,6 +368,14 @@ It adds the `installations` row, so intake stores the account's new deliveries w
 
 - **Re-running is safe.** It changes nothing and reports 0. A delivery intake was storing at the moment of mapping can still land without a tenant; running it again picks that up.
 - **No remapping.** If the account is already mapped to a different tenant, it refuses and changes nothing, since moving an account would split its records across two subgraphs. Rows with no `account_id` (GitHub `ping`s, webhooks set directly on a repo) can't be mapped.
+
+To hand an account to another tenant (for example, so an organization can connect it in the web app), unmap it first:
+
+```bash
+make unmap-tenant SOURCE=jira ACCOUNT=ember-capstone.atlassian.net TENANT=<the tenant it is mapped to>
+```
+
+It deletes only the `installations` row (`playbooks/unmap-tenant.sql`). The deliveries, records and graph the account already produced stay under the old tenant. Intake stores the account's new deliveries with `tenant` null until it is mapped or connected again, and that hands them over. It refuses if `TENANT` isn't the one the account is mapped to. It also refuses if the account has stored credentials: that means it was connected in the web app, so disconnect it in Settings, which also removes the source's own hooks. Re-running is safe.
 
 ### Restarts
 

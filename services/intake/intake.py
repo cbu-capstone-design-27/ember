@@ -45,6 +45,7 @@ from adapters.jira import JiraAdapter
 from adapters.slack import SlackAdapter
 from models import Installation, RawEvent
 
+JIRA_SECRETS = ("JIRA_WEBHOOK_SECRET", "JIRA_OAUTH_CLIENT_SECRET")  # admin webhooks, dynamic webhooks; either or both
 GITLAB_TOKENS = ("GITLAB_WEBHOOK_SIGNING_TOKEN", "GITLAB_WEBHOOK_SECRET_TOKEN")  # either or both, as set on the webhook
 LOG = logging.getLogger("intake")
 MAX_BODY_BYTES = 8 * 1024 * 1024  # nginx's client_max_body_size is the same
@@ -235,8 +236,9 @@ def main() -> int:
         adapters: list[SourceAdapter] = [GitHubAdapter(os.environ.get("GITHUB_WEBHOOK_SECRET", ""))]
         if os.environ.get("SLACK_SIGNING_SECRET"):
             adapters.append(SlackAdapter(os.environ["SLACK_SIGNING_SECRET"]))
-        if os.environ.get("JIRA_WEBHOOK_SECRET"):
-            adapters.append(JiraAdapter(os.environ["JIRA_WEBHOOK_SECRET"]))
+        jira_admin, jira_oauth = (os.environ.get(name, "") for name in JIRA_SECRETS)
+        if jira_admin or jira_oauth:
+            adapters.append(JiraAdapter(jira_admin, jira_oauth))
         gitlab_signing, gitlab_secret = (os.environ.get(name, "") for name in GITLAB_TOKENS)
         if gitlab_signing or gitlab_secret:
             adapters.append(GitLabAdapter(gitlab_signing, gitlab_secret))

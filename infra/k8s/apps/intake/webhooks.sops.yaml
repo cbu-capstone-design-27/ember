@@ -4,22 +4,23 @@ metadata:
     name: intake-webhooks
     namespace: ember
 stringData:
-    GITHUB_WEBHOOK_SECRET: ENC[AES256_GCM,data:NB6jqVvP+pYtipFJIZ2kq1Xhisq06/1yL8ImmzwZc1LdYUeg6U7FLGT/qioFj37qw8luTb2ZcwN5XVH5eQxb7A==,iv:5K70FRDQh1PpFnqjbR8quaHkiRw4Z1wYBfJFwCv0eFI=,tag:hHKvZp8+gW0Gr3O351aYdA==,type:str]
-    SLACK_SIGNING_SECRET: ENC[AES256_GCM,data:5dYdPMjK+6dSyFZm2OhoCeivMBUCR/zLdfPgZvdWtEE=,iv:pMQKb8a7uGPLfgnrx+d3UGcx5Y+jQTdTjkAtCE1eh9k=,tag:BDI0Eg/N0A7hdlBY7tzRUw==,type:str]
-    JIRA_WEBHOOK_SECRET: ENC[AES256_GCM,data:73UVmQrrcx1s6hBmSSQnXw78z5Y27DJcjRGcbM1Q9VxVwYkUeAa3iHwOCTCgJD3UgUX8yk+adx4bXcVoFjg2jg==,iv:eEd4TnBvswfg4j5pyczzIkJQxTSu+PgTWEzKufMPL54=,tag:J/wXQqaSWYnPbPtSh/8YJw==,type:str]
-    GITLAB_WEBHOOK_SIGNING_TOKEN: ENC[AES256_GCM,data:KP4bLnuYKEwQK9TjWtQ4aBmF/f70E0KNnfumGewZeltfxu0UVqz1p5oBeL3Tk8Pq/l8=,iv:Eti2x8RLlvco5fHV5nKsfz1I3FTpLt4qZJ7IXbm5l90=,tag:2btrNx6ULyGx3u7RXJLkSg==,type:str]
+    GITHUB_WEBHOOK_SECRET: ENC[AES256_GCM,data:lFEOHKtknNiM43VqUwPjQ2IaZazzAR/ZXyoYyFZiwk2+YilCfhevWAjhJU7/eydqLeISKAe4BnVvIOa4XKiKAw==,iv:n0h6JhaxqWegvGU5GK5bYHqw1snnGNH1EyzuxzLLYRU=,tag:0GG/Hfj9iY4ky5iq/F+IOA==,type:str]
+    SLACK_SIGNING_SECRET: ENC[AES256_GCM,data:9Vm68e9GRwHow1oLFvzvsoZCvJGAy2dDC3CkAjwahVE=,iv:ShuyaUAopzr0XcssVgOC9YrwnxVgTaV4MbMuIZjaz+k=,tag:kMMjbYEjY4Q/EhN0NruJFA==,type:str]
+    JIRA_WEBHOOK_SECRET: ENC[AES256_GCM,data:0RWrT4VoJkcUZb0ekX/jiCB4z2oA49HhwPatvleAedaNL4NGLyyq/j9dxdDiBXjbSPO7cqfpN0opAAjeZE3ZKw==,iv:jnXlbVzR+/d5jmwHYO84tLCkAgYtOLmF55wRr7W+7w0=,tag:FWO4MLAdmsclqGI/Tw2qSg==,type:str]
+    GITLAB_WEBHOOK_SIGNING_TOKEN: ENC[AES256_GCM,data:kO7FPHUozDx7Hxxz34x1MVOObjfrUfopQc/vt7hRq5nRQ8pHe2tfX93/E42Mlrmx6Vc=,iv:ReWWZbML00rX6OhB72ejK8VAWxAItuUTkUKmjsm8OrQ=,tag:8HmzzcxGbw0H3LBr6usVPQ==,type:str]
+    JIRA_OAUTH_CLIENT_SECRET: ENC[AES256_GCM,data:jrlR0texZgzgPs230tdj/1wLQhOJrNYtBtQ/wz5otsU/VaDiFsMYP/Cv5uYCcc1/Y+ceEbK6an5ObpvC+JN+YcLTSZQYWYM9vlmD6A==,iv:mVLOs8yNv6W5keAN4hzhLA0PpT2+aNV/uMhJJ0xaCJ0=,tag:ioR1trS6QOHYgs/m41laRQ==,type:str]
 sops:
     age:
         - enc: |
             -----BEGIN AGE ENCRYPTED FILE-----
-            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAwUzFzT0xMRFFRT2ZLOXdC
-            VXB3RHAvalhybVdmaGpZeUxmNTRQTFc4ZUJZCmpwVFpDa3E3dzY2Vi9PczFORVlO
-            V1ZoSVd6akFaOStiaGxIZ2s1NjZaeXcKLS0tIG1NQWVhL3VEclpDSkc2ZUw2V2ds
-            WVFFcjNNTkNHRjYzSXZ5NEgyMFArTDQKcnnWggKFD7NmpsLLxCT5orYkrZ2UN1sW
-            wT6S6wkGUOpuok3dLsz3AVpKzU6ZN63JDsQ0CRv6IpF/++wnNU7wvg==
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBESFl1MlBIYy9BVDZBakxn
+            QURMYkpJZjl2anBMbENoT0grWUFnQU8wTEhNCkl5S0lPVlZsRGxFaDJ5OTNKOU9y
+            NDVOckNTclJZYmN0Q29KenEwYnRQRmMKLS0tIEhtRWtvRGxuWEpTRnhIUDNmdnZy
+            K3RFWXJFazk0Q1VoUjVZNGEreXIvSUUK7GPjV0KfsMOZUSW81EuaE+ggQO1PjxqW
+            vgGJT8ipmLtKnTzQqcOex1/RAaC3iZ/W3Ic0APVOn8PQNiHAnNhauw==
             -----END AGE ENCRYPTED FILE-----
           recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-10-28T22:21:50Z"
-    mac: ENC[AES256_GCM,data:VkA7+y1Q1SZ6URYe63epvCu2bj3gHzR2p3hAVO7FBue283d/1GJHheirriow8qd77mohFRXyFBRm+pL5txqiYwfhZ8tNh/ZHcMDMs9Nsr8IaQG0xlCyPFwMAEbK9p3ofPg+zksipSlubEw17Y/6d6lrTrrW8d/7f9/u51UtuBX0=,iv:guVzF3t6qqyj3HOUq6lm2Ue7cCRTooJdYvZ6ScGibhk=,tag:GxZuI72Nr5qXVG9KKdverg==,type:str]
+    lastmodified: "2026-11-04T23:36:27Z"
+    mac: ENC[AES256_GCM,data:qgFrfAxG8VGyXWqPFQkcWdCWKh32mzc4ISQRbeE2LtLnBoV6odzXyyKWaItkcW4jYXG5Xw987XP6LVSLLBhd4FtDTpG8m5QRC6d/OgmBzFgglVlJIJQKvhOqwUrOytofpUucyaDVHn7pePQofmC2sbGivGlyYe2EjMbSr/xATgY=,iv:grJBsO/PKIw2SkuuTG1R1E4pAoJ4l+BH6RiGxDz+cwI=,tag:SVUZPxbqBvf42saTaCDvxA==,type:str]
     version: 3.13.3
