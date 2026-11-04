@@ -1,0 +1,4 @@
+# EMBER-146: stock Graphiti, pinned, no fork. Kept out of services/pipeline/requirements.txt on purpose: the
+# loader and workers do not depend on Graphiti. Python 3.12 (CI's version).
+-r ../requirements.txt
+graphiti-core==0.31.2
