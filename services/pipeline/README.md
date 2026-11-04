@@ -197,6 +197,15 @@ before the first real run. `local-spark` costs nothing per call.
 
 Tests (no key, no network): `cd services/pipeline && python -m unittest discover -s models -t . -p "test_*.py" -v`.
 
+## Graphiti test harness (EMBER-146)
+
+`graphiti_test/` runs stock Graphiti (`graphiti-core==0.31.2`, no fork) on Neo4j with the photon data and writes a
+reference the Postgres fork can later be diffed against. It has its own `requirements.txt`, and nothing in the loader
+or workers imports it. How to run it, what is verified, and what still needs real models: `docs/research/graphiti-test.md`.
+
+Tests: `cd services/pipeline && python -m unittest discover -s graphiti_test -t . -p "test_*.py" -v`, with
+`graphiti_test/requirements.txt` installed. The Neo4j tests run only when `NEO4J_TEST_URI` is set.
+
 ## Benchmarks (EMBER-58)
 
 `python -m benchmarks run --tenant <tenant> --input <raw folder>` measures loading correctness and

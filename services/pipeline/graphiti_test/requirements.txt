@@ -1,0 +1,7 @@
+# EMBER-146: stock Graphiti, pinned, no fork. Kept out of services/pipeline/requirements.txt on purpose: the
+# loader and workers do not depend on Graphiti. Python 3.12 (CI's version).
+-r ../requirements.txt
+graphiti-core==0.31.2
+# graphiti-core asks for openai>=1.91 and imports httpx without declaring it. openai 3.x moved to httpx2, so a plain
+# install of graphiti-core 0.31.2 fails at import. 2.54.0 is the last openai on httpx.
+openai==2.54.0
