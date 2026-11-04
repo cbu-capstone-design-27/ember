@@ -21,6 +21,11 @@ spec:
       hostNetwork: true
       # Cluster DNS still, to resolve Service web
       dnsPolicy: ClusterFirstWithHostNet
+      # pi-cp keeps workloads off with CriticalAddonsOnly. This is a per-node forwarder, as ServiceLB's
+      # svclb pods are, and the node's https name needs it there
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
       enableServiceLinks: false
       automountServiceAccountToken: false
       securityContext:
