@@ -136,7 +136,7 @@ class SourceAdapter(Protocol):
 | `slack` | `event_id` | `team_id` | `url_verification` |
 | `teams` | SHA-256 of body | `tenantId` | `validationToken` echo |
 
-A delivery from an account that maps to no tenant is stored with `tenant = null` and not processed. `ember-admin map` assigns the tenant later and enqueues what was stored.
+A delivery from an account that maps to no tenant is stored with `tenant = null` and not processed. Connecting the account from the web app, or `make map-tenant` for an operator, assigns the tenant later and enqueues what was stored ([ADR 0010](../adr/0010-connecting-sources.md)).
 
 ## Stages
 
