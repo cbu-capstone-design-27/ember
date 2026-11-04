@@ -1,6 +1,6 @@
 # ADR 0010: Connecting a source from the web app
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-04
 - Jira: EMBER-96
 
@@ -165,26 +165,26 @@ It does not store credentials. `ember-admin map` in `architecture.md` becomes th
 
 Under EMBER-113, next to EMBER-130 (GitHub) and EMBER-131 (Jira):
 
-- **Schema:**
+- **EMBER-147, schema:**
   - `installations` columns, `source_credentials`, the retention rule for unmapped rows.
   - The connection list in Settings.
   - Disconnect.
-- **Connect Slack:**
+- **EMBER-148, connect Slack:**
   - OAuth v2 install.
   - `enrich:slack` reads the bot token from `source_credentials`.
   - `app_uninstalled` and `tokens_revoked`.
-- **Connect GitLab:**
+- **EMBER-149, connect GitLab:**
   - Pasted token and the webhook signing token.
   - Intake's per-account lookup.
   - `enrich:gitlab` reads its token from `source_credentials`.
-- **`enrich:github` handles `installation` events:**
+- **EMBER-150, `enrich:github` handles `installation` events:**
   - `deleted` and `suspend` set `disconnected_at`, and `unsuspend` clears it.
   - `created` enqueues reconcile once it exists.
-- **`make map-tenant` follows the rules above.**
+- **EMBER-151, `make map-tenant` follows the rules above.**
 
 Under EMBER-12:
 
-- **A Postgres role per component, starting with the web app.**
+- **EMBER-152, a Postgres role per component, starting with the web app.**
 
 ## Sources
 
