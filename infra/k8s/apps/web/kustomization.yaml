@@ -4,5 +4,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
+  # The same app on port 3000 of every node's tailnet address (k8s/README.md, web)
+  - service-lb.yaml
   # Secret web-auth: BETTER_AUTH_SECRET, which signs session cookies (k8s/README.md, web)
   - auth.sops.yaml

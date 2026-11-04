@@ -1,0 +1,24 @@
+# Publishes the web app on every node's IP via k3s ServiceLB, as Postgres and Neo4j are:
+# http://pi-cp.tail470a31.ts.net:3000, and hv-worker-1 and hv-worker-2 the same way. Anyone who can
+# reach the nodes can use it, with no share of the ember-web device. Port 3000, because Traefik holds
+# 80 and 443 on the nodes. Plain HTTP: ServiceLB can't terminate TLS, and the tailnet encrypts the
+# traffic anyway. BETTER_AUTH_TRUSTED_ORIGINS in deployment.yaml has to list each of these names.
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-lb
+  namespace: ember
+spec:
+  type: LoadBalancer
+  # Tailnet only. ServiceLB binds every interface, so without this the LAN could reach it too.
+  loadBalancerSourceRanges:
+    - 100.64.0.0/10
+  # ServiceLB forwards to the ClusterIP, so NodePorts are unused, and source ranges don't apply to
+  # them: they would reopen the port to the LAN on 30000-32767.
+  allocateLoadBalancerNodePorts: false
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
