@@ -165,7 +165,7 @@ Catch-up has two steps, both run by `scheduler:github` and done by `enrich:githu
 | **Out of order** (a comment before its issue's `opened`, `closed` before `edited`) | Each is still written as its own versioned row | The [ordering value](#ordering-value-ember-63) decides which is current |
 | **Events the App has no permission for** | None known. As of 2026-10-14 the App also reads Deployments and Discussions (`GET /app`), so those events arrive whenever they're subscribed | None. See [open questions](#open-questions) |
 | **Repository added to or removed from the installation** | `installation_repositories` | Added: reconcile it from the start. Removed: stop. Data is kept (EMBER-53) |
-| **Installation not mapped to a tenant** | Stored with `tenant = null`, not processed | `ember-admin map` assigns the tenant and enqueues what was stored |
+| **Installation not mapped to a tenant** | Stored with `tenant = null`, not processed | An owner connects it in the web app (Settings → GitHub, EMBER-130), or an operator runs `make map-tenant`. Either assigns the tenant and enqueues what was stored ([ADR 0010](../adr/0010-connecting-sources.md)) |
 
 ## Open questions
 

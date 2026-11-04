@@ -54,6 +54,22 @@ spec:
                 secretKeyRef:
                   name: web-auth
                   key: BETTER_AUTH_SECRET
+            # Connect GitHub (EMBER-130): the ember-ingest App's OAuth client, which trades the code
+            # GitHub sends back for a user token. Optional: until make web-secret writes them, Settings
+            # says Connect GitHub isn't set up. The App's Callback URL is BETTER_AUTH_URL below +
+            # /connect/github/callback
+            - name: GITHUB_APP_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: GITHUB_APP_CLIENT_ID
+                  optional: true
+            - name: GITHUB_APP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: GITHUB_APP_CLIENT_SECRET
+                  optional: true
             # The main address. The CLI's device sign-in sends people to <this>/device, so it is a
             # node address everyone can reach. pi-cp, because the cluster is down whenever it is.
             # HTTPS, so session cookies are Secure, and sign-in only works on the https addresses

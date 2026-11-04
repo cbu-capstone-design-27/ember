@@ -183,8 +183,9 @@ class Intake:
     async def store(self, row: dict) -> bool:
         """Insert the row unless its (source, delivery_id) is stored already. True if it was inserted."""
         tenant = select(Installation.tenant).where(
-            Installation.source == row["source"], Installation.account_id == row["account_id"]
-        ).scalar_subquery()  # null until the account is mapped
+            Installation.source == row["source"], Installation.account_id == row["account_id"],
+            Installation.disconnected_at.is_(None),
+        ).scalar_subquery()  # null until the account is connected, and again once it is disconnected
         statement = (
             insert(RawEvent).values(**row, tenant=tenant)
             .on_conflict_do_nothing(index_elements=["source", "delivery_id"])

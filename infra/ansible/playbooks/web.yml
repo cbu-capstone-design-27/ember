@@ -2,6 +2,8 @@
 # The web app on the cluster (k8s/apps/web, EMBER-112).
 # secret: writes k8s/apps/web/auth.sops.yaml, Secret web-auth, from vault_web_better_auth_secret,
 #   encrypted with the public key in .sops.yaml. Commit the file it writes. Use make web-secret.
+#   With vault_web_github_client_id and vault_web_github_client_secret (the ember-ingest App's OAuth
+#   client, EMBER-130), it holds those too, and Settings offers Connect GitHub.
 # test-accounts: creates the test accounts (files/web_test_accounts.py) on the deployed app, with the
 #   password in vault_web_test_password, or checks they are there. Use make web-test-accounts.
 # serve: on each node, `tailscale serve` answers https://<node>.<tailnet_domain> with a certificate
@@ -23,8 +25,12 @@
       metadata:
         name: web-auth
         namespace: ember
-      stringData:
-        BETTER_AUTH_SECRET: "{{ vault_web_better_auth_secret | default('') }}"
+      stringData: "{{ web_auth | combine(web_github if vault_web_github_client_id is defined else {}) }}"
+    web_auth:
+      BETTER_AUTH_SECRET: "{{ vault_web_better_auth_secret | default('') }}"
+    web_github:
+      GITHUB_APP_CLIENT_ID: "{{ vault_web_github_client_id | default('') }}"
+      GITHUB_APP_CLIENT_SECRET: "{{ vault_web_github_client_secret | default('') }}"
   tasks:
     - name: Secret
       tags: [secret]
@@ -39,6 +45,18 @@
             fail_msg: >-
               Add vault_web_better_auth_secret (openssl rand -hex 32) with
               .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
+        - name: Require both halves of the GitHub App's OAuth client, or neither
+          ansible.builtin.assert:
+            that:
+              - (vault_web_github_client_id is defined) == (vault_web_github_client_secret is defined)
+              - vault_web_github_client_id is not defined or (vault_web_github_client_id | length > 0 and vault_web_github_client_secret | length > 0)
+            fail_msg: >-
+              Set both vault_web_github_client_id and vault_web_github_client_secret (the ember-ingest App's
+              Client ID and a client secret from its settings page) with
+              .venv/bin/ansible-vault edit group_vars/all/vault.yml, or neither
             quiet: true
           no_log: true
 
@@ -75,7 +93,7 @@
         - name: Say what to do next
           ansible.builtin.debug:
             msg: >-
-              {{ secret_file ~ ' is written. Commit and merge it, then restart the web app: kubectl --context homelab -n ember rollout restart deploy/web. Everyone is signed out, the CLI included'
+              {{ secret_file ~ ' is written. Commit and merge it, then restart the web app: kubectl --context homelab -n ember rollout restart deploy/web. If BETTER_AUTH_SECRET changed, everyone is signed out, the CLI included'
                  if encrypted is not skipped else secret_file ~ ' already holds the vault value; nothing to do' }}
 
     - name: Test accounts
