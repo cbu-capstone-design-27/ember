@@ -71,10 +71,15 @@ struct WhoAmI {
     active: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct Organization {
-    name: String,
-    slug: String,
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct Organization {
+    pub name: String,
+    pub slug: String,
+    /// The id ingestion files the organization's records under. Optional, like everything the
+    /// web app added after `email`, so an older web app still parses.
+    pub tenant: Option<String>,
+    /// The user's role in it: owner, admin or member.
+    pub role: Option<String>,
 }
 
 impl WhoAmI {
@@ -86,6 +91,18 @@ impl WhoAmI {
             .iter()
             .find(|org| org.slug == active)
     }
+}
+
+/// Who the stored token belongs to, as the web app sees it right now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SignedIn {
+    /// The web app that issued the token.
+    pub url: String,
+    pub email: String,
+    /// The organization this session works in.
+    pub organization: Option<Organization>,
+    /// How many organizations the user is in. `None` from a web app older than organizations.
+    pub organizations: Option<usize>,
 }
 
 // ---- login ----
@@ -183,13 +200,12 @@ async fn wait_for_token(client: &Client, url: &str, code: &DeviceCode) -> Result
 // ---- status and logout ----
 
 pub async fn status() -> Result<(), Error> {
-    let Some(credentials) = load()? else {
+    let Some(me) = signed_in().await? else {
         return Err(not_logged_in());
     };
-    let url = &credentials.url;
-    let who = who_am_i(&client()?, url, &credentials.token).await?;
-    println!("Logged in to {url} as {}", who.email);
-    match (who.active_organization(), &who.organizations) {
+    let url = &me.url;
+    println!("Logged in to {url} as {}", me.email);
+    match (&me.organization, me.organizations) {
         (Some(org), _) => println!("Organization: {} ({})", org.name, org.slug),
         (None, Some(_)) => {
             println!("No organization yet. Create or join one at {url}/organizations")
@@ -197,6 +213,22 @@ pub async fn status() -> Result<(), Error> {
         (None, None) => {} // the web app predates organizations
     }
     Ok(())
+}
+
+/// Asks the web app who the stored token belongs to. `None` when nothing is stored; an error
+/// when the token was rejected or the web app couldn't be reached. `status` prints this, and the
+/// terminal UI shows it.
+pub async fn signed_in() -> Result<Option<SignedIn>, Error> {
+    let Some(credentials) = load()? else {
+        return Ok(None);
+    };
+    let who = who_am_i(&client()?, &credentials.url, &credentials.token).await?;
+    Ok(Some(SignedIn {
+        organization: who.active_organization().cloned(),
+        organizations: who.organizations.as_ref().map(Vec::len),
+        email: who.email,
+        url: credentials.url,
+    }))
 }
 
 pub async fn logout() -> Result<(), Error> {
