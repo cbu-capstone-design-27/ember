@@ -360,8 +360,14 @@ create table installations (
   source text not null, account_id text not null,
   tenant text not null,            -- ontology subgraph_id rules: [a-z0-9][a-z0-9-]*
   added_at timestamptz not null default now(),
+  -- EMBER-130, own migration: the connection the web app records (ADR 0010)
+  disconnected_at timestamptz,     -- null while connected; intake maps only connected accounts
+  label text,                      -- what Settings shows: GitHub login, Slack workspace, Jira site, GitLab group
+  external_id text,                -- the source's stable id for the account, where account_id is not (GitHub: installation.account.id)
+  connected_by text,               -- the web app's user id; null for make map-tenant
   primary key (source, account_id)
 );
+create index installations_external_id on installations (source, external_id) where external_id is not null;   -- a reinstall can't move tenants
 
 create table rate_limits (
   source text, tenant text, bucket text,   -- GitHub: installation · Slack: method × workspace · Jira: site

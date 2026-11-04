@@ -257,6 +257,15 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
         await self.deliver("issues", FIXTURE, "no-installation")
         self.assertEqual([(r["account_id"], r["tenant"]) for r in await self.rows()], [("99", None), (None, None)])
 
+    async def test_disconnected_installation_is_stored_without_a_tenant(self):
+        # ADR 0010: a disconnected account's deliveries are stored as an unmapped account's are
+        await self.db.execute("update installations set disconnected_at = now() where source = 'github' and account_id = '77'")
+        await self.deliver("issues", {**FIXTURE, "installation": {"id": 77}}, "after-disconnect")
+        await self.db.execute("update installations set disconnected_at = null where source = 'github' and account_id = '77'")
+        await self.deliver("issues", {**FIXTURE, "installation": {"id": 77}}, "after-reconnect")
+        self.assertEqual([(r["delivery_id"], r["tenant"]) for r in await self.rows()],
+                         [("after-disconnect", None), ("after-reconnect", "acme")])
+
     async def test_redelivery_is_a_no_op_and_wakes_no_one(self):
         notified: list[str] = []
         await self.db.add_listener("raw_events", lambda *args: notified.append(args[3]))

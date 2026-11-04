@@ -27,6 +27,11 @@ export function canInvite(role: string): boolean {
   return role.split(",").some((r) => r === "owner" || r === "admin");
 }
 
+/** Owners and admins connect and disconnect sources (ADR 0010); members see what is connected. */
+export function canConnectSources(role: string): boolean {
+  return canInvite(role);
+}
+
 /**
  * Whether ingestion already files data under `tenant` (Postgres only; SQLite
  * has no ingestion tables). A new organization can't take such a tenant by

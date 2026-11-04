@@ -183,6 +183,37 @@ Emails aren't verified yet, so anyone who signs up with an invited address can a
 
 To give an organization data that's already stored, such as the team's `ember-development`, an Ember admin (an email in `EMBER_ADMIN_EMAILS`) sets its tenant in Settings → Linked tenant. The slug stays the same. A tenant belongs to one organization at most. Only admins can link, because a link hands over every record under that tenant.
 
+## Connect GitHub
+
+An organization's owners and admins connect GitHub in Settings → GitHub (EMBER-130). This follows [ADR 0010](../../docs/adr/0010-connecting-sources.md). Connecting maps an installation of the `ember-ingest` App to the organization's tenant in ingestion's `installations` table. It then hands the deliveries GitHub already sent for it to enrich, with no `make map-tenant`. Members see what is connected.
+
+- **Connect GitHub** (`/connect/github`) sends the owner to install the App, with a `state` that a signed, 15-minute cookie ties to this browser, user and organization.
+- **Connect an existing installation** (`/connect/github?existing=1`) signs them in to GitHub instead, then lists the App's installations they can see (`/connect/github/pick`).
+  - They can tick only the ones they administer: their own personal account, or an organization they own.
+  - Installations another organization holds are shown, but can't be ticked.
+  - This path covers an install approved later by an organization owner, an install started on GitHub's own page, and installations that existed before this flow.
+- **The callback** (`/connect/github/callback`) checks ownership:
+  1. It trades GitHub's `code` for a user access token.
+  2. It accepts the installation only if `GET /user/installations` lists it for that user. The `installation_id` on the redirect alone can be spoofed.
+  3. It revokes the token.
+  4. It writes the row with the GitHub login as `label` and the account id as `external_id`.
+  5. It gives the installation's unmapped `raw_events` the tenant and notifies `raw_events`.
+  6. It does that hand-off once more 10 s later, for a delivery intake was storing at that moment (`src/lib/connections.ts`).
+- **An account never moves to another organization.** Connecting an installation another tenant holds is refused. So is a reinstall (a new installation id) of a GitHub account another tenant holds, matched by `external_id`. Connecting one's own disconnected installation again reconnects it.
+
+It needs Postgres with the ingestion migrations, and the App's OAuth client in `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`. Without them Settings says what is missing.
+
+### GitHub App settings
+
+On `ember-ingest`'s settings page (Settings → Developer settings → GitHub Apps, on the account or organization that owns the App):
+
+1. **Callback URL:** `https://pi-cp.tail470a31.ts.net/connect/github/callback`, which is `BETTER_AUTH_URL` plus the path. It is a browser redirect, so a tailnet address works. The connect routes move a visitor on another node's address to this one first, because the session cookie belongs to one host.
+2. **Request user authorization (OAuth) during installation:** on. GitHub then sends installs to the Callback URL with a `code`, and the Setup URL field is disabled.
+3. **Permissions → Organization → Members:** read. Without it, organization installations can't be picked on the existing-installation path, and the picker says why. Changing a permission asks every installation to accept it.
+4. **Client secrets → Generate a new client secret.** Put the Client ID and the secret in the vault as `vault_web_github_client_id` and `vault_web_github_client_secret`. Then run `make web-secret`, commit `infra/k8s/apps/web/auth.sops.yaml`, and restart the web app.
+
+For local dev, a second GitHub App with Callback URL `http://localhost:3000/connect/github/callback` keeps the shared App's settings alone.
+
 ## Settings
 
 | Variable | Required | Meaning |
@@ -191,6 +222,8 @@ To give an organization data that's already stored, such as the team's `ember-de
 | `BETTER_AUTH_URL` | yes, outside local dev | The address users open, e.g. `http://localhost:3000`. Used for cookie and origin checks. |
 | `DATABASE_URL` | no | See above. The container defaults to `file:/data/ember.db`. |
 | `EMBER_ADMIN_EMAILS` | no | Comma-separated emails of Ember admins, who can [link an organization to an existing tenant](#linking-a-tenant). Unset means nobody can. |
+| `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | no | The `ember-ingest` App's OAuth client, for [Connect GitHub](#connect-github). Unset means Settings can't connect GitHub. |
+| `GITHUB_APP_SLUG` | no | The App's URL name, `github.com/apps/<slug>`. Defaults to `ember-ingest`. |
 
 ## Run
 
@@ -240,6 +273,11 @@ Give the tests a database of their own: they leave their test accounts behind. W
   - invites: shown to the invited email, accepted only by it, members can't invite, revoked and expired invites can't be used, and invites last a week
   - switching between two organizations, and the choice persisting in the session
   - linking a tenant: Ember admins only, one organization per tenant (also enforced by the database)
+- `test/connect-github.test.ts` covers Connect GitHub, with GitHub as a fake `fetch`:
+  - the signed state and picker cookies: altered, expired, from another browser or another user
+  - an installation GitHub lists for the user is accepted, one it doesn't is refused, every page is read, and the user token is revoked
+  - the picker offers only installations the user administers, and says when the App can't read organization roles
+  - on Postgres with the ingestion migrations applied: connecting hands stored deliveries over and notifies, the second hand-off, refusing a move (also by a reinstall), reconnecting, and what the picker learns
 - `test/workspace.test.ts` covers:
   - reading references and signals out of text
   - the preview data's consistency
@@ -249,7 +287,7 @@ Give the tests a database of their own: they leave their test accounts behind. W
   - the graph's fit to the ontology
   - that each insight's action resolves it, and only it
 
-CI runs both against a Postgres service container.
+CI runs them against a Postgres service container with the ingestion migrations applied.
 
 ## Conventions
 

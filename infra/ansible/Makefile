@@ -152,7 +152,7 @@ enrich-jira-secret: ## Write k8s/apps/enrich-jira/jira-api.sops.yaml, encrypted,
 enrich-gitlab-secret: ## Write k8s/apps/enrich-gitlab/gitlab-api.sops.yaml, encrypted, from vault_gitlab_api_token. Commit it
 	ansible-playbook playbooks/enrich.yml --tags secret-gitlab
 
-web-secret: ## Write k8s/apps/web/auth.sops.yaml, encrypted, from vault_web_better_auth_secret. Commit it
+web-secret: ## Write k8s/apps/web/auth.sops.yaml, encrypted, from vault_web_better_auth_secret and, if set, vault_web_github_client_id/_secret. Commit it
 	ansible-playbook playbooks/web.yml --tags secret
 
 web-test-accounts: ## Create the web app's test accounts on the cluster from vault_web_test_password, or check they are there. Safe to re-run
