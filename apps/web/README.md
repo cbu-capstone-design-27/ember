@@ -210,6 +210,10 @@ npm ci
 BETTER_AUTH_SECRET=dev-secret-change-me BETTER_AUTH_URL=http://localhost:3000 npm run dev
 ```
 
+## On the cluster
+
+The cluster runs it at **`https://ember-web.tail470a31.ts.net`**, reachable from the tailnet only (EMBER-112), against the cluster's Postgres. Point the CLI there to sign in against it. Flux deploys `infra/k8s/apps/web/`, and `infra/k8s/README.md` (web) covers the image tag, the Secrets and the test accounts (`test-owner@`, `test-admin@` and `test-member@example.com`, in organization Ember Test).
+
 ## Test
 
 ```sh

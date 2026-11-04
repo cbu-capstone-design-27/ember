@@ -1,0 +1,22 @@
+# Tailnet only: https://ember-web.tail470a31.ts.net (EMBER-112). The Tailscale operator gives it its
+# own tailnet device and certificate. No tailscale.com/funnel annotation, so it has no public DNS
+# record and nothing outside the tailnet can reach it; make apps-health checks that.
+#
+# It goes straight to Service web, not through nginx: nginx sits behind the public Funnel Ingress
+# (apps/nginx), and a route there would make the web app public. BETTER_AUTH_URL in deployment.yaml
+# must match this name.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  namespace: ember
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: web
+      port:
+        number: 3000
+  tls:
+    - hosts:
+        - ember-web

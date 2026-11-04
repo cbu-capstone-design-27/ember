@@ -141,10 +141,11 @@ make flux-preview-end        # after the PR merges, or to abandon the preview
 
 ## Secrets with SOPS
 
-Secrets live in Git only as SOPS-encrypted `*.sops.yaml` files. Flux decrypts them on the cluster. Today there are four:
+Secrets live in Git only as SOPS-encrypted `*.sops.yaml` files. Flux decrypts them on the cluster. Among them:
 
 - `infrastructure/tailscale-operator/operator-oauth.sops.yaml`: the Tailscale operator's OAuth client.
 - `apps/intake/webhooks.sops.yaml`: the GitHub App's webhook secret (`make intake-secret`).
+- `apps/web/auth.sops.yaml`: the web app's session secret (`make web-secret`).
 - `monitoring/k8s-monitoring/grafana-cloud.sops.yaml`: the Grafana Cloud push credentials.
 - `monitoring/grafana/grafana-operator.sops.yaml`: the Grafana Operator's service account token.
 
@@ -275,7 +276,7 @@ Everything on the cluster comes back from Git plus the age key in the vault.
 | `make flux-preview BRANCH=<branch>` | Deploy a pushed branch instead of `develop` |
 | `make flux-preview-end` | Go back to `develop` |
 | `make flux-components` | Regenerate `gotk-components.yaml` after changing `FLUX_VERSION` in the Makefile. Commit it; Flux upgrades itself |
-| `make apps-health` | Public route end to end: Ingress hostname, nginx `/healthz`, a webhook POST from the tailnet and through Funnel, 404 on unknown paths |
+| `make apps-health` | Public route end to end: Ingress hostname, nginx `/healthz`, a webhook POST from the tailnet and through Funnel, 404 on unknown paths. Also the web app: on Postgres, answering on the tailnet, no public DNS |
 | `make ts-operator-health` | Operator ready and logged in; each Tailscale Ingress has a hostname and answers HTTPS; each Funnel Ingress has public DNS |
 | `make neo4j-health` | Pod ready on hv-worker-1; a query works in the pod and on every node's IP |
 | `make postgres-health` | Postgres ready on hv-worker-2, migrations applied, the ingestion tables present, Postgres answering on every node's IP |

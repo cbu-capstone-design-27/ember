@@ -1,0 +1,103 @@
+---
+# The web app on the cluster (k8s/apps/web, EMBER-112).
+# secret: writes k8s/apps/web/auth.sops.yaml, Secret web-auth, from vault_web_better_auth_secret,
+#   encrypted with the public key in .sops.yaml. Commit the file it writes. Use make web-secret.
+# test-accounts: creates the test accounts (files/web_test_accounts.py) on the deployed app, with the
+#   password in vault_web_test_password, or checks they are there. Use make web-test-accounts.
+# The values are never printed.
+- name: Web
+  hosts: localhost
+  gather_facts: false
+  vars:
+    repo_dir: "{{ playbook_dir }}/../../.."
+    secret_file: infra/k8s/apps/web/auth.sops.yaml
+    web_url: "https://ember-web.{{ tailnet_domain }}"
+    web_secret:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: web-auth
+        namespace: ember
+      stringData:
+        BETTER_AUTH_SECRET: "{{ vault_web_better_auth_secret | default('') }}"
+  tasks:
+    - name: Secret
+      tags: [secret]
+      block:
+        - name: Require the Better Auth secret in the vault
+          ansible.builtin.assert:
+            that:
+              - vault_web_better_auth_secret is defined
+              - vault_web_better_auth_secret is string
+              - vault_web_better_auth_secret | length >= 32
+              - vault_web_better_auth_secret == vault_web_better_auth_secret | trim
+            fail_msg: >-
+              Add vault_web_better_auth_secret (openssl rand -hex 32) with
+              .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
+        # Encrypting again gives new ciphertext every time, so only write when the value changed
+        - name: Read the secret the file holds now
+          ansible.builtin.command:
+            argv: [sops, --decrypt, --extract, '["stringData"]', --output-type, json, "{{ secret_file }}"]
+            chdir: "{{ repo_dir }}"
+          environment:
+            SOPS_AGE_KEY: "{{ vault_sops_age_key | default('') }}"
+          register: current
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Encrypt the Secret
+          ansible.builtin.command:
+            argv: [sops, --encrypt, --filename-override, "{{ secret_file }}",
+                   --input-type, json, --output-type, yaml, /dev/stdin]
+            chdir: "{{ repo_dir }}"
+            stdin: "{{ web_secret | to_json }}"
+          register: encrypted
+          when: current.rc != 0 or (current.stdout | from_json) != web_secret.stringData
+          changed_when: false
+          no_log: true
+
+        - name: Write it to {{ secret_file }}
+          ansible.builtin.copy:
+            content: "{{ encrypted.stdout }}\n"
+            dest: "{{ repo_dir }}/{{ secret_file }}"
+            mode: "0644"
+          when: encrypted is not skipped
+
+        - name: Say what to do next
+          ansible.builtin.debug:
+            msg: >-
+              {{ secret_file ~ ' is written. Commit and merge it, then restart the web app: kubectl --context homelab -n ember rollout restart deploy/web. Everyone is signed out, the CLI included'
+                 if encrypted is not skipped else secret_file ~ ' already holds the vault value; nothing to do' }}
+
+    - name: Test accounts
+      tags: [test-accounts]
+      block:
+        - name: Require the test accounts' password in the vault
+          ansible.builtin.assert:
+            that:
+              - vault_web_test_password is defined
+              - vault_web_test_password is string
+              - vault_web_test_password | length >= 8
+            fail_msg: >-
+              Add vault_web_test_password (at least 8 characters; openssl rand -base64 18) with
+              .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
+        # The password goes through the environment, never the command line
+        - name: Create the test accounts, or check they are there
+          ansible.builtin.command:
+            argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/files/web_test_accounts.py"]
+          environment:
+            WEB_URL: "{{ web_url }}"
+            WEB_TEST_PASSWORD: "{{ vault_web_test_password }}"
+          register: accounts
+          changed_when: "'created' in accounts.stdout or 'joined' in accounts.stdout"
+
+        - name: Show what it did
+          ansible.builtin.debug:
+            msg: "{{ accounts.stdout_lines }}"

@@ -24,11 +24,13 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make flux-health` | Flux's controllers are healthy and every Kustomization is applied; lists what is deployed and at which commit |
 | `make sync` | Fetch `develop` and apply it now instead of within the next minute |
 | `make apps-diff` | Shows what this checkout's `infrastructure/`, `apps/` and `monitoring/` would change on the cluster. Deploys nothing |
-| `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Also checks each enrich worker logged that it is listening. Deploys nothing |
+| `make apps-health` | Checks the public route end to end: the Ingress has the hostname `ember.tail470a31.ts.net`, nginx answers `GET /healthz`, an unsigned POST to `/webhook/github` reaches intake and is refused (401 with `{"error": "invalid signature"}`), the same POST gets the same answer through Funnel's public address, and an unknown path returns 404. Also checks each enrich worker logged that it is listening, and that the web app uses Postgres, answers at `https://ember-web.tail470a31.ts.net` and has no public DNS record ([web](#web)). Deploys nothing |
 | `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret, the Slack app's signing secret and the Jira webhook's secret in the vault ([The webhook secret](#the-webhook-secret), [The Slack signing secret](#the-slack-signing-secret), [The Jira webhook secret](#the-jira-webhook-secret)). Commit the result |
 | `make enrich-github-secret` | Writes `apps/enrich-github/github-app.sops.yaml`, encrypted, from the GitHub App's private key in the vault ([enrich-github](#enrich-github)). Commit the result |
 | `make enrich-slack-secret` | Writes `apps/enrich-slack/slack-bot.sops.yaml`, encrypted, from the Slack app's bot token in the vault ([enrich-slack](#enrich-slack)). Commit the result |
 | `make enrich-jira-secret` | Writes `apps/enrich-jira/jira-api.sops.yaml`, encrypted, from the Atlassian account and API token in the vault ([enrich-jira](#enrich-jira)). Commit the result |
+| `make web-secret` | Writes `apps/web/auth.sops.yaml`, encrypted, from the web app's session secret in the vault ([web](#web)). Commit the result |
+| `make web-test-accounts` | Creates the web app's test accounts on the cluster, or checks they are there ([Test accounts](#test-accounts)). Safe to re-run |
 | `make llm-tunnel-secret` | Temporary (EMBER-49). Writes `apps/llm-tunnel/ssh.sops.yaml` and `model-keys.sops.yaml`, encrypted, from the tunnel key and the Spark's API keys in the vault, and prints the `authorized_keys` line for the Spark ([llm-tunnel](#llm-tunnel)). Commit the result |
 | `make map-tenant SOURCE=… ACCOUNT=… TENANT=…` | Maps a source account to a tenant and hands the deliveries already stored for it to the enrich workers ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
 | `make grafana-secret` | Writes the collector's and the Grafana Operator's Secrets, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud tokens](#the-grafana-cloud-tokens)). Commit the result |
@@ -231,6 +233,42 @@ kubectl --context homelab -n ember logs deploy/enrich-gitlab
 It logs `enrich:gitlab listening on raw_events` once connected, which `make apps-health` waits for.
 
 To set or rotate the token: create one with the `read_api` scope (a group access token on Premium or Ultimate, else a personal access token on an account that can read the projects), put it in the vault as `vault_gitlab_api_token`, run `make enrich-gitlab-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-gitlab`. Revoke the old token once the new pod is listening. GitLab tokens expire (at most a year), and an expired one fails only the rows that fetch, so note its date.
+
+### web
+
+The web app (EMBER-112, `apps/web`, whose README covers sign-up, organizations and the CLI's sign-in). One replica in namespace `ember` behind ClusterIP Service `web` on port 3000, from `apps/web/`. **Tailnet only:** `apps/web/ingress.yaml` is a Tailscale Ingress of its own, without Funnel, so `https://ember-web.tail470a31.ts.net` answers on tailnet devices and has no public DNS record. It doesn't go through nginx, because nginx sits behind the public Funnel Ingress and a route there would make the app public.
+
+| What | Address |
+|---|---|
+| Browser | `https://ember-web.tail470a31.ts.net` |
+| CLI (`ember auth login`) | The same address. The device sign-in sends the browser to `/device` there |
+| In the cluster | `http://web.ember.svc.cluster.local:3000` |
+
+- **Image.** `deployment.yaml` pins a `develop-<run>-<sha>` tag of `ghcr.io/cbu-capstone-design-27/ember/web`, as intake does. CI publishes a new one only when `apps/web/` changes (`docs/container-images.md`). To deploy it, change the tag and merge.
+- **Postgres.** `DATABASE_URL` comes from Secret `postgres-app`. Accounts, sessions and organizations live in schema `web` of database `ember`, next to ingestion's tables in `public` (`apps/web/README.md`, Database). Each start creates or updates those tables before the server listens, which is why there is one replica: two pods starting at once would race on it. A rollout starts the new pod first, so the old one serves until the new one is ready. The pod logs `[db] Auth database: Postgres, schema web, on postgres-rw.ember:5432/ember` at start, and `make apps-health` checks for it.
+- **Session secret.** `BETTER_AUTH_SECRET` comes from Secret `web-auth` (`apps/web/auth.sops.yaml`). It signs session cookies and the CLI's tokens. The pod stays in `CreateContainerConfigError` until it exists. To set or rotate it: generate one (`openssl rand -hex 32`), keep it in the vault as `vault_web_better_auth_secret`, run `make web-secret`, commit and merge the file, then `kubectl --context homelab -n ember rollout restart deploy/web`. A new secret signs everyone out, CLI included.
+- **Address.** `BETTER_AUTH_URL` in `deployment.yaml` is `https://ember-web.tail470a31.ts.net`. Better Auth refuses a sign-in whose `Origin` isn't that address, so it has to match the Ingress's name. If the Tailscale device ever comes back as `ember-web-1`, remove the stale `ember-web` device in the admin console, then `kubectl --context homelab -n ember delete ingress web` and `make sync`, as for `ember` ([Troubleshooting the public route](#troubleshooting-the-public-route)).
+- **Rate limits.** Sign-in and sign-up allow 3 requests per 10 s per client IP. The Tailscale proxy sends the client's tailnet address as a single `X-Forwarded-For`, which Better Auth trusts as it is, so each device has its own limit and `trustedProxies` stays unset.
+- **Probes.** All three ask Better Auth's `/api/auth/ok`, which doesn't touch Postgres. A database outage shows as errors on the pages, not as a pod restarting in a loop.
+- **Files.** The root filesystem is read-only. Next.js's cache (`/app/.next/cache`) and `/tmp` are `emptyDir`s.
+
+```bash
+kubectl --context homelab -n ember logs deploy/web
+```
+
+#### Test accounts
+
+`make web-test-accounts` (from `infra/ansible`) creates three accounts and one organization on the cluster's web app, for trying it and for checking the CLI's sign-in:
+
+| Email | Role in organization **Ember Test** (`ember-test`) |
+|---|---|
+| `test-owner@example.com` | owner |
+| `test-admin@example.com` | admin |
+| `test-member@example.com` | member |
+
+All three use the password in the vault as `vault_web_test_password` (`.venv/bin/ansible-vault view group_vars/all/vault.yml` from `infra/ansible`). It isn't in Git. Their sources are GitHub, Jira and Slack, so the dashboard shows the preview workspace. None of them is an Ember admin, so they can't link a tenant.
+
+Running it again changes nothing and says each account is there. Postgres is wiped now and then; run it again afterwards to recreate them. It refuses to go on if an account exists with another password, which means the vault's password changed after the accounts were made. Because they share one known password, use them only for testing, never for real data.
 
 ### llm-tunnel
 

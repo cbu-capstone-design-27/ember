@@ -22,7 +22,8 @@ DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-j
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
 	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate \
-	intake-secret enrich-github-secret enrich-slack-secret enrich-jira-secret enrich-gitlab-secret llm-tunnel-secret map-tenant grafana-secret grafana-health
+	intake-secret enrich-github-secret enrich-slack-secret enrich-jira-secret enrich-gitlab-secret llm-tunnel-secret map-tenant grafana-secret grafana-health \
+	web-secret web-test-accounts
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -133,7 +134,7 @@ apps-diff: ## Show what this checkout's k8s/ would change on the cluster
 	flux --context $(CONTEXT) diff kustomization apps --path ../k8s/apps || [ $$? -eq 1 ]
 	flux --context $(CONTEXT) diff kustomization monitoring --path ../k8s/monitoring || [ $$? -eq 1 ]
 
-apps-health: ## Apps rolled out; enrich workers listening; intake refuses an unsigned webhook through nginx, from the tailnet and through Funnel
+apps-health: ## Apps rolled out; enrich workers listening; web app on Postgres, answering on the tailnet and not public; intake refuses an unsigned webhook through nginx, from the tailnet and through Funnel
 	ansible-playbook playbooks/apps.yml --tags health
 
 intake-secret: ## Write k8s/apps/intake/webhooks.sops.yaml, encrypted, from vault_github_webhook_secret, vault_slack_signing_secret, vault_jira_webhook_secret and vault_gitlab_webhook_signing_token. Commit it
@@ -150,6 +151,12 @@ enrich-jira-secret: ## Write k8s/apps/enrich-jira/jira-api.sops.yaml, encrypted,
 
 enrich-gitlab-secret: ## Write k8s/apps/enrich-gitlab/gitlab-api.sops.yaml, encrypted, from vault_gitlab_api_token. Commit it
 	ansible-playbook playbooks/enrich.yml --tags secret-gitlab
+
+web-secret: ## Write k8s/apps/web/auth.sops.yaml, encrypted, from vault_web_better_auth_secret. Commit it
+	ansible-playbook playbooks/web.yml --tags secret
+
+web-test-accounts: ## Create the web app's test accounts on the cluster from vault_web_test_password, or check they are there. Safe to re-run
+	ansible-playbook playbooks/web.yml --tags test-accounts
 
 grafana-secret: ## Write the Grafana Cloud Secrets (collector, operator), encrypted, from vault_grafana_cloud_*. Commit them
 	ansible-playbook playbooks/grafana-cloud.yml --tags secret

@@ -9,6 +9,7 @@ resources:
   - enrich-jira
   - enrich-gitlab
   - embed
+  - web
   # TEMPORARY (EMBER-49): SSH tunnel to the Spark's chat model
   - llm-tunnel
   - neo4j
