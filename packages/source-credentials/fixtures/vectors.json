@@ -1,0 +1,45 @@
+{
+  "_comment": "EMBER-147. Test-only keys and the rows they seal. source_credentials.py and apps/web/src/lib/source-credentials.ts must both open every case, and seal it to the same bytes given the nonce.",
+  "rings": {
+    "api": "2026-11:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=, 2026-10:ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+    "webhook": "wh-1:ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8="
+  },
+  "cases": [
+    {
+      "kind": "api",
+      "source": "jira",
+      "account_id": "acme.atlassian.net",
+      "key_id": "2026-11",
+      "nonce": "AAECAwQFBgcICQoL",
+      "secret": {
+        "access_token": "at-1",
+        "refresh_token": "rt-1",
+        "cloud_id": "11111111-2222-3333-4444-555555555555"
+      },
+      "ciphertext": "AAECAwQFBgcICQoLPCC3eKaAsWjSNfjg1IdaV6G38xnBWXNeSgKD93gaaO11f8WZweMougbQUtyqqwpbgjYV6QW/x/gFtRsoKdLE38EN60jh4xRML2eZXcK7OtwMp/xXQ1ZmXcjIq/lNxZvwB2AQwSmWnAb1t7M98CTVSA=="
+    },
+    {
+      "kind": "api",
+      "source": "slack",
+      "account_id": "T0123",
+      "key_id": "2026-10",
+      "nonce": "DA0ODxAREhMUFRYX",
+      "secret": {
+        "bot_token": "xoxb-test",
+        "note": "naïve ✓"
+      },
+      "ciphertext": "DA0ODxAREhMUFRYXmRgsWkBidNC1MIrWyPebqNb0BsOu3+1mi/rRc19rqn3NYGGA0GZzIgPRuyzuTg9In1GGHXIOs5vRkG+fiA=="
+    },
+    {
+      "kind": "webhook",
+      "source": "gitlab",
+      "account_id": "gitlab.com/acme",
+      "key_id": "wh-1",
+      "nonce": "GBkaGxwdHh8gISIj",
+      "secret": {
+        "signing_token": "whsec_test"
+      },
+      "ciphertext": "GBkaGxwdHh8gISIjBEso8CwptdTSqQg2K3PL5Co8YQYXqdjSwZVTXZX0lvpoPnKMIvluwvVYZYfO/g=="
+    }
+  ]
+}

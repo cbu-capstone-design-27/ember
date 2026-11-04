@@ -16,7 +16,7 @@ Next.js (App Router, TypeScript) serves the pages and the auth API from one Node
 | `/graph` | The knowledge graph, one shaded region per source (GitHub, Jira, Slack) with people in the middle and the cross-source links between them. Drag, zoom, search, filter by subgraph and node type. Click a node for the same details and actions as the drawer. `?focus=<node id>` opens on one node, and every "Show in graph" link uses it. |
 | `/organizations` | Create or join an organization. Anyone signed in who belongs to none lands here. Lists invites sent to your email and the organizations you're in ([Organizations](#organizations)). |
 | `/invite/<id>` | An invite link: log in or sign up, then accept or decline. Only the invited email can. |
-| `/settings` | The organization (name, slug, tenant, your role), its members, invites (owners and admins), the linked tenant (Ember admins), then name, sources, preview data (reset), password, log out. |
+| `/settings` | The organization (name, slug, tenant, your role), its [connections](#connections), its members, invites (owners and admins), the linked tenant (Ember admins), then name, sources, preview data (reset), password, log out. |
 | `/device` | Where `ember auth login` sends the browser: check the code matches the terminal, then approve or deny ([CLI sign-in](#cli-sign-in)). Signed-out users log in or sign up first and come back. |
 | `/api/auth/*` | Better Auth's endpoints (`sign-up/email`, `sign-in/email`, `sign-out`, `get-session`, `update-user`, `change-password`, `device/*`, `organization/*`, …). |
 | `/api/whoami` | The name, email and organizations a CLI token belongs to ([CLI sign-in](#cli-sign-in)). |
@@ -183,9 +183,26 @@ Emails aren't verified yet, so anyone who signs up with an invited address can a
 
 To give an organization data that's already stored, such as the team's `ember-development`, an Ember admin (an email in `EMBER_ADMIN_EMAILS`) sets its tenant in Settings → Linked tenant. The slug stays the same. A tenant belongs to one organization at most. Only admins can link, because a link hands over every record under that tenant.
 
+## Connections
+
+Settings → Connections lists every source account feeding the organization's tenant, one per `installations` row (EMBER-147, [ADR 0010](../../docs/adr/0010-connecting-sources.md)). Each shows its source, label, who connected it (a member, "a former member", or "an Ember operator" for rows `make map-tenant` wrote) and whether it is connected. Owners and admins see Connect and Disconnect. Members see the list.
+
+**Disconnect** (`settings/connection-actions.ts`, `disconnectAccount` in `src/lib/connections.ts`) asks first, then in one transaction:
+
+1. Sets `disconnected_at`. Intake maps only connected accounts, so from the next delivery on the account's events are stored with no tenant, as an unmapped account's are, and enrich skips them.
+2. Deletes the account's `source_credentials`.
+
+What was already ingested stays (EMBER-53). The tenant comes from the caller's membership, never from the form. Connecting the same account to the same organization again clears `disconnected_at`. Another organization still can't take it.
+
+Removing the source's own hook is per source. Jira deletes its dynamic webhook (EMBER-131) and Slack calls `apps.uninstall` (EMBER-148). GitHub's uninstall needs the App's private key, which the web app doesn't hold, so after a GitHub disconnect Settings links the owner to GitHub to uninstall `ember-ingest` there. Until they do, GitHub keeps sending events, which intake stores with no tenant.
+
+### Source credentials
+
+Credentials an owner connects with (a Jira token, a Slack bot token, a GitLab access token) go in ingestion's `source_credentials` table, sealed with AES-256-GCM by `src/lib/source-credentials.ts` (`storeCredential`, `loadCredential`). The Python workers open them with [`packages/source-credentials`](../../packages/source-credentials/README.md), which documents the format. The web app never shows a stored credential again.
+
 ## Connect GitHub
 
-An organization's owners and admins connect GitHub in Settings → GitHub (EMBER-130). This follows [ADR 0010](../../docs/adr/0010-connecting-sources.md). Connecting maps an installation of the `ember-ingest` App to the organization's tenant in ingestion's `installations` table. It then hands the deliveries GitHub already sent for it to enrich, with no `make map-tenant`. Members see what is connected.
+An organization's owners and admins connect GitHub in Settings → Connections (EMBER-130). This follows [ADR 0010](../../docs/adr/0010-connecting-sources.md). Connecting maps an installation of the `ember-ingest` App to the organization's tenant in ingestion's `installations` table. It then hands the deliveries GitHub already sent for it to enrich, with no `make map-tenant`. Members see what is connected.
 
 - **Connect GitHub** (`/connect/github`) sends the owner to install the App, with a `state` that a signed, 15-minute cookie ties to this browser, user and organization.
 - **Connect an existing installation** (`/connect/github?existing=1`) signs them in to GitHub instead, then lists the App's installations they can see (`/connect/github/pick`).
@@ -224,6 +241,7 @@ For local dev, a second GitHub App with Callback URL `http://localhost:3000/conn
 | `EMBER_ADMIN_EMAILS` | no | Comma-separated emails of Ember admins, who can [link an organization to an existing tenant](#linking-a-tenant). Unset means nobody can. |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | no | The `ember-ingest` App's OAuth client, for [Connect GitHub](#connect-github). Unset means Settings can't connect GitHub. |
 | `GITHUB_APP_SLUG` | no | The App's URL name, `github.com/apps/<slug>`. Defaults to `ember-ingest`. |
+| `SOURCE_CREDENTIALS_API_KEYS`, `SOURCE_CREDENTIALS_WEBHOOK_KEYS` | no | The key rings that seal [source credentials](#source-credentials): `<key id>:<base64 of 32 bytes>`, comma-separated, the sealing key first. Unset means no source that stores a credential can be connected. |
 
 ## Run
 
@@ -278,6 +296,10 @@ Give the tests a database of their own: they leave their test accounts behind. W
   - an installation GitHub lists for the user is accepted, one it doesn't is refused, every page is read, and the user token is revoked
   - the picker offers only installations the user administers, and says when the App can't read organization roles
   - on Postgres with the ingestion migrations applied: connecting hands stored deliveries over and notifies, the second hand-off, refusing a move (also by a reinstall), reconnecting, and what the picker learns
+- `test/connections.test.ts` covers Connections and source credentials:
+  - every vector in `packages/source-credentials/fixtures/vectors.json` opens and seals to the same bytes as the Python workers
+  - a credential copied to another account, source or kind, a changed byte, an unknown key and a bad key ring are refused, without echoing the key
+  - on Postgres with the ingestion migrations applied: storing and reading a credential, which needs its connection; Disconnect stops the mapping, deletes the credential and keeps the data; another organization can't disconnect or take the account; reconnecting; listing every source's connections
 - `test/workspace.test.ts` covers:
   - reading references and signals out of text
   - the preview data's consistency
