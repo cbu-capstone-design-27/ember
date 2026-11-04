@@ -73,6 +73,14 @@ spec:
                 secretKeyRef:
                   name: intake-webhooks
                   key: JIRA_WEBHOOK_SECRET
+            # Verifies the dynamic webhooks Connect Jira registers (EMBER-131): the Atlassian 3LO app's client
+            # secret signs their bearer token. Optional until the app is in the vault
+            - name: JIRA_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: intake-webhooks
+                  key: JIRA_OAUTH_CLIENT_SECRET
+                  optional: true
             # Serves /webhook/gitlab (services/intake/README.md, GitLab adapter)
             - name: GITLAB_WEBHOOK_SIGNING_TOKEN
               valueFrom:

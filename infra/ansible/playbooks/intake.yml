@@ -5,7 +5,8 @@
 # (k8s/README.md, "The Slack signing secret"); vault_jira_webhook_secret is the secret saved on the
 # Jira site's admin webhook (k8s/README.md, "The Jira webhook secret"); vault_gitlab_webhook_signing_token
 # is the signing token GitLab generated for the project webhook (k8s/README.md, "The GitLab signing
-# token"). The values are never printed.
+# token"); vault_jira_oauth_client_secret, when set, is the Atlassian 3LO app's client secret, which
+# signs the dynamic webhooks Connect Jira registers (EMBER-131). The values are never printed.
 # Commit the file it writes. Use make intake-secret.
 - name: Intake
   hosts: localhost
@@ -19,11 +20,14 @@
       metadata:
         name: intake-webhooks
         namespace: ember
-      stringData:
-        GITHUB_WEBHOOK_SECRET: "{{ vault_github_webhook_secret }}"
-        SLACK_SIGNING_SECRET: "{{ vault_slack_signing_secret }}"
-        JIRA_WEBHOOK_SECRET: "{{ vault_jira_webhook_secret }}"
-        GITLAB_WEBHOOK_SIGNING_TOKEN: "{{ vault_gitlab_webhook_signing_token }}"
+      stringData: "{{ intake_webhooks | combine(intake_jira_oauth if vault_jira_oauth_client_secret is defined else {}) }}"
+    intake_webhooks:
+      GITHUB_WEBHOOK_SECRET: "{{ vault_github_webhook_secret }}"
+      SLACK_SIGNING_SECRET: "{{ vault_slack_signing_secret }}"
+      JIRA_WEBHOOK_SECRET: "{{ vault_jira_webhook_secret }}"
+      GITLAB_WEBHOOK_SIGNING_TOKEN: "{{ vault_gitlab_webhook_signing_token }}"
+    intake_jira_oauth:
+      JIRA_OAUTH_CLIENT_SECRET: "{{ vault_jira_oauth_client_secret | default('') }}"
   tasks:
     - name: Secret
       tags: [secret]
@@ -65,6 +69,18 @@
             fail_msg: >-
               Add vault_jira_webhook_secret (openssl rand -hex 32), the secret you save on the Jira
               site's admin webhook, with .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
+        - name: Require the Atlassian app's client secret, if set, to be usable
+          ansible.builtin.assert:
+            that:
+              - vault_jira_oauth_client_secret is not defined or vault_jira_oauth_client_secret is string
+              - vault_jira_oauth_client_secret is not defined or vault_jira_oauth_client_secret | length > 0
+              - vault_jira_oauth_client_secret is not defined or vault_jira_oauth_client_secret == vault_jira_oauth_client_secret | trim
+            fail_msg: >-
+              vault_jira_oauth_client_secret is empty or has spaces around it. Fix it with
+              .venv/bin/ansible-vault edit group_vars/all/vault.yml
             quiet: true
           no_log: true
 

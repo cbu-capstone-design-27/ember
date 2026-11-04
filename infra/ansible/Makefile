@@ -137,7 +137,7 @@ apps-diff: ## Show what this checkout's k8s/ would change on the cluster
 apps-health: ## Apps rolled out; enrich workers listening; web app on Postgres, answering over HTTPS on every node's name and ember-web, and not public; intake refuses an unsigned webhook through nginx, from the tailnet and through Funnel
 	ansible-playbook playbooks/apps.yml --tags health
 
-intake-secret: ## Write k8s/apps/intake/webhooks.sops.yaml, encrypted, from vault_github_webhook_secret, vault_slack_signing_secret, vault_jira_webhook_secret and vault_gitlab_webhook_signing_token. Commit it
+intake-secret: ## Write k8s/apps/intake/webhooks.sops.yaml, encrypted, from vault_github_webhook_secret, vault_slack_signing_secret, vault_jira_webhook_secret, vault_gitlab_webhook_signing_token and, if set, vault_jira_oauth_client_secret. Commit it
 	ansible-playbook playbooks/intake.yml --tags secret
 
 enrich-github-secret: ## Write k8s/apps/enrich-github/github-app.sops.yaml, encrypted, from vault_github_app_private_key. Commit it
@@ -152,7 +152,7 @@ enrich-jira-secret: ## Write k8s/apps/enrich-jira/jira-api.sops.yaml, encrypted,
 enrich-gitlab-secret: ## Write k8s/apps/enrich-gitlab/gitlab-api.sops.yaml, encrypted, from vault_gitlab_api_token. Commit it
 	ansible-playbook playbooks/enrich.yml --tags secret-gitlab
 
-web-secret: ## Write k8s/apps/web/auth.sops.yaml, encrypted, from vault_web_better_auth_secret and, if set, vault_web_github_client_id/_secret. Commit it
+web-secret: ## Write k8s/apps/web/auth.sops.yaml, encrypted, from vault_web_better_auth_secret and, if set, vault_web_github_client_id/_secret and vault_jira_oauth_client_id/_secret. Commit it
 	ansible-playbook playbooks/web.yml --tags secret
 
 source-credentials-secret: ## Write k8s/apps/source-credentials/{api,webhook}.sops.yaml, encrypted, from vault_source_credentials_api_keys and _webhook_keys. Commit them
