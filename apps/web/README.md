@@ -212,7 +212,7 @@ BETTER_AUTH_SECRET=dev-secret-change-me BETTER_AUTH_URL=http://localhost:3000 np
 
 ## On the cluster
 
-The cluster runs it at **`https://ember-web.tail470a31.ts.net`**, reachable from the tailnet only (EMBER-112), against the cluster's Postgres. Point the CLI there to sign in against it. Flux deploys `infra/k8s/apps/web/`, and `infra/k8s/README.md` (web) covers the image tag, the Secrets and the test accounts (`test-owner@`, `test-admin@` and `test-member@example.com`, in organization Ember Test).
+The cluster runs it at **`http://pi-cp.tail470a31.ts.net:3000`**, reachable from the tailnet only (EMBER-112), against the cluster's Postgres. Any node's name works on port 3000 (`hv-worker-1`, `hv-worker-2`), and so does `https://ember-web.tail470a31.ts.net` on devices it's shared with. Point the CLI there to sign in against it: `ember auth login --url http://pi-cp.tail470a31.ts.net:3000`. Flux deploys `infra/k8s/apps/web/`, and `infra/k8s/README.md` (web) covers the image tag, the Secrets and the test accounts (`test-owner@`, `test-admin@` and `test-member@example.com`, in organization Ember Test).
 
 ## Test
 

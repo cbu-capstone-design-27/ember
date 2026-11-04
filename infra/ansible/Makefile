@@ -134,7 +134,7 @@ apps-diff: ## Show what this checkout's k8s/ would change on the cluster
 	flux --context $(CONTEXT) diff kustomization apps --path ../k8s/apps || [ $$? -eq 1 ]
 	flux --context $(CONTEXT) diff kustomization monitoring --path ../k8s/monitoring || [ $$? -eq 1 ]
 
-apps-health: ## Apps rolled out; enrich workers listening; web app on Postgres, answering on the tailnet and not public; intake refuses an unsigned webhook through nginx, from the tailnet and through Funnel
+apps-health: ## Apps rolled out; enrich workers listening; web app on Postgres, answering on every node's name and ember-web, and not public; intake refuses an unsigned webhook through nginx, from the tailnet and through Funnel
 	ansible-playbook playbooks/apps.yml --tags health
 
 intake-secret: ## Write k8s/apps/intake/webhooks.sops.yaml, encrypted, from vault_github_webhook_secret, vault_slack_signing_secret, vault_jira_webhook_secret and vault_gitlab_webhook_signing_token. Commit it
