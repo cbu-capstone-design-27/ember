@@ -34,7 +34,8 @@ SIGINT or SIGTERM stops accepting connections and lets requests in flight finish
 | `DATABASE_URL` | Postgres, e.g. `postgresql://ember:...@localhost:5432/ember?sslmode=disable`. On the cluster, Secret `postgres-app`, key `uri` |
 | `GITHUB_WEBHOOK_SECRET` | The GitHub App's webhook secret. Required: intake refuses to start without it, so it never stores an unsigned delivery. It also refuses one with leading or trailing whitespace, which no signature would match |
 | `SLACK_SIGNING_SECRET` | The Slack app's signing secret (Basic Information, App Credentials). Optional: without it intake serves GitHub only and `/webhook/slack` is an unknown source (404), so intake runs where the Slack app isn't set up. When set, the same whitespace rule as GitHub's applies. The startup log names the sources served |
-| `JIRA_WEBHOOK_SECRET` | The secret saved on the Jira site's admin webhook. Optional, like Slack's: without it `/webhook/jira` is an unknown source (404). When set, the same whitespace rule applies |
+| `JIRA_WEBHOOK_SECRET` | The secret saved on the Jira site's admin webhook. Optional, like Slack's. When set, the same whitespace rule applies |
+| `JIRA_OAUTH_CLIENT_SECRET` | The Atlassian 3LO app's client secret, which signs the dynamic webhooks Connect Jira registers (EMBER-131). Optional. With neither Jira secret, `/webhook/jira` is an unknown source (404). When set, the same whitespace rule applies |
 | `GITLAB_WEBHOOK_SIGNING_TOKEN`, `GITLAB_WEBHOOK_SECRET_TOKEN` | The GitLab webhook's signing token (`whsec_…`, recommended) and legacy secret token. Optional, like Slack's: with neither, `/webhook/gitlab` is an unknown source (404). Set either or both, as on the webhook; every one that is set is checked. A signing token that isn't `whsec_` and base64 stops intake at startup, and the same whitespace rule applies to both |
 | `LISTEN_PORT` | Defaults to `8080`. Not `INTAKE_PORT`, which Kubernetes sets for a Service called `intake` |
 
@@ -71,13 +72,17 @@ The app's scopes and events are in `services/slack-ingestion/slack-app-manifest.
 
 [`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md) is the spec. `enrich:jira` (`services/jira-ingestion/enrich.py`) reads the rows.
 
-- **Verification:** `X-Hub-Signature`, `sha256=` and the HMAC-SHA256 of the raw body with the admin webhook's secret (WebSub `method=signature`). Only `sha256` is accepted, and a webhook saved without a secret is refused.
+- **Verification,** one of two ways, by what the delivery carries:
+  - **`Authorization: Bearer <JWT>`**, from a dynamic webhook that Connect Jira registered (EMBER-131). The token must be HS256, signed with the 3LO app's client secret (`JIRA_OAUTH_CLIENT_SECRET`), and unexpired, with 60 s leeway on `exp` and `iat`. The algorithm is pinned, so a token can't pick its own. Atlassian doesn't document the claims, so intake checks none beyond these. It logs their names once per process, to settle that question on the first real delivery. Neither the body nor the URL is signed, so the token proves the delivery came from Ember's app, not which site sent it.
+  - **`X-Hub-Signature`**, from a site admin webhook: `sha256=` and the HMAC-SHA256 of the raw body with the webhook's secret (`JIRA_WEBHOOK_SECRET`, WebSub `method=signature`). Only `sha256` is accepted, and a webhook saved without a secret is refused. This stays for sites connected before Connect Jira, until each is reconnected.
+
+  A delivery with an `Authorization` header is checked only as a dynamic webhook's. A check whose secret isn't set refuses every delivery that needs it. `/webhook/jira` is served when either secret is set.
 - **`delivery_id`:** `<site>:<X-Atlassian-Webhook-Identifier>`, at most 255 characters. Jira makes the identifier unique only within a site and repeats it on its retries (`X-Atlassian-Webhook-Retry`, logged with `X-Atlassian-Webhook-Flow`).
 - **`account_id`:** the site, the host of the first `self` URL among the event's own entity (`comment`, `worklog`, `attachment`, `issueLink`, …), then `issue`, then `user`, e.g. `ember-capstone.atlassian.net`. Admin bodies often omit `cloudId`. A body with no `self` URL is stored with no account and `delivery_id` `unknown:<identifier>`.
 - **`event_name`:** `webhookEvent` as sent, e.g. `jira:issue_updated`, `comment_created`. A body without it is a 400.
 - **`occurred_at`:** the [ordering value](../../docs/ingestion/jira-webhooks.md#ordering-value-ember-63): `issue.fields.updated`, `comment.updated` or `worklog.updated`, then `attachment.created` for `attachment_created`, then the body's `timestamp` (epoch ms). Deletes, links and properties use `timestamp`, since a deleted entity's `updated` is its last edit. One that is unreadable gets `received_at`.
 
-Jira counts any answer but 200 as a failure and retries; intake answers 200 for stored and duplicate deliveries. Register the admin webhook (Jira Administration → System → Webhooks) with the URL `https://ember.tail470a31.ts.net/webhook/jira` and the same secret as `JIRA_WEBHOOK_SECRET`, once intake has it.
+Jira counts any answer but 200 as a failure and retries; intake answers 200 for stored and duplicate deliveries. Connect Jira registers its webhooks itself, at `https://ember.tail470a31.ts.net/webhook/jira` (the web app's `JIRA_WEBHOOK_URL`). An admin webhook is registered by hand (Jira Administration → System → Webhooks) with the same URL and the same secret as `JIRA_WEBHOOK_SECRET`, once intake has it.
 
 ## GitLab adapter
 

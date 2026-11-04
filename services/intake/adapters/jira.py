@@ -1,7 +1,12 @@
-"""The Jira admin webhook adapter (docs/ingestion/jira-webhooks.md).
+"""The Jira webhook adapter (docs/ingestion/jira-webhooks.md).
 
-Verifies X-Hub-Signature with the webhook's secret, and reads the delivery's id, site, event name
-and ordering value. It never calls the Jira API.
+Verifies a delivery one of two ways, and reads its id, site, event name and ordering value. It
+never calls the Jira API.
+
+- A dynamic webhook that Connect Jira registered (EMBER-131, ADR 0010) carries
+  `Authorization: Bearer <JWT>`, signed HS256 with the 3LO app's client secret.
+- A site admin webhook carries X-Hub-Signature, an HMAC of the body with the webhook's secret. This
+  stays for sites connected before Connect Jira, until each is reconnected.
 """
 
 from __future__ import annotations
@@ -9,8 +14,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
+
+import jwt
 
 from adapters import BadRequest, Delivery, Unauthorized
 
@@ -21,6 +29,8 @@ NO_SITE = "unknown"  # delivery_id's prefix for a body with no self URL to read 
 
 # Body keys whose object carries a self URL on the site, the event's own entity first
 # (jira-webhooks.md, "delivery_id"). issue comes last: on comment events it is a reduced copy.
+# A token's exp and iat may be this far off our clock
+JWT_LEEWAY_SECONDS = 60
 SITE_KEYS = ("comment", "worklog", "attachment", "issueLink", "property", "version", "project", "issue", "user")
 
 
@@ -28,6 +38,23 @@ def verify_signature(secret: str, body: bytes, signature_header: str) -> bool:
     """Check X-Hub-Signature (sha256=<hex HMAC-SHA256 of the raw body>), WebSub method=signature."""
     expected = "sha256=" + hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected.encode(), signature_header.encode())
+
+
+def verify_bearer(client_secret: str, authorization: str) -> Mapping[str, object]:
+    """The claims of `Authorization: Bearer <JWT>` when it is HS256-signed with `client_secret` and unexpired.
+
+    Atlassian documents only that the token is signed with the app's client secret. The algorithm is
+    pinned, so a token can't pick its own, and exp is required. Neither the body nor the URL is in
+    the claims, so the token proves the delivery came from our app, not which site sent it.
+    """
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise Unauthorized("invalid token")
+    try:
+        return jwt.decode(token.strip(), client_secret, algorithms=["HS256"], leeway=JWT_LEEWAY_SECONDS,
+                          options={"require": ["exp"], "verify_aud": False})
+    except jwt.PyJWTError as exc:
+        raise Unauthorized("invalid token") from exc
 
 
 def _dict(value: object) -> dict:
@@ -51,18 +78,41 @@ def jira_time(value: object) -> datetime | None:
 class JiraAdapter:
     name = "jira"
 
-    def __init__(self, secret: str) -> None:
-        if not secret.strip():
-            raise ValueError("JIRA_WEBHOOK_SECRET is required: intake never stores an unsigned Jira delivery")
-        if secret != secret.strip():
-            # A trailing newline from a YAML block would make every signature fail
-            raise ValueError("JIRA_WEBHOOK_SECRET has leading or trailing whitespace; check how it was set")
+    def __init__(self, secret: str = "", oauth_client_secret: str = "") -> None:
+        """`secret` verifies admin webhooks, `oauth_client_secret` dynamic ones. At least one is required."""
+        if not secret.strip() and not oauth_client_secret.strip():
+            raise ValueError("JIRA_WEBHOOK_SECRET or JIRA_OAUTH_CLIENT_SECRET is required: "
+                             "intake never stores an unsigned Jira delivery")
+        for name, value in (("JIRA_WEBHOOK_SECRET", secret), ("JIRA_OAUTH_CLIENT_SECRET", oauth_client_secret)):
+            if value != value.strip():
+                # A trailing newline from a YAML block would make every signature fail
+                raise ValueError(f"{name} has leading or trailing whitespace; check how it was set")
         self._secret = secret
+        self._oauth_client_secret = oauth_client_secret
+        self._claims_logged = False
 
     def handshake(self, delivery: Delivery) -> None:
         return None
 
     def verify(self, delivery: Delivery) -> None:
+        """A bearer token goes to the dynamic webhook check, anything else to the admin webhook's.
+
+        Each check is refused when its secret isn't configured, so a missing secret never lets a
+        delivery through the other way.
+        """
+        authorization = delivery.headers.get("authorization", "")
+        if authorization:
+            if not self._oauth_client_secret:
+                raise Unauthorized("invalid token")
+            claims = verify_bearer(self._oauth_client_secret, authorization)
+            if not self._claims_logged:
+                # Atlassian doesn't document the claims. Names only: enough to settle the open
+                # question in jira-webhooks.md without logging what they hold
+                LOG.info("jira dynamic webhook token verified; claims: %s", ", ".join(sorted(claims)))
+                self._claims_logged = True
+            return
+        if not self._secret:
+            raise Unauthorized("invalid signature")
         signature = delivery.headers.get("x-hub-signature", "")
         if not verify_signature(self._secret, delivery.body, signature):
             raise Unauthorized("invalid signature")

@@ -194,7 +194,7 @@ Settings → Connections lists every source account feeding the organization's t
 
 What was already ingested stays (EMBER-53). The tenant comes from the caller's membership, never from the form. Connecting the same account to the same organization again clears `disconnected_at`. Another organization still can't take it.
 
-Removing the source's own hook is per source. Jira deletes its dynamic webhook (EMBER-131) and Slack calls `apps.uninstall` (EMBER-148). GitHub's uninstall needs the App's private key, which the web app doesn't hold, so after a GitHub disconnect Settings links the owner to GitHub to uninstall `ember-ingest` there. Until they do, GitHub keeps sending events, which intake stores with no tenant.
+Removing the source's own hook is per source, and happens before the credential is deleted. Jira deletes its dynamic webhook with the stored token ([Connect Jira](#connect-jira)), and Slack will call `apps.uninstall` (EMBER-148). GitHub's uninstall needs the App's private key, which the web app doesn't hold, so after a GitHub disconnect Settings links the owner to GitHub to uninstall `ember-ingest` there. Until they do, GitHub keeps sending events, which intake stores with no tenant.
 
 ### Source credentials
 
@@ -231,6 +231,38 @@ On `ember-ingest`'s settings page (Settings → Developer settings → GitHub Ap
 
 For local dev, a second GitHub App with Callback URL `http://localhost:3000/connect/github/callback` keeps the shared App's settings alone.
 
+## Connect Jira
+
+An organization's owners and admins connect a Jira site in Settings → Connections (EMBER-131, [ADR 0010](../../docs/adr/0010-connecting-sources.md#jira-ember-131)). Ember uses an Atlassian OAuth 2.0 (3LO) app, not a site admin webhook:
+
+1. **Connect Jira** (`/connect/jira`) sends the owner to Atlassian's consent screen, with a `state` that a signed, 15-minute cookie ties to this browser, user and organization.
+2. **The callback** (`/connect/jira/callback`) trades Atlassian's `code` for an access and refresh token, and checks that every scope in `SCOPES` was granted. It then lists the Jira sites the consent covers (accessible-resources) and each site's projects. Atlassian lists only sites the consenting user can use, which is the proof of ownership. A site another organization holds is shown but can't be connected.
+3. **The tokens wait server side.** They are sealed with the api key ring into Better Auth's `verification` table for 15 minutes, and the picker cookie only names the row. They never reach the browser.
+4. **The picker** (`/connect/jira/pick`) lists the sites and their projects. The owner ticks projects and connects one site. Then the web app (`connectSite` in `src/lib/jira-connect.ts`):
+   1. Registers one dynamic webhook on the site for the events in `WEBHOOK_EVENTS`, filtered by `project in (<ids>)`, pointing at intake (`JIRA_WEBHOOK_URL`).
+   2. Maps the site's host to the tenant in `installations`, with the site's cloud id as `external_id`, and runs the hand-off. A site another tenant holds is refused, and the new webhook is deleted again.
+   3. Seals the token pair, the cloud id, the webhook ids and the JQL as the site's `api` credential. [`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md#the-api-credential) has the fields, which the Python workers read too.
+   4. Deletes the webhooks an earlier connection of the same site registered.
+
+**The token and the webhook belong to whoever consents.** If that person loses access to the site, Jira stops sending and the refresh fails. So Settings asks owners to consent as a Jira user kept for integrations. Atlassian allows 5 webhooks per app for each user on a site.
+
+**Disconnect** refreshes the token if it is about to expire, deletes the site's webhooks, then deletes the credential. If Jira refuses, the notice says so: the webhook lapses within 30 days, and until then intake stores its deliveries with no tenant.
+
+**Refresh tokens rotate.** Each refresh returns a new refresh token, and the old one works for only 10 more minutes, so `freshJiraCredential` refreshes under a row lock and commits the new pair before using it. `enrich:jira` and the keep-alive follow the same rule.
+
+It needs Postgres with the ingestion migrations, the 3LO app in `JIRA_OAUTH_CLIENT_ID` and `JIRA_OAUTH_CLIENT_SECRET`, intake's address in `JIRA_WEBHOOK_URL`, and `SOURCE_CREDENTIALS_API_KEYS`. Without them Settings says what is missing.
+
+### Atlassian app settings
+
+In the [Atlassian developer console](https://developer.atlassian.com/console/myapps/), create an **OAuth 2.0 integration**:
+
+1. **Permissions → Jira API:** add `read:jira-work`, `read:jira-user` and `manage:jira-webhook` (classic scopes). `offline_access` is asked for at consent and needs no setting.
+2. **Authorization → OAuth 2.0 (3LO):** callback URL `https://pi-cp.tail470a31.ts.net/connect/jira/callback`, which is `BETTER_AUTH_URL` plus the path.
+3. **Distribution:** sharing on. Jira delivers a private app's dynamic webhooks only when the app's owner registered them, so without this, only the owner's own consent would work.
+4. **Settings:** put the Client ID and Secret in the vault. The deploy writes them into the web app's and intake's Secrets. Intake verifies each delivery's bearer token with the same secret.
+
+For local dev, a second app with callback `http://localhost:3000/connect/jira/callback` keeps the shared app's settings alone. Deliveries need a public `JIRA_WEBHOOK_URL`, e.g. a tunnel to a local intake.
+
 ## Settings
 
 | Variable | Required | Meaning |
@@ -241,6 +273,8 @@ For local dev, a second GitHub App with Callback URL `http://localhost:3000/conn
 | `EMBER_ADMIN_EMAILS` | no | Comma-separated emails of Ember admins, who can [link an organization to an existing tenant](#linking-a-tenant). Unset means nobody can. |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | no | The `ember-ingest` App's OAuth client, for [Connect GitHub](#connect-github). Unset means Settings can't connect GitHub. |
 | `GITHUB_APP_SLUG` | no | The App's URL name, `github.com/apps/<slug>`. Defaults to `ember-ingest`. |
+| `JIRA_OAUTH_CLIENT_ID`, `JIRA_OAUTH_CLIENT_SECRET` | no | The Atlassian 3LO app's client, for [Connect Jira](#connect-jira). Unset means Settings can't connect Jira. |
+| `JIRA_WEBHOOK_URL` | no | Where Jira sends the webhooks Connect Jira registers: intake's public `/webhook/jira`, over https. |
 | `SOURCE_CREDENTIALS_API_KEYS`, `SOURCE_CREDENTIALS_WEBHOOK_KEYS` | no | The key rings that seal [source credentials](#source-credentials): `<key id>:<base64 of 32 bytes>`, comma-separated, the sealing key first. Unset means no source that stores a credential can be connected. |
 
 ## Run
@@ -296,6 +330,11 @@ Give the tests a database of their own: they leave their test accounts behind. W
   - an installation GitHub lists for the user is accepted, one it doesn't is refused, every page is read, and the user token is revoked
   - the picker offers only installations the user administers, and says when the App can't read organization roles
   - on Postgres with the ingestion migrations applied: connecting hands stored deliveries over and notifies, the second hand-off, refusing a move (also by a reinstall), reconnecting, and what the picker learns
+- `test/connect-jira.test.ts` covers Connect Jira, with Atlassian as a fake `fetch`:
+  - the app settings, the consent URL's scopes, and the state cookie, which GitHub's cookies can't stand in for
+  - the token exchange, only Jira sites offered, projects read page by page, and a webhook Jira won't register
+  - the consent waiting for the picker: sealed, and only for the same organization and user until it expires
+  - on Postgres with the ingestion migrations applied: connecting registers a webhook for the ticked projects, maps the site and seals the tokens; reconnecting deletes the earlier webhook; a site another tenant holds isn't moved; an expiring token is refreshed once under the row lock; Disconnect deletes the webhook, or says it couldn't
 - `test/connections.test.ts` covers Connections and source credentials:
   - every vector in `packages/source-credentials/fixtures/vectors.json` opens and seals to the same bytes as the Python workers
   - a credential copied to another account, source or kind, a changed byte, an unknown key and a bad key ring are refused, without echoing the key

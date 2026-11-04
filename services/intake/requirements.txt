@@ -4,3 +4,4 @@ asyncpg==0.32.0
 starlette==1.7.0
 uvicorn==0.54.0
 prometheus-client==0.26.0
+PyJWT==2.15.1  # verifies Jira dynamic webhooks (adapters/jira.py)

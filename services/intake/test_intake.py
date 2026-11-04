@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 import unittest
+import warnings
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -42,6 +43,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "packages" / "ingestion-envelope"))
 
 import intake  # noqa: E402
+import jwt  # noqa: E402
 from adapters import Delivery, Unauthorized  # noqa: E402
 from adapters.github import RECOMMENDED_WEBHOOK_EVENTS, GitHubAdapter  # noqa: E402
 from adapters.gitlab import GitLabAdapter  # noqa: E402
@@ -60,6 +62,7 @@ SLACK_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures
 JIRA_SECRET = "test-jira-webhook-secret"
 JIRA_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "jira.json").read_text())["body"]
 JIRA_SITE = "ember-capstone.atlassian.net"  # the host of the fixture's issue.self
+JIRA_OAUTH_SECRET = "test-jira-3lo-client-secret"
 GITLAB_KEY = b"test-gitlab-signing-key-0123456789"
 GITLAB_SIGNING_TOKEN = "whsec_" + base64.b64encode(GITLAB_KEY).decode()
 GITLAB_SECRET_TOKEN = "test-gitlab-secret-token"
@@ -108,6 +111,23 @@ def jira(payload: dict | bytes, identifier: str = "wh-1", secret: str = JIRA_SEC
     """A delivery as a Jira admin webhook with a secret sends it: X-Hub-Signature, sha256=HMAC of the body."""
     body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
     return body, {"X-Atlassian-Webhook-Identifier": identifier, "X-Hub-Signature": sign(body, secret),
+                  "Content-Type": "application/json", **headers}
+
+
+def jira_token(secret: str = JIRA_OAUTH_SECRET, algorithm: str = "HS256", **claims) -> str:
+    """A token as Atlassian signs a dynamic webhook delivery's: HS256 with the 3LO app's client secret."""
+    now = int(time.time())
+    with warnings.catch_warnings():  # the test secrets are shorter than a real one
+        warnings.simplefilter("ignore", jwt.warnings.InsecureKeyLengthWarning)
+        payload = {key: value for key, value in {"iss": "client-id", "iat": now, "exp": now + 180, **claims}.items()
+                   if value is not None}  # a claim given as None is left out
+        return jwt.encode(payload, secret, algorithm=algorithm)
+
+
+def jira_oauth(payload: dict | bytes, identifier: str = "wh-1", token: str | None = None, **headers: str) -> tuple[bytes, dict]:
+    """A delivery as a dynamic webhook from Connect Jira sends it: Authorization: Bearer <JWT>, no X-Hub-Signature."""
+    body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+    return body, {"X-Atlassian-Webhook-Identifier": identifier, "Authorization": f"Bearer {token or jira_token()}",
                   "Content-Type": "application/json", **headers}
 
 
@@ -167,7 +187,7 @@ class Server:
         self.port = free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         app = intake.create_app(intake.create_engine(url, timeout), {"github": GitHubAdapter(SECRET), "slack": SlackAdapter(SLACK_SECRET),
-                                                                    "jira": JiraAdapter(JIRA_SECRET), "gitlab": GitLabAdapter(GITLAB_SIGNING_TOKEN),
+                                                                    "jira": JiraAdapter(JIRA_SECRET, JIRA_OAUTH_SECRET), "gitlab": GitLabAdapter(GITLAB_SIGNING_TOKEN),
                                                                     "teams": FakeTeams()},
                                 registry, deadline=deadline)
         self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning"))
@@ -675,6 +695,39 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.intake.post("/webhook/jira", case_body, case_headers))[0], status)
         self.assertEqual(await self.rows(), [])
 
+    async def test_dynamic_webhook_delivery_is_stored_like_an_admin_ones(self):
+        # Connect Jira's webhook (EMBER-131): the same body, signed by a bearer token instead of the body's HMAC
+        self.assertEqual(await self.intake.post("/webhook/jira", *jira_oauth(JIRA_FIXTURE)), (200, '{"status":"stored"}'))
+        self.assertEqual(await self.intake.post("/webhook/jira", *jira_oauth(JIRA_FIXTURE)), (200, '{"status":"duplicate"}'))
+        (row,) = await self.rows()
+        self.assertEqual((row["delivery_id"], row["account_id"], row["tenant"], row["event_name"]),
+                         (f"{JIRA_SITE}:wh-1", JIRA_SITE, "acme", "jira:issue_updated"))
+
+    async def test_rejected_dynamic_webhook_deliveries_store_nothing(self):
+        now = int(time.time())
+        body, headers = jira_oauth(JIRA_FIXTURE)
+        unsigned = jwt.encode({"exp": now + 60}, None, algorithm="none")
+        cases = [
+            ("another secret", jira_token("another-client-secret")),
+            ("signed with the admin webhook's secret", jira_token(JIRA_SECRET)),
+            ("expired", jira_token(exp=now - 120)),
+            ("issued in the future", jira_token(iat=now + 600)),
+            ("no exp", jira_token(exp=None)),
+            ("alg none", unsigned),
+            ("HS512", jira_token(algorithm="HS512")),
+            ("not a JWT", "abc"),
+        ]
+        for name, token in cases:
+            with self.subTest(name):
+                self.assertEqual((await self.intake.post("/webhook/jira", *jira_oauth(JIRA_FIXTURE, token=token)))[0], 401)
+        for name, auth in (("Basic scheme", "Basic " + jira_token()), ("empty bearer", "Bearer ")):
+            with self.subTest(name):
+                self.assertEqual((await self.intake.post("/webhook/jira", body, {**headers, "Authorization": auth}))[0], 401)
+        # A bearer token is never checked as the admin webhook's, even with a valid X-Hub-Signature beside it
+        signed = jira(JIRA_FIXTURE)[1]
+        self.assertEqual((await self.intake.post("/webhook/jira", body, {**signed, "Authorization": "Bearer x"}))[0], 401)
+        self.assertEqual(await self.rows(), [])
+
     async def deliver_gitlab(self, payload: dict | bytes, webhook_id: str = "msg-1", **kwargs) -> tuple[int, str]:
         return await self.intake.post("/webhook/gitlab", *gitlab(payload, webhook_id, **kwargs))
 
@@ -846,15 +899,17 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(f"GITHUB_WEBHOOK_SECRET {message}", result.stderr)
 
     def test_refuses_to_start_with_an_unusable_slack_jira_or_gitlab_secret(self):
-        for name in ("SLACK_SIGNING_SECRET", "JIRA_WEBHOOK_SECRET", *intake.GITLAB_TOKENS):
+        for name in ("SLACK_SIGNING_SECRET", *intake.JIRA_SECRETS, *intake.GITLAB_TOKENS):
             for secret, message in (("  ", "is required"), ("secret\n", "has leading or trailing")):
                 with self.subTest(name, secret=repr(secret)):
                     result = subprocess.run([sys.executable, str(HERE / "intake.py")],
                                             env=self.env(GITHUB_WEBHOOK_SECRET=SECRET, **{name: secret}),
                                             capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.returncode, 2)
-                    self.assertIn("GITLAB_WEBHOOK_SIGNING_TOKEN or GITLAB_WEBHOOK_SECRET_TOKEN is required"
-                                  if name in intake.GITLAB_TOKENS and message == "is required" else f"{name} {message}",
+                    either = {tokens: f"{tokens[0]} or {tokens[1]} is required"
+                              for tokens in (intake.JIRA_SECRETS, intake.GITLAB_TOKENS)}
+                    pair = next((tokens for tokens in either if name in tokens), None)
+                    self.assertIn(either[pair] if pair and message == "is required" else f"{name} {message}",
                                   result.stderr)
         # A signing token is whsec_ and base64, as GitLab shows it
         for token, message in (("not-whsec", "must start with whsec_"), ("whsec_!!", "is not base64")):
@@ -899,7 +954,9 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
         cases = (({}, "github", 404, 404),
                  ({"SLACK_SIGNING_SECRET": SLACK_SECRET}, "github, slack", 200, 404),
                  ({"SLACK_SIGNING_SECRET": SLACK_SECRET, "JIRA_WEBHOOK_SECRET": JIRA_SECRET}, "github, slack, jira",
-                  200, 200))
+                  200, 200),
+                 # Dynamic webhooks only: an admin webhook's signature is then refused
+                 ({"JIRA_OAUTH_CLIENT_SECRET": JIRA_OAUTH_SECRET}, "github, jira", 404, 401))
         for extra, sources, slack_status, jira_status in cases:
             with self.subTest(sources):
                 port = free_port()

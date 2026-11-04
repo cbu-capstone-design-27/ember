@@ -8,7 +8,8 @@
 //
 // Server only: it holds the App's client secret.
 
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { cookieSealer, sameState } from "./signed-cookies.ts";
 
 export const GITHUB_API = "https://api.github.com";
 export const GITHUB_WEB = "https://github.com";
@@ -40,42 +41,8 @@ export function githubAppConfig(env: Record<string, string | undefined> = proces
   return { slug: env.GITHUB_APP_SLUG?.trim() || "ember-ingest", clientId, clientSecret };
 }
 
-// ---------------------------------------------------------------------------
-// Signed cookies. The browser holds them, so they are signed: otherwise a
-// person could point their own round trip at another organization or add an
-// installation to the picker. The key is derived from BETTER_AUTH_SECRET.
-
-function signingKey(secret: string) {
-  return createHmac("sha256", secret).update("ember:connect-github").digest();
-}
-
-function mac(payload: string, secret: string) {
-  return createHmac("sha256", signingKey(secret)).update(payload).digest("base64url");
-}
-
-/** `value` as `<payload>.<signature>`, valid for `ttlSeconds`. */
-export function seal(value: object, secret: string, ttlSeconds: number, now = Date.now()): string {
-  const payload = Buffer.from(JSON.stringify({ ...value, exp: Math.floor(now / 1000) + ttlSeconds })).toString("base64url");
-  return `${payload}.${mac(payload, secret)}`;
-}
-
-/** What `seal` stored, or null when the value is missing, altered or expired. */
-export function unseal<T extends object>(sealed: string | undefined, secret: string, now = Date.now()): T | null {
-  if (!sealed) return null;
-  const [payload, signature, extra] = sealed.split(".");
-  if (!payload || !signature || extra !== undefined) return null;
-  const expected = Buffer.from(mac(payload, secret));
-  const given = Buffer.from(signature);
-  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
-  let value: (T & { exp?: unknown }) | null;
-  try {
-    value = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-  } catch {
-    return null;
-  }
-  if (!value || typeof value !== "object" || typeof value.exp !== "number" || value.exp * 1000 <= now) return null;
-  return value;
-}
+// The state and picker cookies are signed with a key only this flow uses (lib/signed-cookies.ts).
+export const { seal, unseal } = cookieSealer("ember:connect-github");
 
 export type ConnectMode = "install" | "existing";
 
@@ -94,10 +61,8 @@ export function newState(): string {
 /** The state cookie's content when the callback belongs to the round trip this browser started, else null. */
 export function matchState(sealed: string | undefined, returned: string | null, userId: string, secret: string, now = Date.now()) {
   const value = unseal<ConnectState>(sealed, secret, now);
-  if (!value || !returned || value.userId !== userId) return null;
-  const a = Buffer.from(value.state);
-  const b = Buffer.from(returned);
-  return a.length === b.length && timingSafeEqual(a, b) ? value : null;
+  if (!value || value.userId !== userId) return null;
+  return sameState(value.state, returned) ? value : null;
 }
 
 /** Install the App, with our state (GitHub sends it back only to installs that start here). */
