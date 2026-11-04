@@ -1,0 +1,15 @@
+# In-cluster: http://web.ember.svc.cluster.local:3000. ingress.yaml publishes it on the tailnet
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: ember
+  labels:
+    app: web
+spec:
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

@@ -1,0 +1,107 @@
+# The web app (apps/web, EMBER-112): sign-up, log-in, the dashboard, and the CLI's device sign-in.
+# Tailnet only for now: ingress.yaml publishes it at https://ember-web.<tailnet>, without Funnel.
+# One replica. Each start creates or updates the auth tables in schema web, and two pods starting
+# together would race on that.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: ember
+  labels:
+    app: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  # Start the new pod and wait until it is ready before stopping the old one. Only the new pod runs
+  # the table update, while the old one keeps serving
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
+          image: ghcr.io/cbu-capstone-design-27/ember/web:develop-264-cb4199b
+          env:
+            # The pod stays in CreateContainerConfigError until both Secrets exist
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-app
+                  key: uri
+            # Signs session cookies. Changing it signs everyone out, the CLI included
+            - name: BETTER_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: BETTER_AUTH_SECRET
+            # The address users open. Better Auth checks Origin against it, and the CLI's device
+            # sign-in sends people to <this>/device
+            - name: BETTER_AUTH_URL
+              value: https://ember-web.tail470a31.ts.net
+          ports:
+            - name: http
+              containerPort: 3000
+          # Better Auth's /ok answers without the database. The pages need it, but a Postgres outage
+          # should show as errors, not as a pod restarting in a loop
+          readinessProbe:
+            httpGet:
+              path: /api/auth/ok
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/auth/ok
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          # The table update runs before the server listens
+          startupProbe:
+            httpGet:
+              path: /api/auth/ok
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          # Next.js writes its cache under .next/cache. /data is the image's SQLite directory, unused
+          # with Postgres
+          volumeMounts:
+            - name: next-cache
+              mountPath: /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: next-cache
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

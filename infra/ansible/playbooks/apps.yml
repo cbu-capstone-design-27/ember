@@ -1,7 +1,8 @@
 ---
 # Checks k8s/apps on the cluster end to end: nginx, the reverse proxy behind the public
 # https://ember.<tailnet_domain> (a Tailscale Funnel Ingress), and intake, the webhook listener it
-# routes /webhook/ to, and the enrich workers behind it. Flux deploys them (playbooks/flux.yml); this playbook deploys nothing.
+# routes /webhook/ to, and the enrich workers behind it, and the web app on its tailnet-only
+# https://ember-web.<tailnet_domain>. Flux deploys them (playbooks/flux.yml); this playbook deploys nothing.
 # Run from the controller against the "homelab" kubeconfig context. Use make apps-health.
 - name: Apps
   hosts: localhost
@@ -17,6 +18,12 @@
     # The A records (type 1) in the public DNS answer, which can list a CNAME before them
     # One per enrich worker on the cluster: Deployment enrich-<source>, which logs "enrich:<source> listening"
     enrich_sources: [github, slack, jira, gitlab]
+    # The web app's own Tailscale Ingress, without Funnel (k8s/apps/web)
+    web_host: "ember-web.{{ tailnet_domain }}"
+    web_url: "https://{{ web_host }}"
+    web_public_ips: >-
+      {{ (web_public_dns.content | default('{}') | from_json).Answer | default([])
+      | selectattr('type', 'equalto', 1) | map(attribute='data') | list }}
     public_ips: >-
       {{ (public_dns.content | default('{}') | from_json).Answer | default([])
       | selectattr('type', 'equalto', 1) | map(attribute='data') | list }}
@@ -59,6 +66,73 @@
           loop: "{{ enrich_logs.results }}"
           loop_control:
             label: "enrich-{{ item.item }}"
+
+    - name: Web app
+      tags: [health]
+      block:
+        - name: Wait for the web Ingress to get its tailnet hostname
+          ansible.builtin.command: >-
+            {{ kubectl }} -n {{ apps_ns }} get ingress web
+            -o jsonpath={.status.loadBalancer.ingress[0].hostname}
+          register: web_ingress_host
+          until: web_ingress_host.stdout | length > 0
+          retries: 30
+          delay: 10
+          changed_when: false
+
+        # BETTER_AUTH_URL in the Deployment names this host; under another name Better Auth refuses
+        # every sign-in's Origin
+        - name: Require the hostname BETTER_AUTH_URL names
+          ansible.builtin.assert:
+            that: web_ingress_host.stdout == web_host
+            fail_msg: >-
+              The web Ingress is published as {{ web_ingress_host.stdout }}, not {{ web_host }}. A
+              recreated Tailscale device comes back as ember-web-1 while an older device still holds the
+              plain name: remove the stale one in the Tailscale admin console (k8s/README.md, web).
+            quiet: true
+
+        # Without DATABASE_URL the app would quietly keep accounts in a SQLite file in the pod
+        - name: Read the web app's log since its pod started
+          ansible.builtin.command: "{{ kubectl }} -n {{ apps_ns }} logs deploy/web"
+          register: web_log
+          changed_when: false
+
+        - name: Require it to use Postgres
+          ansible.builtin.assert:
+            that: "'Auth database: Postgres' in web_log.stdout"
+            fail_msg: >-
+              The web app did not log "Auth database: Postgres", so accounts are not going to the
+              cluster's Postgres. Its log: {{ web_log.stdout | truncate(2000) }}
+            quiet: true
+
+        # The first request waits on the Let's Encrypt certificate, hence the retries
+        - name: Request Better Auth's /ok from the tailnet
+          ansible.builtin.uri:
+            url: "{{ web_url }}/api/auth/ok"
+            return_content: true
+            timeout: 60
+          register: web_ok
+          until: web_ok is succeeded and (web_ok.json | default({})).ok | default(false)
+          retries: 12
+          delay: 10
+
+        # Tailnet only: a public record would mean Funnel is on for it
+        - name: Look the web app's name up in public DNS
+          ansible.builtin.uri:
+            url: "https://cloudflare-dns.com/dns-query?name={{ web_host }}&type=A"
+            headers:
+              accept: application/dns-json
+            return_content: true
+          register: web_public_dns
+
+        - name: Require no public DNS record for the web app
+          ansible.builtin.assert:
+            that: web_public_ips | length == 0
+            fail_msg: >-
+              {{ web_host }} has a public DNS record ({{ web_public_ips | join(', ') }}), so the web app
+              is reachable from the internet. It is meant to be tailnet only: remove any
+              tailscale.com/funnel annotation from k8s/apps/web/ingress.yaml.
+            quiet: true
 
     - name: Health
       tags: [health]
@@ -209,3 +283,4 @@
             msg:
               - "Webhook: {{ webhook_url }} (POST)"
               - "Probe:   {{ ember_url }}/healthz"
+              - "Web app: {{ web_url }} (tailnet only)"
