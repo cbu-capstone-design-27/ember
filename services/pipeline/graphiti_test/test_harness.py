@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 import tempfile
 import unittest
 from pathlib import Path
@@ -432,9 +433,17 @@ class Boundaries(unittest.TestCase):
     def test_no_cluster_neo4j_and_no_missing_password(self):
         from graphiti_test.run import SetupError, neo4j_settings
 
-        for uri in ("bolt://hv-worker-1:7687", "bolt://neo4j.tail1234.ts.net:7687"):
+        for uri in ("bolt://hv-worker-1:7687", "bolt://neo4j.tail1234.ts.net:7687", "bolt://100.101.102.103:7687",
+                    "bolt://[fd7a:115c:a1e0::1]:7687"):
             with self.assertRaises(SetupError):
                 neo4j_settings(SimpleNamespace(neo4j_uri=uri), {"NEO4J_PASSWORD": "x"})
+        tailnet_alias = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.66.59.107", 7687))]
+        with mock.patch("socket.getaddrinfo", return_value=tailnet_alias), self.assertRaises(SetupError):
+            neo4j_settings(SimpleNamespace(neo4j_uri="bolt://graph-alias:7687"), {"NEO4J_PASSWORD": "x"})
+        for uri in ("bolt://127.0.0.1:7687", "bolt://neo4j-test:7687"):  # loopback, and a local container's name
+            local = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.18.0.2", 7687))]
+            with mock.patch("socket.getaddrinfo", return_value=local):
+                self.assertEqual(neo4j_settings(SimpleNamespace(neo4j_uri=uri), {"NEO4J_PASSWORD": "x"})[0], uri)
         with self.assertRaises(SetupError):
             neo4j_settings(SimpleNamespace(neo4j_uri="bolt://localhost:7687"), {})
         settings = neo4j_settings(SimpleNamespace(neo4j_uri=None), {"NEO4J_PASSWORD": "x"})

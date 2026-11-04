@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import sys
 from importlib.metadata import version
 from pathlib import Path
@@ -40,10 +42,32 @@ def _graphiti_environment(profile: Profile) -> None:
     os.environ["EMBEDDING_DIM"] = str(profile.embedding_dimensions)
 
 
+_TAILNET_RANGES = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+
+
+def _on_tailnet(address: str) -> bool:
+    ip = ipaddress.ip_address(address.split("%")[0])
+    return any(ip.version == net.version and ip in net for net in _TAILNET_RANGES)
+
+
+def _is_cluster_host(host: str) -> bool:
+    """A cluster node by name, by tailnet address, or by any name that resolves to one (an alias, say)."""
+    if host.startswith("hv-") or host.endswith(".ts.net"):
+        return True
+    try:
+        return _on_tailnet(host)
+    except ValueError:
+        pass
+    try:
+        return any(_on_tailnet(info[4][0]) for info in socket.getaddrinfo(host, None))
+    except OSError:  # does not resolve here, so the connection fails too and writes nothing
+        return False
+
+
 def neo4j_settings(args, env=os.environ) -> tuple[str, str, str, str]:
     uri = args.neo4j_uri or env.get("NEO4J_URI") or "bolt://localhost:7687"
     host = urlsplit(uri).hostname or ""
-    if host.startswith("hv-") or host.endswith(".ts.net"):
+    if _is_cluster_host(host):
         raise SetupError(f"refusing {host}: this harness adds Graphiti's indexes and data to the graph it is given, "
                          "so it takes a throwaway Neo4j, never the cluster's")
     password = env.get("NEO4J_PASSWORD")
