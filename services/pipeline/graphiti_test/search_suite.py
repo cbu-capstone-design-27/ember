@@ -52,6 +52,15 @@ RERANKERS: dict[str, SearchConfig] = {
 NEEDS_CENTER = {"node_distance"}
 
 
+def _settle_ties(items: list[dict], scores: list[float], key) -> list[dict]:
+    """Equal scores come back in an order that follows random uuids, so it differs between identical runs. Within a
+    tie, order by natural identifier: the reference then differs only when the ranking does."""
+    if len(scores) != len(items):
+        return items
+    pairs = sorted(zip(range(len(items)), items, scores), key=lambda p: (-p[2], key(p[1]), p[0]))
+    return [item for _, item, _ in pairs]
+
+
 async def _view(results, reader) -> dict:
     """Results by natural identifiers only, so runs on another backend compare."""
     edge_episodes = sorted({u for e in results.edges for u in e.episodes})
@@ -60,13 +69,16 @@ async def _view(results, reader) -> dict:
     names = await reader.node_names(ends) if ends else {}
     mentions = await reader.records_mentioning([n.uuid for n in results.nodes]) if results.nodes else {}
     episode_records = await reader.records_of_episodes([e.uuid for e in results.episodes]) if results.episodes else {}
+    edges = [{"type": e.name, "source": names.get(e.source_node_uuid), "target": names.get(e.target_node_uuid),
+              "fact": e.fact, "records": sorted({edge_records[u] for u in e.episodes if u in edge_records})}
+             for e in results.edges]
+    nodes = [{"name": n.name, "labels": sorted(n.labels), "records": mentions.get(n.uuid, [])} for n in results.nodes]
+    episodes = [{"record": episode_records[e.uuid]} for e in results.episodes if e.uuid in episode_records]
     return {
-        "edges": [{"type": e.name, "source": names.get(e.source_node_uuid), "target": names.get(e.target_node_uuid),
-                   "fact": e.fact, "records": sorted({edge_records[u] for u in e.episodes if u in edge_records})}
-                  for e in results.edges],
-        "nodes": [{"name": n.name, "labels": sorted(n.labels), "records": mentions.get(n.uuid, [])}
-                  for n in results.nodes],
-        "episodes": [episode_records[e.uuid] for e in results.episodes if e.uuid in episode_records],
+        "edges": _settle_ties(edges, results.edge_reranker_scores, lambda e: (e["fact"], e["source"] or "")),
+        "nodes": _settle_ties(nodes, results.node_reranker_scores, lambda n: n["name"]),
+        "episodes": [e["record"] for e in _settle_ties(episodes, results.episode_reranker_scores,
+                                                       lambda e: e["record"])],
     }
 
 
@@ -135,7 +147,7 @@ async def run_temporal(graphiti, reader, groups: list[str], query_vector) -> dic
     for label in ("before", "after"):
         found = await graphiti.search_(TEMPORAL["query"], config=config, group_ids=groups, query_vector=vector,
                                        search_filter=_as_of(TEMPORAL[label]))
-        facts = [e.fact for e in found.edges]
+        facts = sorted(e.fact for e in found.edges)
         moments[label] = {"at": TEMPORAL[label].isoformat(), "facts": facts,
                           "old_term": any(TEMPORAL["old_term"] in f.lower() for f in facts),
                           "new_term": any(TEMPORAL["new_term"] in f.lower() for f in facts)}

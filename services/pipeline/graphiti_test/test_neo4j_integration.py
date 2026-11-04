@@ -9,13 +9,16 @@ Uses a throwaway Neo4j only: it deletes tenant photon's subgraphs and leaves Gra
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
+from graphiti_test import fake_models
 from graphiti_test.report import compare
 
 URI = os.environ.get("NEO4J_TEST_URI")
@@ -101,7 +104,27 @@ class EndToEnd(unittest.TestCase):
         fresh_out = Path(self.tmp.name) / "fresh"
         self.assertEqual(go(arguments(fresh_out)), 0)
         fresh = json.loads((fresh_out / "reference.json").read_text(encoding="utf-8"))
-        self.assertEqual(compare(self.reference, fresh), [])
+        self.maxDiff = None
+        self.assertEqual(compare(self.reference, fresh)[:10], [])
+
+
+@unittest.skipUnless(URI, "NEO4J_TEST_URI not set")
+class ModelMisbehaves(unittest.TestCase):
+    def test_a_null_required_attribute_fails_the_episode_and_is_recorded(self):
+        """ADR 0002's open risk, end to end: nothing is written, the run goes on, the reference says what happened."""
+        fake = functools.partial(fake_models.FakeModels, null_attributes=True)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("graphiti_test.run.FakeModels", fake):
+            out = Path(tmp) / "nulls"
+            with self.assertLogs("graphiti_test", "WARNING"):
+                self.assertEqual(go(arguments(out, limit=4, no_resend_check=True)), 1)
+            reference = json.loads((out / "reference.json").read_text(encoding="utf-8"))
+        episodes = reference["measured"]["episodes"]
+        failed = [e for e in episodes["failed"] if e["failure"] == "structured_output"]
+        self.assertTrue(failed, episodes)
+        self.assertEqual(failed[0]["error_type"], "ValidationError")
+        self.assertIn("external_id: string_type", failed[0]["error"])
+        self.assertTrue(any(f["kind"] == "schema_mismatch" for f in reference["measured"]["structured_failures"]))
+        self.assertEqual(reference["comparable"]["failed_records"], sorted(e["name"] for e in episodes["failed"]))
 
 
 if __name__ == "__main__":

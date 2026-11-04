@@ -29,9 +29,10 @@ class GraphReader:
         return [dict(r) for r in records]
 
     async def server(self) -> dict:
-        [row] = await self._rows("CALL dbms.components() YIELD name, versions, edition "
-                                 "RETURN name, versions[0] AS version, edition")
-        return row
+        rows = await self._rows("CALL dbms.components() YIELD name, versions, edition "
+                                "RETURN name, versions[0] AS version, edition")
+        # 5.26 has one row. 2026.x has more (the Cypher versions too).
+        return next((r for r in rows if r["name"] == "Neo4j Kernel"), rows[0])
 
     async def indexes(self) -> list[dict]:
         rows = await self._rows("SHOW INDEXES YIELD name, type, state RETURN name, type, state ORDER BY name")
