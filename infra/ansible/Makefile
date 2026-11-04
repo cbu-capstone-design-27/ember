@@ -22,7 +22,7 @@ DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-j
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
 	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate \
-	intake-secret enrich-github-secret enrich-slack-secret enrich-jira-secret enrich-gitlab-secret llm-tunnel-secret map-tenant grafana-secret grafana-health \
+	intake-secret enrich-github-secret enrich-slack-secret enrich-jira-secret enrich-gitlab-secret llm-tunnel-secret map-tenant unmap-tenant grafana-secret grafana-health \
 	source-credentials-secret web-secret web-test-accounts web-serve
 
 help:
@@ -194,4 +194,7 @@ llm-tunnel-secret: ## TEMPORARY: write k8s/apps/llm-tunnel/ssh.sops.yaml from va
 
 map-tenant: ## Map SOURCE's account ACCOUNT to TENANT and hand its stored deliveries to enrich. Safe to re-run
 	ansible-playbook playbooks/tenants.yml --tags map -e source="$(SOURCE)" -e account="$(ACCOUNT)" -e tenant="$(TENANT)"
+
+unmap-tenant: ## Remove SOURCE's account ACCOUNT from TENANT so another tenant can connect it. Keeps its data
+	ansible-playbook playbooks/tenants.yml --tags unmap -e source="$(SOURCE)" -e account="$(ACCOUNT)" -e tenant="$(TENANT)"
 

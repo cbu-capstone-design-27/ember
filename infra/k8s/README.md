@@ -35,6 +35,7 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make web-serve` | Serves the web app at `https://<node>.tail470a31.ts.net` on every node with `tailscale serve` ([web](#web)). Host config, so re-run it after a node is rebuilt. Safe to re-run |
 | `make llm-tunnel-secret` | Temporary (EMBER-49). Writes `apps/llm-tunnel/ssh.sops.yaml` and `model-keys.sops.yaml`, encrypted, from the tunnel key and the Spark's API keys in the vault, and prints the `authorized_keys` line for the Spark ([llm-tunnel](#llm-tunnel)). Commit the result |
 | `make map-tenant SOURCE=… ACCOUNT=… TENANT=…` | Maps a source account to a tenant and hands the deliveries already stored for it to the enrich workers ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
+| `make unmap-tenant SOURCE=… ACCOUNT=… TENANT=…` | Removes that mapping so another tenant can connect the account. Its stored data stays with the old tenant ([Mapping a tenant](#mapping-a-tenant)). Safe to re-run |
 | `make grafana-secret` | Writes the collector's and the Grafana Operator's Secrets, encrypted, from the Grafana Cloud values in the vault ([The Grafana Cloud tokens](#the-grafana-cloud-tokens)). Commit the result |
 | `make grafana-health` | Checks Grafana Cloud end to end: the operator synced the stack and both dashboards (Ember, Ember ingestion), and the stack has metrics from every node, intake, Postgres (including ingestion by tenant) and Flux, pod logs, Kubernetes events and both synthetic checks. Deploys nothing |
 | `make flux-preview BRANCH=<branch>` | Deploys a pushed branch instead of `develop`, to try a change before merging it. Tell the team, since it replaces what everyone else sees |
@@ -367,6 +368,14 @@ It adds the `installations` row, so intake stores the account's new deliveries w
 
 - **Re-running is safe.** It changes nothing and reports 0. A delivery intake was storing at the moment of mapping can still land without a tenant; running it again picks that up.
 - **No remapping.** If the account is already mapped to a different tenant, it refuses and changes nothing, since moving an account would split its records across two subgraphs. Rows with no `account_id` (GitHub `ping`s, webhooks set directly on a repo) can't be mapped.
+
+To hand an account to another tenant (for example, so an organization can connect it in the web app), unmap it first:
+
+```bash
+make unmap-tenant SOURCE=jira ACCOUNT=ember-capstone.atlassian.net TENANT=<the tenant it is mapped to>
+```
+
+It deletes only the `installations` row (`playbooks/unmap-tenant.sql`). The deliveries, records and graph the account already produced stay under the old tenant. Intake stores the account's new deliveries with `tenant` null until it is mapped or connected again, and that hands them over. It refuses if `TENANT` isn't the one the account is mapped to. It also refuses if the account has stored credentials: that means it was connected in the web app, so disconnect it in Settings, which also removes the source's own hooks. Re-running is safe.
 
 ### Restarts
 
