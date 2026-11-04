@@ -12,7 +12,7 @@
     repo_dir: "{{ playbook_dir }}/../../.."
     secret_file: infra/k8s/apps/web/auth.sops.yaml
     # pi-cp's address, which anyone who can reach the nodes can use (k8s/apps/web/service-lb.yaml)
-    web_url: "http://pi-cp.{{ tailnet_domain }}:3000"
+    web_url: "http://pi-cp:3000"
     web_secret:
       apiVersion: v1
       kind: Secret

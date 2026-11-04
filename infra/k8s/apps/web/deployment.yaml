@@ -1,5 +1,5 @@
 # The web app (apps/web, EMBER-112): sign-up, log-in, the dashboard, and the CLI's device sign-in.
-# Tailnet only: service-lb.yaml publishes it at http://<node>.<tailnet>:3000 for the whole team, and
+# Tailnet only: service-lb.yaml publishes it at http://<node>:3000 for the whole team, and
 # ingress.yaml at https://ember-web.<tailnet> for devices the ember-web machine is shared with.
 # Neither uses Funnel.
 # One replica. Each start creates or updates the auth tables in schema web, and two pods starting
@@ -54,16 +54,19 @@ spec:
                   name: web-auth
                   key: BETTER_AUTH_SECRET
             # The main address. The CLI's device sign-in sends people to <this>/device, so it is a
-            # node address everyone can reach. pi-cp, because the cluster is down whenever it is. Plain
-            # HTTP, so session cookies aren't marked Secure: a browser drops Secure cookies on http
+            # node address everyone can reach. pi-cp, because the cluster is down whenever it is. The
+            # short MagicDNS name, because browsers can fail on the full one over http: secure DNS
+            # skips MagicDNS for it, and HTTPS-first modes upgrade or warn on it. A single-label name
+            # counts as private, so neither applies. Plain HTTP, so session cookies aren't marked
+            # Secure: a browser drops Secure cookies on http
             - name: BETTER_AUTH_URL
-              value: http://pi-cp.tail470a31.ts.net:3000
+              value: http://pi-cp:3000
             # Every other address a browser may send as Origin. Better Auth refuses a sign-in from an
             # origin missing here, with 403 "Invalid origin". The nodes' full and short MagicDNS names
             # (service-lb.yaml), and ember-web (ingress.yaml)
             - name: BETTER_AUTH_TRUSTED_ORIGINS
               value: >-
-                http://pi-cp:3000,http://hv-worker-1.tail470a31.ts.net:3000,http://hv-worker-1:3000,http://hv-worker-2.tail470a31.ts.net:3000,http://hv-worker-2:3000,https://ember-web.tail470a31.ts.net
+                http://pi-cp.tail470a31.ts.net:3000,http://hv-worker-1.tail470a31.ts.net:3000,http://hv-worker-1:3000,http://hv-worker-2.tail470a31.ts.net:3000,http://hv-worker-2:3000,https://ember-web.tail470a31.ts.net
           ports:
             - name: http
               containerPort: 3000

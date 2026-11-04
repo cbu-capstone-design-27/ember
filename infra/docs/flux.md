@@ -98,7 +98,7 @@ Public and tailnet addresses:
 | `https://ember.tail470a31.ts.net` | Internet (Funnel) | nginx, which routes `/webhook/` to intake and answers `/healthz` |
 | `bolt://hv-worker-1.tail470a31.ts.net:7687` | Tailnet only | Neo4j |
 | `hv-worker-2.tail470a31.ts.net:5432` | Tailnet only | Postgres (`make postgres-url`) |
-| `http://pi-cp.tail470a31.ts.net:3000` | Tailnet only | The web app; any node's name works on port 3000 |
+| `http://pi-cp:3000` | Tailnet only | The web app; any node's short MagicDNS name works on port 3000 |
 | `https://ember-web.tail470a31.ts.net` | Tailnet devices it's shared with | The web app |
 
 ---
