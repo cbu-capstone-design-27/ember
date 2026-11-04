@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: web-auth
+    namespace: ember
+stringData:
+    BETTER_AUTH_SECRET: ENC[AES256_GCM,data:hlOPXiWRYg8OpyriiCLBcrD2jN+bszJ6msW/EMyE6F5GNJAMVsupgM/eDeQMqBtuHBk/OF+DhP9s6GgOv76uiQ==,iv:2hUxWPTFLWA72gzqzX4tgiABLyKo4al6WdsFcmI2rrg=,tag:sX5mjrTh8nX6oNmY2sQJHg==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBzQ1J0a2UydVlNNjlCQTQx
+            UHgvMjRYNnJ2RnZZb2hlQ2IrbFU5dGRsakZzCmhiWmQ3MnBra3RqZVNSRVRDeXdy
+            alRPZ3dTZWZraEtCRHNaRUY5RjdKYTQKLS0tIFZOMm9MenBXUWw0M3phTVpWK0VK
+            YW9UcmN4NjkrOHZKT0tUUldBakM2NGsKFAqqtIwKWcMGQmzJ5oOAfofVzjeoLr1O
+            0u+y8T1ZWuX3OpjBCquyedQKdMZRypL890dUWc5uYuE3OBxN4vsXCA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-11-04T16:54:57Z"
+    mac: ENC[AES256_GCM,data:IlEdxT6edVJUpChMoze6qZIuQsARLTGD6IleFtqWdE/DnjuQwOCZ6GUcYmVy3ptrh845OsTm8ywpXkvUKH+tmutpYR9Rm6XX2Sfv+FSgfap3XO1LHPKQyokWO5AVSsGd2/pVPii7WJcW5p6bEZvodlowMWOC1B+kZ92d4zhcfuk=,iv:jpCXHfMJFXBgLDLFwGMaIXLsd9JAKPhxaF0bueioyBI=,tag:TIv8s4griWGTOoTWz8T61g==,type:str]
+    version: 3.13.3
