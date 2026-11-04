@@ -61,8 +61,10 @@ class _NotificationLog(logging.Handler):
         self.seen: dict[str, int] = {}
 
     def emit(self, record: logging.LogRecord) -> None:
-        text = record.getMessage().split("\n")[0][:300]
-        self.seen[text] = self.seen.get(text, 0) + 1
+        text = record.getMessage()
+        match = re.search(r"gql_status='([^']*)', status_description='([^']*)'", text)
+        key = f"{match.group(1)} {match.group(2)}" if match else text.split("\n")[0][:300]
+        self.seen[key] = self.seen.get(key, 0) + 1
 
 
 async def _resend_check(graphiti, reader, rows, tenant, groups, episode_type, marker: Path) -> dict | None:

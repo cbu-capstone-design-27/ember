@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from graphiti_test import fake_models
-from graphiti_test.report import compare
+from graphiti_test.report import compare, split_ranking
 
 URI = os.environ.get("NEO4J_TEST_URI")
 
@@ -104,8 +104,8 @@ class EndToEnd(unittest.TestCase):
         fresh_out = Path(self.tmp.name) / "fresh"
         self.assertEqual(go(arguments(fresh_out)), 0)
         fresh = json.loads((fresh_out / "reference.json").read_text(encoding="utf-8"))
-        self.maxDiff = None
-        self.assertEqual(compare(self.reference, fresh)[:10], [])
+        hard, _order = split_ranking(compare(self.reference, fresh))  # order moves on its own: see split_ranking
+        self.assertEqual(hard[:10], [])
 
 
 @unittest.skipUnless(URI, "NEO4J_TEST_URI not set")
@@ -125,6 +125,8 @@ class ModelMisbehaves(unittest.TestCase):
         self.assertIn("external_id: string_type", failed[0]["error"])
         self.assertTrue(any(f["kind"] == "schema_mismatch" for f in reference["measured"]["structured_failures"]))
         self.assertEqual(reference["comparable"]["failed_records"], sorted(e["name"] for e in episodes["failed"]))
+        written = sum(group["episodes"] for group in reference["comparable"]["graph"].values())
+        self.assertEqual(written, reference["measured"]["ingest"]["ok"])  # a failed episode leaves nothing behind
 
 
 if __name__ == "__main__":

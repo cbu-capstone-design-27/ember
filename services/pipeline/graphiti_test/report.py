@@ -3,8 +3,8 @@
 reference.json has two halves:
 
 - `comparable`: what the graph holds and what search returns, by natural identifiers (names, facts, record ids), no
-  uuids, times or scores. `python -m graphiti_test diff a.json b.json` compares only this. The Postgres fork must
-  match it, apart from ranking differences someone has accepted.
+  uuids, times or scores. `python -m graphiti_test diff a.json b.json` compares only this, and reports result order
+  within a search apart, because that moves on its own. The Postgres fork must match the rest.
 - `measured`: what this run cost and how it ran. Differs on every run.
 
 Stdlib only. FORMAT changes when a field's meaning changes, and diff refuses to compare across formats.
@@ -201,6 +201,17 @@ def differences(a, b, path: str = "") -> list[str]:
             out += differences(left, right, f"{path}[{i}]")
         return out
     return [] if a == b else [f"{path}: {json.dumps(a, default=str)[:160]} != {json.dumps(b, default=str)[:160]}"]
+
+
+def split_ranking(found: list[str]) -> tuple[list[str], list[str]]:
+    """(differences that count, order of results within a search).
+
+    Order alone is expected to move: BM25 ties break on internal document order, which then shifts rank fusion's
+    scores, so even two runs on one server differ a little, and Postgres ranks by ts_rank_cd anyway. What a question
+    finds is still compared, through in_top3.
+    """
+    hard = [line for line in found if "/ranked/" not in line]
+    return hard, [line for line in found if "/ranked/" in line]
 
 
 def compare(first: dict, second: dict) -> list[str]:

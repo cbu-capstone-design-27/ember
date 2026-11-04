@@ -22,7 +22,16 @@ from graphiti_test.__main__ import main
 from graphiti_test.data import load_rows, questions, record_of, render, select_rows, temporal_rows
 from graphiti_test.ingest import Ledger, classify, describe_error, ingest
 from graphiti_test.metrics import Counters, CountingTransport, delta
-from graphiti_test.report import FAKE_WARNING, FORMAT, build_reference, compare, render_summary, top_k, write_reference
+from graphiti_test.report import (
+    FAKE_WARNING,
+    FORMAT,
+    build_reference,
+    compare,
+    render_summary,
+    split_ranking,
+    top_k,
+    write_reference,
+)
 
 
 class Stub:
@@ -292,6 +301,22 @@ class Reference(unittest.TestCase):
         found = compare(reference(), other)
         self.assertTrue(any("in_top3" in line for line in found), found)
         self.assertTrue(any("3 items != 1 items" in line for line in found), found)
+
+    def test_result_order_is_reported_apart_and_does_not_fail_the_diff(self):
+        def rows(first, in_top3=True):
+            return [{"id": "q", "reranker": "rrf", "in_top3": in_top3, "ranked": {"episodes": [first]}}]
+
+        hard, ranking = split_ranking(compare(reference(search=rows("a")), reference(search=rows("b"))))
+        self.assertEqual(hard, [])
+        self.assertEqual(len(ranking), 1)
+        hard, _ = split_ranking(compare(reference(search=rows("a")), reference(search=rows("a", in_top3=False))))
+        self.assertEqual(len(hard), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            one, two = Path(tmp) / "one.json", Path(tmp) / "two.json"
+            one.write_text(json.dumps(reference(search=rows("a"))), encoding="utf-8")
+            two.write_text(json.dumps(reference(search=rows("b"))), encoding="utf-8")
+            with mock.patch("sys.stdout"):
+                self.assertEqual(main(["diff", str(one), str(two)]), 0)
 
     def test_different_formats_are_refused(self):
         other = reference()
