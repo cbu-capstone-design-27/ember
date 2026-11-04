@@ -1,0 +1,67 @@
+# web-local: one nginx per node, on the node's own network, listening on 127.0.0.1:3001 and passing
+# TCP to Service web (local-proxy.conf). It is the upstream of `tailscale serve` on each node, which
+# answers https://<node>.tail470a31.ts.net (make web-serve, k8s/README.md, web).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: web-local
+  namespace: ember
+  labels:
+    app: web-local
+spec:
+  selector:
+    matchLabels:
+      app: web-local
+  template:
+    metadata:
+      labels:
+        app: web-local
+    spec:
+      # The node's network, so tailscaled on the host reaches it on 127.0.0.1
+      hostNetwork: true
+      # Cluster DNS still, to resolve Service web
+      dnsPolicy: ClusterFirstWithHostNet
+      # pi-cp keeps workloads off with CriticalAddonsOnly. This is a per-node forwarder, as ServiceLB's
+      # svclb pods are, and the node's https name needs it there
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: nginx:1.28-alpine
+          # Our nginx.conf only: the image's default site would listen on port 80 of every interface
+          command: ["nginx", "-g", "daemon off;", "-c", "/etc/web-local/nginx.conf"]
+          # The probes come from the kubelet on the same host, so they can use loopback
+          readinessProbe:
+            tcpSocket:
+              host: 127.0.0.1
+              port: 3001
+          livenessProbe:
+            tcpSocket:
+              host: 127.0.0.1
+              port: 3001
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              memory: 32Mi
+          # Starts as root, as in nginx/deployment.yaml; it binds no privileged port
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/web-local
+              readOnly: true
+      volumes:
+        - name: conf
+          configMap:
+            name: web-local-conf
+            items:
+              - key: local-proxy.conf
+                path: nginx.conf

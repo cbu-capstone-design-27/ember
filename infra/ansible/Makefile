@@ -23,7 +23,7 @@ DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-j
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
 	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate \
 	intake-secret enrich-github-secret enrich-slack-secret enrich-jira-secret enrich-gitlab-secret llm-tunnel-secret map-tenant grafana-secret grafana-health \
-	web-secret web-test-accounts
+	web-secret web-test-accounts web-serve
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -134,7 +134,7 @@ apps-diff: ## Show what this checkout's k8s/ would change on the cluster
 	flux --context $(CONTEXT) diff kustomization apps --path ../k8s/apps || [ $$? -eq 1 ]
 	flux --context $(CONTEXT) diff kustomization monitoring --path ../k8s/monitoring || [ $$? -eq 1 ]
 
-apps-health: ## Apps rolled out; enrich workers listening; web app on Postgres, answering on every node's name and ember-web, and not public; intake refuses an unsigned webhook through nginx, from the tailnet and through Funnel
+apps-health: ## Apps rolled out; enrich workers listening; web app on Postgres, answering over HTTPS on every node's name and ember-web, and not public; intake refuses an unsigned webhook through nginx, from the tailnet and through Funnel
 	ansible-playbook playbooks/apps.yml --tags health
 
 intake-secret: ## Write k8s/apps/intake/webhooks.sops.yaml, encrypted, from vault_github_webhook_secret, vault_slack_signing_secret, vault_jira_webhook_secret and vault_gitlab_webhook_signing_token. Commit it
@@ -157,6 +157,9 @@ web-secret: ## Write k8s/apps/web/auth.sops.yaml, encrypted, from vault_web_bett
 
 web-test-accounts: ## Create the web app's test accounts on the cluster from vault_web_test_password, or check they are there. Safe to re-run
 	ansible-playbook playbooks/web.yml --tags test-accounts
+
+web-serve: ## Serve the web app at https://<node>.<tailnet> on every node (tailscale serve). Host config, so re-run after a node rebuild. Safe to re-run
+	ansible-playbook playbooks/web.yml --tags serve
 
 grafana-secret: ## Write the Grafana Cloud Secrets (collector, operator), encrypted, from vault_grafana_cloud_*. Commit them
 	ansible-playbook playbooks/grafana-cloud.yml --tags secret
