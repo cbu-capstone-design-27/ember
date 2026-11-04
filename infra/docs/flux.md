@@ -98,7 +98,7 @@ Public and tailnet addresses:
 | `https://ember.tail470a31.ts.net` | Internet (Funnel) | nginx, which routes `/webhook/` to intake and answers `/healthz` |
 | `bolt://hv-worker-1.tail470a31.ts.net:7687` | Tailnet only | Neo4j |
 | `hv-worker-2.tail470a31.ts.net:5432` | Tailnet only | Postgres (`make postgres-url`) |
-| `http://pi-cp.tail470a31.ts.net:3000` | Tailnet only | The web app; any node's name works on port 3000 |
+| `https://pi-cp.tail470a31.ts.net` | Tailnet only | The web app; any node's name works (`make web-serve`) |
 | `https://ember-web.tail470a31.ts.net` | Tailnet devices it's shared with | The web app |
 
 ---
@@ -278,7 +278,7 @@ Everything on the cluster comes back from Git plus the age key in the vault.
 | `make flux-preview BRANCH=<branch>` | Deploy a pushed branch instead of `develop` |
 | `make flux-preview-end` | Go back to `develop` |
 | `make flux-components` | Regenerate `gotk-components.yaml` after changing `FLUX_VERSION` in the Makefile. Commit it; Flux upgrades itself |
-| `make apps-health` | Public route end to end: Ingress hostname, nginx `/healthz`, a webhook POST from the tailnet and through Funnel, 404 on unknown paths. Also the web app: on Postgres, answering on every node's name and on `ember-web`, each node's name a trusted origin, no public DNS |
+| `make apps-health` | Public route end to end: Ingress hostname, nginx `/healthz`, a webhook POST from the tailnet and through Funnel, 404 on unknown paths. Also the web app: on Postgres, answering over HTTPS on every node's name and on `ember-web`, each node's name a trusted origin, no public DNS |
 | `make ts-operator-health` | Operator ready and logged in; each Tailscale Ingress has a hostname and answers HTTPS; each Funnel Ingress has public DNS |
 | `make neo4j-health` | Pod ready on hv-worker-1; a query works in the pod and on every node's IP |
 | `make postgres-health` | Postgres ready on hv-worker-2, migrations applied, the ingestion tables present, Postgres answering on every node's IP |

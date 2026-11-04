@@ -4,7 +4,15 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
-  # The same app on port 3000 of every node's tailnet address (k8s/README.md, web)
-  - service-lb.yaml
+  # 127.0.0.1:3001 on every node, which tailscale serve proxies https://<node>.<tailnet> to
+  # (make web-serve, k8s/README.md, web)
+  - local-proxy.yaml
   # Secret web-auth: BETTER_AUTH_SECRET, which signs session cookies (k8s/README.md, web)
   - auth.sops.yaml
+# The name gets a content hash, so editing the config rolls the DaemonSet by itself.
+configMapGenerator:
+  - name: web-local-conf
+    # Without this the ConfigMap lands in default and the DaemonSet's reference isn't rewritten.
+    namespace: ember
+    files:
+      - local-proxy.conf

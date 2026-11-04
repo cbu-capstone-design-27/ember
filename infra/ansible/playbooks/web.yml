@@ -4,6 +4,10 @@
 #   encrypted with the public key in .sops.yaml. Commit the file it writes. Use make web-secret.
 # test-accounts: creates the test accounts (files/web_test_accounts.py) on the deployed app, with the
 #   password in vault_web_test_password, or checks they are there. Use make web-test-accounts.
+# serve: on each node, `tailscale serve` answers https://<node>.<tailnet_domain> with a certificate
+#   Tailscale issues and renews, and proxies to web-local on 127.0.0.1:3001 (k8s/apps/web/local-proxy.yaml).
+#   It is host config, which Flux can't apply, so run it after a node is rebuilt. Use make web-serve.
+#   To undo it on a node: sudo tailscale serve reset.
 # The values are never printed.
 - name: Web
   hosts: localhost
@@ -11,8 +15,8 @@
   vars:
     repo_dir: "{{ playbook_dir }}/../../.."
     secret_file: infra/k8s/apps/web/auth.sops.yaml
-    # pi-cp's address, which anyone who can reach the nodes can use (k8s/apps/web/service-lb.yaml)
-    web_url: "http://pi-cp.{{ tailnet_domain }}:3000"
+    # pi-cp's address, which anyone who can reach the nodes can use (the serve play below)
+    web_url: "https://pi-cp.{{ tailnet_domain }}"
     web_secret:
       apiVersion: v1
       kind: Secret
@@ -102,3 +106,43 @@
         - name: Show what it did
           ansible.builtin.debug:
             msg: "{{ accounts.stdout_lines }}"
+
+# Browsers refuse or warn on plain http to a ts.net name, so the team's address is HTTPS. Only the
+# node itself can get a certificate for its name, so tailscaled serves it. Traefik holds 443 on the nodes but routes nothing, and tailscaled answers tailnet traffic
+# before it reaches the kernel, so the two don't meet.
+- name: Serve the web app over HTTPS on each node's tailnet name
+  hosts: k3s_cluster
+  become: true
+  gather_facts: false
+  tags: [serve]
+  vars:
+    web_serve_host: "{{ inventory_hostname }}.{{ tailnet_domain }}"
+    # web-local on the node. Not Service web directly: tailscaled's connections don't reach a pod on
+    # another node (k8s/apps/web/local-proxy.conf)
+    web_serve_target: "http://127.0.0.1:3001"
+    web_serve_proxy: >-
+      {{ ((web_serve_status.stdout | default('', true) or '{}') | from_json).get('Web', {})
+      .get(web_serve_host ~ ':443', {}).get('Handlers', {}).get('/', {}).get('Proxy', '') }}
+  tasks:
+    - name: Read the node's serve config
+      ansible.builtin.command: tailscale serve status --json
+      register: web_serve_status
+      changed_when: false
+
+    - name: Serve https://<node>.<tailnet> from the web app
+      ansible.builtin.command: tailscale serve --bg --https=443 {{ web_serve_target }}
+      when: web_serve_proxy != web_serve_target
+      changed_when: true
+
+    - name: Request Better Auth's /ok over HTTPS on the node's name
+      ansible.builtin.uri:
+        url: "https://{{ web_serve_host }}/api/auth/ok"
+        return_content: true
+        timeout: 30
+      register: web_serve_ok
+      # The first request on a node waits for its certificate
+      until: web_serve_ok is succeeded and (web_serve_ok.json | default({})).ok | default(false)
+      retries: 6
+      delay: 10
+      delegate_to: localhost
+      become: false

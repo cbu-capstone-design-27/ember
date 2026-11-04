@@ -2,7 +2,7 @@
 # Checks k8s/apps on the cluster end to end: nginx, the reverse proxy behind the public
 # https://ember.<tailnet_domain> (a Tailscale Funnel Ingress), and intake, the webhook listener it
 # routes /webhook/ to, and the enrich workers behind it, and the web app, tailnet only, on
-# http://<node>.<tailnet_domain>:3000 and https://ember-web.<tailnet_domain>. Flux deploys them
+# https://<node>.<tailnet_domain> and https://ember-web.<tailnet_domain>. Flux deploys them
 # (playbooks/flux.yml); this playbook deploys nothing.
 # Run from the controller against the "homelab" kubeconfig context. Use make apps-health.
 - name: Apps
@@ -22,9 +22,9 @@
     # The web app's own Tailscale Ingress, without Funnel (k8s/apps/web)
     web_host: "ember-web.{{ tailnet_domain }}"
     web_url: "https://{{ web_host }}"
-    # The same app on every node's IP through ServiceLB (k8s/apps/web/service-lb.yaml)
-    web_node_port: 3000
-    web_main_url: "http://pi-cp.{{ tailnet_domain }}:{{ web_node_port }}"
+    # The same app on every node's name: tailscale serve (make web-serve) in front of web-local
+    # (k8s/apps/web/local-proxy.yaml)
+    web_main_url: "https://pi-cp.{{ tailnet_domain }}"
     web_public_ips: >-
       {{ (web_public_dns.content | default('{}') | from_json).Answer | default([])
       | selectattr('type', 'equalto', 1) | map(attribute='data') | list }}
@@ -138,10 +138,10 @@
               tailscale.com/funnel annotation from k8s/apps/web/ingress.yaml.
             quiet: true
 
-        # ServiceLB takes a few seconds to start its proxy pods after the Service is created
-        - name: Request Better Auth's /ok on each node's tailnet name
+        # A failure here on every node: run make web-serve, and check DaemonSet web-local is ready
+        - name: Request Better Auth's /ok over HTTPS on each node's tailnet name
           ansible.builtin.uri:
-            url: "http://{{ item }}.{{ tailnet_domain }}:{{ web_node_port }}/api/auth/ok"
+            url: "https://{{ item }}.{{ tailnet_domain }}/api/auth/ok"
             return_content: true
             timeout: 20
           register: web_node_ok
@@ -155,10 +155,10 @@
         # account; a trusted one gets as far as the password, and an account that doesn't exist is 401
         - name: Sign in from each node's name with an account that doesn't exist
           ansible.builtin.uri:
-            url: "http://{{ item }}.{{ tailnet_domain }}:{{ web_node_port }}/api/auth/sign-in/email"
+            url: "https://{{ item }}.{{ tailnet_domain }}/api/auth/sign-in/email"
             method: POST
             headers:
-              Origin: "http://{{ item }}.{{ tailnet_domain }}:{{ web_node_port }}"
+              Origin: "https://{{ item }}.{{ tailnet_domain }}"
             body_format: json
             body:
               email: apps-health@example.com
@@ -173,7 +173,7 @@
           ansible.builtin.assert:
             that: item.status != 403
             fail_msg: >-
-              Better Auth refused http://{{ item.item }}.{{ tailnet_domain }}:{{ web_node_port }} as an
+              Better Auth refused https://{{ item.item }}.{{ tailnet_domain }} as an
               origin ({{ item.content | default('') | truncate(200) }}), so sign-in fails on that address.
               Add it to BETTER_AUTH_TRUSTED_ORIGINS in k8s/apps/web/deployment.yaml.
             quiet: true
@@ -330,5 +330,5 @@
             msg:
               - "Webhook: {{ webhook_url }} (POST)"
               - "Probe:   {{ ember_url }}/healthz"
-              - "Web app: {{ web_main_url }}, any node's name on port {{ web_node_port }} (tailnet only)"
+              - "Web app: {{ web_main_url }}, or any node's name (tailnet only)"
               - "         {{ web_url }} (devices ember-web is shared with)"
