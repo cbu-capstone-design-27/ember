@@ -1,6 +1,6 @@
 # ADR 0002: Graph engine and schema approach
 
-- Status: Proposed
+- Status: Superseded by ADR-0011 in the long term (the graph moves to Postgres with a Graphiti fork; Neo4j stays in use until the switch, and the ontology stays)
 - Date: 2026-09-29
 - Jira: EMBER-34
 
@@ -31,6 +31,10 @@ This ADR stays Proposed until a spike passes.
 ## Status note (2026-10-27)
 
 The spike below has not run yet, so Graphiti is still Proposed. Meanwhile the loader runs on this ADR's fallback, deterministic structured mapping onto the same ontology, with no LLM: the JSONL loader (EMBER-45) and the extract and load workers (EMBER-85, `services/pipeline/README.md`). On that path `episodes.attrs` holds the mapped nodes and edges and `episodes.text` a human-readable summary (`docs/ingestion/architecture.md`, Stages). Nodes and edges carry the source's `occurred_at`, and a change applies only if it is not older than what is stored, which stands in for Graphiti's fact invalidation. If the spike passes, a Graphiti `GraphLoader` replaces the load stage and `replay --stage load` rebuilds the graph from the stored episodes.
+
+## Status note (2026-11-04)
+
+The team decided the direction in [ADR 0011](0011-graph-in-postgres.md). The spike below no longer decides the engine. EMBER-146 runs it to save the reference that informs the fork and the switch.
 
 ## Spike (required before Accepted)
 

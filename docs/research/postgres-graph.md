@@ -1,8 +1,8 @@
 # Postgres as Ember's graph store
 
-Jira: EMBER-117 (Postgres graph store), EMBER-118 (a Graphiti fork on Postgres). Date: 2026-10-28, fork design 2026-10-29. Status: research, for a team decision. If accepted it supersedes [ADR 0002](../adr/0002-graph-engine-and-schema-approach.md)'s choice of Neo4j and Graphiti, not its ontology.
+Jira: EMBER-117 (Postgres graph store), EMBER-118 (a Graphiti fork on Postgres). Date: 2026-10-28, fork design 2026-10-29. Status: research. The team's decision is [ADR 0011](../adr/0011-graph-in-postgres.md) (Accepted): long term the graph moves to Postgres with our own Graphiti fork, and Neo4j stays until that version matches. ADR 0002's ontology stays.
 
-Diagrams (dark theme; open at [excalidraw.com](https://excalidraw.com) with Open): [`ember-ingestion-to-graph`](diagrams/ember-ingestion-to-graph.excalidraw), [`ember-postgres-subgraphs`](diagrams/ember-postgres-subgraphs.excalidraw), [`ember-graphiti-postgres`](diagrams/ember-graphiti-postgres.excalidraw), [`ember-graph-options`](diagrams/ember-graph-options.excalidraw). Each diagram carries its own legend and numbered notes. Benchmark script: [`postgres-graph-bench.py`](postgres-graph-bench.py).
+Diagrams (dark theme; open at [excalidraw.com](https://excalidraw.com) with Open): [`ember-ingestion-to-graph`](diagrams/ember-ingestion-to-graph.excalidraw), [`ember-postgres-subgraphs`](diagrams/ember-postgres-subgraphs.excalidraw), [`ember-graphiti-postgres`](diagrams/ember-graphiti-postgres.excalidraw), [`ember-graph-options`](diagrams/ember-graph-options.excalidraw). Each diagram carries its own legend and numbered notes. Benchmark script: [`postgres-graph-bench.py`](postgres-graph-bench.py). Prototype: [`postgres-graph-prototype.py`](postgres-graph-prototype.py).
 
 ## Recommendation
 
@@ -12,7 +12,9 @@ Most of the pipeline already exists. `extract` (EMBER-85) maps each `source_reco
 
 For the Graphiti side (EMBER-118), fork Graphiti (Apache-2.0) and add a Postgres driver on these same tables. Graphiti core keeps doing episodes, LLM extraction, entity resolution, bi-temporal edges, search and rerank. Ember adds its ontology, `{tenant}_{source}` group ids, and a bulk path that writes the deterministic mappers' output without LLM calls. The driver is about 100 interface methods in SQL plus seven small hooks in core where Graphiti still runs Cypher directly. Details in [Part 2](#part-2-ember-118-a-graphiti-fork-on-postgres).
 
-Effort: about 2 weeks for the Postgres store, 3 to 4 weeks for the fork and its driver, 1 week for the MCP tools, 2 to 3 weeks for the code graph. Details in [Effort](#effort).
+The [prototype](#prototype-ember-118) loaded the photon data and answered a temporal question in 4 ms with no Graphiti at all, after correcting two parts of this design. The team accepted the direction in [ADR 0011](../adr/0011-graph-in-postgres.md), keeping Neo4j until the Postgres version matches.
+
+Effort: 43 to 58 working days across four phases. Details in [Effort](#effort).
 
 ## Where the pipeline is today
 
@@ -38,7 +40,7 @@ Checked on 2026-10-28.
 | Operations | Nothing new. One CNPG backup covers raw data, records, embeddings and the graph | Not in CNPG's images or its [extension images](https://github.com/cloudnative-pg/postgres-extensions-containers) (pgAudit, pg_crash, pg_ivm, pgRouting, pgvector, PostGIS, TimescaleDB, wal2json). We would build and patch our own image. 1.8 wants `shared_preload_libraries` | Nothing new, once it exists | A second database: its own backup, upgrades, memory on a 4 GB node, and a write that cannot commit with `episodes.loaded_at` |
 | Maintenance | Postgres core | Maintainers describe "a small team of developers" with limited resources ([discussion #2305](https://github.com/apache/age/discussions/2305), 2026-01-16) | Postgres core, later | Neo4j, Inc. |
 | Benchmark (100 tenants) | 0.8 to 2.8 ms, fastest or tied on all four | 524 ms for an untyped 1-hop query | Not testable | 5 to 48 ms |
-| Verdict | **Use** | No | Watch for 20; the tables can get a `CREATE PROPERTY GRAPH` over them then | Drop |
+| Verdict | **Use** | No | Watch for 20; the tables can get a `CREATE PROPERTY GRAPH` over them then | Keep until the switch, then remove |
 
 Graphiti as shipped has no Postgres backend, which is why Part 2 forks it: graphiti-core 0.31.2 (2026-10-20) supports Neo4j 5.26, FalkorDB, Amazon Neptune and Kuzu (deprecated). Requests for a Postgres backend ([#779](https://github.com/getzep/graphiti/issues/779), pgvector; [#1095](https://github.com/getzep/graphiti/issues/1095), AGE) were closed without one.
 
@@ -149,19 +151,21 @@ These are the rules `neo4j_writer.py` already enforces, moved to SQL.
 - **Newest wins.** A node takes an episode's props only if `episode.occurred_at >= node.occurred_at`. An older episode only fills props the node lacks (`props = excluded.props || nodes.props`), and never touches a deleted node.
 - **Deletes.** A tombstone episode not older than the node sets `deleted = true`, clears `props`, `name`, `embed_text` and `embedding`, and sets `invalid_at` on every current edge of that node, with `invalidated_by` = the tombstone's episode. The node row stays, so a late older edit cannot bring it back.
 - **Placeholders.** An edge to a node not loaded yet creates the node with `placeholder = true` on its key. The node's own episode fills it in. Reads skip placeholders.
-- **Edges that disappear** ([gap 10](../pipeline/neo4j-load-check.md#gaps-in-the-ontology-and-mapping-with-suggested-tickets)). Each mapper declares which edge types around its record's main node the record lists in full, for example a PR's `TOUCHES` and `RESOLVES`, or an issue's `ASSIGNED_TO`. When a newer version of that object loads, current edges of those types missing from the new episode get `invalid_at = episode.occurred_at` and `invalidated_by = episode.id`. An older version never invalidates.
+- **Edges that disappear** ([gap 10](../pipeline/neo4j-load-check.md#gaps-in-the-ontology-and-mapping-with-suggested-tickets)). Each mapper declares which edge types around its record's main node the record lists in full, for example a PR's `TOUCHES` and `RESOLVES`, or an issue's `ASSIGNED_TO`. When a newer version of that object loads, current edges of those types missing from the new episode get `invalid_at = episode.occurred_at` and `invalidated_by = episode.id`. An older version never invalidates. Its fact is stored as already ended, at the `valid_at` of the newer fact that replaced it, which is what Graphiti's `_apply_temporal_invalidation` does. Edge `uuid`s are deterministic, so applying an episode twice changes nothing.
 - **Re-extraction.** Bumping `EXTRACTOR_VERSION` re-extracts and clears `loaded_at`. Load then sets `expired_at = now()` on the edges whose `episode_id` it replaces and inserts the new ones, so a corrected mapping is visible as a correction and not as a change in the source.
 
 ### Time: what was true when, and why it changed
+
+`valid_at` is when the fact began, and a record's own time is not always that. An entry from a changelog has its true time. A fact that only appears in a snapshot takes the object's `created` time when the record has one, and the edge gets `props.valid_from = 'snapshot'`, because nothing proves it held from then. Otherwise it takes the record's time.
 
 | Question | Query |
 |---|---|
 | Who is assigned to PHO-15 now? | `type = 'ASSIGNED_TO' and dst = :wi and invalid_at is null and expired_at is null` |
 | Who was assigned on 2026-10-01? | `valid_at <= :t and (invalid_at is null or invalid_at > :t) and expired_at is null` |
 | Why did it change? | `invalidated_by` and the new edge's `episode_id` point at episodes, which point at the `source_records` row and its full payload |
-| What was the ticket's status on 2026-10-01? | The newest `graph.mentions` episode for the node with `occurred_at <= :t`; its `attrs` holds the node's props as of that version |
+| What was the ticket's status on 2026-10-01? | The same filter on `HAS_STATUS` edges (below) |
 
-Node property history is not copied into the graph: every version is already an episode. `Decision` nodes keep `SUPERSEDES`, as `docs/graph-schema.md` says.
+A field whose history matters is a fact on an edge, not a node property. An episode only holds the field as of its own record, and a backfilled ticket has one record however many times it changed ([prototype](#prototype-ember-118)). Status is `WorkItem -HAS_STATUS-> Status`, one edge per status held, from Jira's changelog: webhook `changelog` items and reconcile's changelog pages. This is what [`graph-schema.md`](../graph-schema.md), Time, already asks for ("invalidates the old status fact and adds the new one"). Other node properties keep only their newest value, and their older values stay in the episodes. `Decision` nodes keep `SUPERSEDES`, as `docs/graph-schema.md` says.
 
 ### Entity resolution across sources
 
@@ -169,13 +173,14 @@ Each subgraph keeps its own `Identity` and `Person` nodes, as `docs/graph-schema
 
 - **People.** A `Person` whose email is set or changed gets a `SAME_AS` edge (source `link`, `props.method = 'email'`) to every other `Person` in the tenant with the same lowercased email. Weaker matches (same display name, a GitHub commit email against a Slack profile) are written with `props.method` and `props.confidence` and `valid_at`, but retrieval only follows `method = 'email'` until someone confirms them. A wrong merge is one edge to invalidate. `SAME_AS` is a new edge type (open question 1).
 - **Keys in text.** A Jira key (`PHO-15`) or a `#n` in a Slack message, PR title or commit message becomes `REFERENCES` from the message to the `WorkItem` in the Jira or GitHub subgraph, source `link`. Keys are matched only against the tenant's known Jira project keys, so `UTF-8` is not a ticket. If the issue has not loaded yet, the edge creates a placeholder in the Jira subgraph, which the issue's own episode fills.
+- **Pull request URLs.** A `github.com/.../pull/n` URL in a message, or a Jira remote link, becomes `REFERENCES` to the `Change` keyed `org/repo#n`, the key the GitHub mapper already uses. In photon, 287 `#photon-github` messages carry a pull request URL and none names a Jira key. Only 36 `#photon-bugs` messages do, so URLs are most of what joins tickets to Slack.
 - **Paths and symbols.** See [code graph](#code-graph).
 
 Retrieval in phase 1 can ignore `source = 'link'` edges and search one subgraph at a time; phase 2 follows them.
 
 ### Backfill and replay
 
-- **Backfill** is reconcile: objects become `raw_events`, then the same path. Load's ordering rule makes an old object arriving after newer webhooks harmless. Its history is incomplete until a replay, because an older version arriving late never invalidates.
+- **Backfill** is reconcile: objects become `raw_events`, then the same path. Load's ordering rule makes an old object arriving after newer webhooks harmless. A late fact is stored as already ended, so it can't become current. Facts with their own time (changelog entries) need no replay. A late snapshot's ended facts have approximate times until one.
 - **Replay load** for a subgraph: `delete from graph.nodes where tenant = :t and source = :s` (edges and mentions cascade), clear `loaded_at` on its episodes, and load rebuilds in `occurred_at` order with full history. This is `ember-admin replay --stage load` from ADR 0004, with no Neo4j involved.
 - **Replay extract** after a mapper fix: bump `EXTRACTOR_VERSION`, as today.
 - **Retention.** Replays read `episodes`. Their retention is still open in `architecture.md`, and this design depends on keeping them.
@@ -221,7 +226,7 @@ Fork Graphiti instead of writing our own. Graphiti core already does the parts t
 
 **How time is built.** `add_episode` extracts edges with the LLM, then [`utils/maintenance/edge_operations.py`](https://github.com/getzep/graphiti/blob/v0.31.2/graphiti_core/utils/maintenance/edge_operations.py) `resolve_extracted_edges` fetches candidates (`get_edge_invalidation_candidates`, unhooked Cypher), asks the LLM which ones the new fact contradicts, and `_apply_temporal_invalidation` sets `invalid_at`/`expired_at` by comparing dates in Python. Only the candidate fetch touches storage.
 
-**Tests.** `tests/helpers_test.py` builds the driver matrix from `GraphProvider`, and `test_graphiti_int.py`, `test_node_int.py` and `test_edge_int.py` run against every driver in it. Adding Postgres to that matrix gives the fork Graphiti's own integration tests.
+**Tests.** `tests/helpers_test.py` builds the driver matrix from `GraphProvider`, and `test_graphiti_int.py`, `test_node_int.py` and `test_edge_int.py` run against every driver in it. Adding Postgres to that matrix gives the fork Graphiti's own integration tests. EMBER-146's harness adds a reference to match on Ember's data: its `diff` compares a stock run on Neo4j with a run on the fork ([`graphiti-test.md`](graphiti-test.md)).
 
 ### The fork
 
@@ -333,18 +338,89 @@ Rationale comments become `props.doc` on their symbol. Communities and god nodes
 
 Ambiguous names make no edge. The LLM pass can add the rest later, marked with its confidence.
 
+## Prototype (EMBER-118)
+
+[`postgres-graph-prototype.py`](postgres-graph-prototype.py) creates the Part 1 tables in a scratch pgvector container. It runs the real photon rows through `seed_photon.py` and `extract`, and loads them in `occurred_at` order per subgraph, committing with `loaded_at`. No Graphiti, no embeddings, no Spark.
+
+Status at a date, on the `HAS_STATUS` edges:
+
+```sql
+select s.name as status, e.valid_at, e.invalid_at, ep.key as episode
+from graph.nodes wi
+join graph.edges e on e.src = wi.id and e.type = 'HAS_STATUS'
+join graph.nodes s on s.id = e.dst
+join episodes ep on ep.id = e.episode_id
+where (wi.tenant, wi.source, wi.label, wi.key) = ($1, 'jira', 'WorkItem', $2)
+  and e.valid_at <= $3 and (e.invalid_at is null or e.invalid_at > $3) and e.expired_at is null
+```
+
+"Why" is one more statement in the script (`WHY`): the edge's episode, the last Jira comment before the change, and each linked pull request's Slack message within 10 minutes. Output:
+
+```
+PHO-104: Rebuild onboarding (phased)
+  on 2026-09-25T12:00:00+00:00: In Progress (since 2026-09-22T18:38:18+00:00)
+  on 2026-09-29T12:00:00+00:00: Done (since 2026-09-28T17:17:17+00:00)
+  why:
+    changed by, 2026-09-28T17:17:17+00:00: PHO-104 status Done, set by Ryan Stoffel (resolution: none -> Done; status: In Progress -> Done; Fix Version: none -> 0.4.7)
+      source: https://photon-synthetic.atlassian.net/browse/PHO-104  ref: photon:jira:changelog:PHO-104/changelog/10566@10566
+    last comment, 2026-09-28T17:08:12+00:00: Ryan, 2026-09-28: the cinematic Phase 1 overlay is scratched. No beam, flash, stars, full-screen veil, or Desktop 2 pin. The replacement is a small native welcome window: how to open Photon, where Settings are, and one Continue. E
+      source: https://photon-synthetic.atlassian.net/rest/api/3/issue/10104/comment/10570  ref: photon:jira:comment:10104/comment/10570@2026-09-28T10:08:12.000-0700
+    pull request, 2026-09-28T17:08:21.000100+00:00: ryan-stoffel/photon#231: Replace the Phase 1 overlay with a short welcome | Slack: Pull request opened by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/231|#231 Replace the Phase 1 overlay with a short welcome> (`feat
+      source: https://github.com/ryan-stoffel/photon/pull/231  ref: C08PHOTONGH:1790615301.000100
+    pull request, 2026-09-28T17:17:15.000100+00:00: ryan-stoffel/photon#231: Replace the Phase 1 overlay with a short welcome | Slack: Pull request merged by ryan-stoffel: <https://github.com/ryan-stoffel/photon/pull/231|#231 Replace the Phase 1 overlay with a short welcome>
+      source: https://github.com/ryan-stoffel/photon/pull/231  ref: C08PHOTONGH:1790615835.000100
+
+self-check: 664 status probes across 112 tickets match the raw changelog; rule and re-apply checks passed
+
+what the design did not answer:
+  doc's node history, status on 2026-09-25T12:00:00+00:00: None
+  ASSIGNED_TO on 2026-09-25T12:00:00+00:00: None; on 2026-09-29T12:00:00+00:00: Ryan Stoffel
+
+rows:
+  source_records: 1289
+  episodes: 1289
+  graph.nodes: 1288
+    placeholders: 145
+  graph.edges: 3057
+    ended: 220
+    link: 398
+    SAME_AS: 0
+  graph.mentions: 5036
+
+seed + extract 0.51 s (1289 records, 0 skipped), load 7.39 s (1289 episodes), status and why queries 4.2 ms
+```
+
+**How far the "why" goes.** The first row is a fact: the changelog entry says who changed the status and when. The comment and pull request rows are evidence by link and time. No field in the source says they caused the change. Photon's changelog is also generated from GitHub times (Done is when the GitHub issue closes), so the two-second gap to the merge message is partly built into the fixture. This shows the query works. It says nothing about how often real tickets line up this way.
+
+**What it checks.** 664 status probes across all 112 tickets match the raw changelog, each ticket has exactly one current status, and its current status equals the issue's own field. Re-applying every episode changes no row. Photon has no deletes, reassignments or late edits, so those rules run on made-up episodes in a rolled-back transaction. They are checked as rules, not on real data.
+
+**What it proved wrong in the design, now corrected above:**
+
+1. **Status history can't come from the node's episodes.** The doc's query returned nothing for 2026-09-25, because PHO-104 has one issue record, dated 2026-09-28. The 220 real status changes are in the changelog pages, which `seed_photon.py` doesn't store and `extract` has no mapper for. The fix is `HAS_STATUS` edges and a changelog mapper, which the prototype adds in `gap_episode`. It needs an ontology change: a `Status` node and a `HAS_STATUS` edge.
+2. **`valid_at` was the record's time, which is wrong for snapshots.** PHO-104's `ASSIGNED_TO` edge says it began on 2026-09-28, so "who was assigned on 2026-09-25" returns nobody. The ticket was created on 2026-09-22 and its changelog has no assignee change. The prototype still shows this wrong answer, and the `valid_at` rule above is the correction.
+
+**Also learned:**
+
+- The late-arrival rule was too weak. See [Backfill and replay](#backfill-and-replay).
+- Remote links need a mapper too ([gap 2](../pipeline/neo4j-load-check.md#gaps-in-the-ontology-and-mapping-with-suggested-tickets)), or nothing joins a ticket to Slack. `gap_episode` adds this as well. The 145 `Change` nodes stay placeholders because photon has no GitHub subgraph.
+- Jira comment nodes carry no URL and photon's Slack messages have no permalink. The comment's URL came from its `source_records` row through the episode, which shows provenance works. The Slack row can only give its channel and timestamp.
+- `SAME_AS` produced 0 edges. Photon's Slack people have no email ([gap 4](../pipeline/neo4j-load-check.md#gaps-in-the-ontology-and-mapping-with-suggested-tickets)), so people matching is still untested on real data.
+- The DDL ran as written, including the generated `tsvector` columns and the partial unique index.
+
+**What it did not test:** search, the Graphiti fork or its driver, LLM extraction, and concurrent writers. The load took 7.4 s for 1,289 episodes, one statement per row, so it says nothing about batched write speed.
+
 ## Effort
 
 One developer who knows `services/pipeline`. Days are working days.
 
 | Phase | Work | Days |
 |---|---|---|
-| A. Postgres store | Migration for `graph.*`; load's writer ported from `neo4j_writer.py` (ordering rule, tombstones, placeholders, mentions); edge invalidation per mapper; link step; e2e-check in SQL; deploy extract and load | 9 to 11 |
+| A. Postgres store | Migration for `graph.*`; load's writer ported from `neo4j_writer.py` (ordering rule, tombstones, placeholders, mentions); edge invalidation per mapper; changelog and remote link mappers; link step; e2e-check in SQL; deploy extract and load | 11 to 14 |
 | B. Fork and driver | Core hooks and enum; `PostgresDriver` with the two legacy interfaces (97 methods, many one query each) and the 11 operation ABCs; Graphiti's integration tests on Postgres | 15 to 20 |
 | C. Ember on the fork | Bulk path from episode `attrs`; fact templates; `add_episode` for free text with the narrowed ontology; MCP `search`, `get_record`, `history`; retrieval suite with and without the graph | 7 to 9 |
 | D. Code graph | Tree-sitter extractor for Python and TypeScript; `code` kind in `enrich:github`; mapper; the four cross links | 10 to 15 |
 
-A comes first and stands alone. B and C replace what Neo4j and Graphiti were for. D can follow either.
+Total 43 to 58 days. A comes first and stands alone: the prototype answered its temporal question on A's tables with no Graphiti. B and C are what free-text extraction and hybrid search cost. D can follow either.
 
 ## Risks
 
@@ -353,19 +429,21 @@ A comes first and stands alone. B and C replace what Neo4j and Graphiti were for
 - **Two writers of the same tables.** Load's bulk path and `add_episode` both write `graph.*`. The per-subgraph advisory lock must cover both.
 - **Hubs in walks.** A project's `CONTAINS` edges reach every ticket. Walks skip container edges and cap depth; the benchmark's 3-hop query shows the size of the problem (146 nodes from one ticket).
 - **One database is one failure domain.** CNPG runs one instance on local storage, and `cluster.yaml` has no backup configured. That is true today for everything else in Ember; moving the graph in raises the stakes but not the work.
-- **Ontology changes.** `SAME_AS`, `File`, `Symbol`, `CALLS`, `IMPORTS` and `INHERITS`, and new `CONTAINS`/`TOUCHES`/`REFERENCES` pairs, need a schema decision ([`docs/graph-schema.md`](../graph-schema.md), Extending).
+- **Ontology changes.** `Status`, `HAS_STATUS`, `SAME_AS`, `File`, `Symbol`, `CALLS`, `IMPORTS` and `INHERITS`, and new `CONTAINS`/`TOUCHES`/`REFERENCES` pairs, need a schema decision ([`docs/graph-schema.md`](../graph-schema.md), Extending).
 - **The graphify clone can grow without end.** Upstream supports about 40 languages. Two cover Ember.
-- **Neo4j work is retired.** `neo4j_writer.py`, `schema.cypher`, the Neo4j HelmRelease and the Neo4j half of the benchmarks go away once phase A lands. That is Brandon's code; the decision needs him.
-- **LLM cost on free text.** `add_episode` makes several LLM calls per message. Narrowing the ontology and sending only messages longer than a threshold keeps it bounded; the local model's structured output is ADR 0002's open risk.
+- **Neo4j work is retired at the switch, not before.** `neo4j_writer.py`, `schema.cypher`, the Neo4j HelmRelease and the Neo4j half of the benchmarks stay until the Postgres version matches ([ADR 0011](../adr/0011-graph-in-postgres.md)).
+- **LLM cost on free text.** `add_episode` makes about 13 LLM calls for an episode with four nodes and three edges, by [EMBER-146's reading of the code](graphiti-test.md#llm-calls-per-episode). Narrowing the ontology and sending only messages longer than a threshold keeps it bounded; the local model's structured output is ADR 0002's open risk.
 
 ## Open questions for the team
 
+Still open after [ADR 0011](../adr/0011-graph-in-postgres.md), which suggests an answer to each.
+
 1. Do we add `SAME_AS` (Person → Person) to the ontology, or merge people into one tenant-level `Person` with per-source `Identity` nodes?
-2. Does ADR 0002 get superseded by a new ADR for "graph in Postgres, Graphiti fork with a Postgres driver"? This doc is the input, not the decision.
-3. How long are `episodes` kept? Replays and node history read them.
-4. Which free-text records go through `add_episode`: every Slack message and comment, or only those over a length threshold?
-5. Is Python plus TypeScript enough for the first code graph, and is the default branch enough, or do open PR branches need their own code state?
-6. Do we ask Zep before forking whether they would take a Postgres driver upstream?
+2. How long are `episodes` kept? Replays and older node property values read them.
+3. Which free-text records go through `add_episode`: every Slack message and comment, or only those over a length threshold?
+4. Is Python plus TypeScript enough for the first code graph, and is the default branch enough, or do open PR branches need their own code state?
+5. What do we offer upstream, and do we ask Zep whether they would take a Postgres driver?
+6. Who builds Phase A?
 
 ## Sources
 
