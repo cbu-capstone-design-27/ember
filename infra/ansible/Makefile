@@ -23,7 +23,7 @@ DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-j
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
 	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate \
 	intake-secret enrich-github-secret enrich-slack-secret enrich-jira-secret enrich-gitlab-secret llm-tunnel-secret map-tenant grafana-secret grafana-health \
-	web-secret web-test-accounts web-serve
+	source-credentials-secret web-secret web-test-accounts web-serve
 
 help:
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -154,6 +154,9 @@ enrich-gitlab-secret: ## Write k8s/apps/enrich-gitlab/gitlab-api.sops.yaml, encr
 
 web-secret: ## Write k8s/apps/web/auth.sops.yaml, encrypted, from vault_web_better_auth_secret and, if set, vault_web_github_client_id/_secret. Commit it
 	ansible-playbook playbooks/web.yml --tags secret
+
+source-credentials-secret: ## Write k8s/apps/source-credentials/{api,webhook}.sops.yaml, encrypted, from vault_source_credentials_api_keys and _webhook_keys. Commit them
+	ansible-playbook playbooks/source-credentials.yml --tags secret
 
 web-test-accounts: ## Create the web app's test accounts on the cluster from vault_web_test_password, or check they are there. Safe to re-run
 	ansible-playbook playbooks/web.yml --tags test-accounts
