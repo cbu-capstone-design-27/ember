@@ -40,9 +40,9 @@ spec:
       containers:
         - name: web
           # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
-          image: ghcr.io/cbu-capstone-design-27/ember/web:develop-281-f390aa9
+          image: ghcr.io/cbu-capstone-design-27/ember/web:develop-287-19e95e1
           env:
-            # The pod stays in CreateContainerConfigError until both Secrets exist
+            # The pod stays in CreateContainerConfigError until every Secret not marked optional exists
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -70,6 +70,19 @@ spec:
                   name: web-auth
                   key: GITHUB_APP_CLIENT_SECRET
                   optional: true
+            # Seal the credentials an owner connects a source with into source_credentials (EMBER-147,
+            # ADR 0010). The web app holds both kinds; enrich gets only api, intake only webhook. From
+            # k8s/apps/source-credentials (make source-credentials-secret). The pod waits until both exist
+            - name: SOURCE_CREDENTIALS_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: source-credentials-api
+                  key: SOURCE_CREDENTIALS_API_KEYS
+            - name: SOURCE_CREDENTIALS_WEBHOOK_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: source-credentials-webhook
+                  key: SOURCE_CREDENTIALS_WEBHOOK_KEYS
             # The main address. The CLI's device sign-in sends people to <this>/device, so it is a
             # node address everyone can reach. pi-cp, because the cluster is down whenever it is.
             # HTTPS, so session cookies are Secure, and sign-in only works on the https addresses

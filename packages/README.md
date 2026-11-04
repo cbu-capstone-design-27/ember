@@ -15,6 +15,7 @@ Reasons:
 ## Current packages
 
 - `ingestion-envelope` — v1 shared ingestion intake, `{type, body}` raw connector JSON (EMBER-39). Landed as a package because every source connector and the pipeline share it, before those consumers have their own code.
+- `source-credentials` — seals and opens rows of `source_credentials` (EMBER-147, ADR 0010). The web app seals them (`apps/web/src/lib/source-credentials.ts`, the TypeScript twin) and the Python workers open them, so the format and its test vectors live here.
 
 ## Adding a package
 

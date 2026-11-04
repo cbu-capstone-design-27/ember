@@ -4,10 +4,11 @@ import { SourcesForm } from "../../../components/source-picker.tsx";
 import { SignOutButton } from "../../../components/nav.tsx";
 import { getAuth } from "../../../lib/auth.ts";
 import { listConnections, type Connection } from "../../../lib/connections.ts";
-import { githubAppConfig } from "../../../lib/github-connect.ts";
+import { githubAppConfig, GITHUB_WEB } from "../../../lib/github-connect.ts";
 import { canConnectSources, canInvite, invitationsOf, isEmberAdmin } from "../../../lib/organizations.ts";
 import { ingestionPool } from "../../connect/github/server.ts";
 import { requireOrganization } from "../../../lib/session.ts";
+import { DisconnectForm } from "./connection-forms.tsx";
 import { PasswordForm, PreviewDataForm, ProfileForm } from "./forms.tsx";
 import { InvitationList, InviteForm, TenantLinkForm } from "./organization-forms.tsx";
 import styles from "./settings.module.css";
@@ -49,10 +50,73 @@ function githubNotice(params: { github?: string | string[]; account?: string | s
   return { error: notice.error, text: notice.text.replace("{account}", account) };
 }
 
+const SOURCE_NAMES: Record<string, string> = { github: "GitHub", jira: "Jira", slack: "Slack", gitlab: "GitLab", teams: "Teams" };
+
+function sourceName(source: string): string {
+  return SOURCE_NAMES[source] ?? source;
+}
+
+/** The connection's name in the list: its label, or what the account id says. */
+function connectionName(c: Connection): string {
+  return c.label ?? (c.source === "github" ? `Installation ${c.accountId}` : c.accountId);
+}
+
+/** What the Disconnect action reports back (connection-actions.ts, `?disconnect=`). */
+const DISCONNECT_NOTICES: Record<string, string> = {
+  forbidden: "Only owners and admins of this organization can disconnect sources.",
+  "not-found": "That connection isn't part of this organization.",
+  unavailable: "Disconnecting isn't set up on this server.",
+  error: "That request was incomplete. Try again.",
+};
+
+interface DisconnectNotice {
+  error: boolean;
+  text: string;
+  /** Where to finish on the source's side, when Ember can't remove its hook itself. */
+  link?: { href: string; text: string };
+}
+
+/**
+ * The notice after a disconnect. The account is looked up among this
+ * tenant's own connections, so the URL can't put other text on the page.
+ */
+function disconnectNotice(params: SettingsParams, connections: Connection[], githubSlug: string): DisconnectNotice | null {
+  const key = typeof params.disconnect === "string" ? params.disconnect : undefined;
+  if (!key) return null;
+  if (key !== "done") return DISCONNECT_NOTICES[key] ? { error: true, text: DISCONNECT_NOTICES[key] } : null;
+  const c = connections.find((x) => x.source === params.source && x.accountId === params.account);
+  if (!c?.disconnectedAt) return null;
+  const name = connectionName(c);
+  if (c.source === "github") {
+    return {
+      error: false,
+      text: `Disconnected ${name}. Ember stopped ingesting it. The ember-ingest App is still installed, so GitHub keeps sending events. Ember stores them without assigning them to an organization. To stop them, uninstall the App: choose ${name}, then Uninstall.`,
+      link: { href: `${GITHUB_WEB}/apps/${githubSlug}/installations/new`, text: "Uninstall on GitHub" },
+    };
+  }
+  return {
+    error: false,
+    text: `Disconnected ${name}. Ember stopped ingesting it and deleted its stored credentials. If ${sourceName(c.source)} still has a webhook pointing at Ember, remove it there.`,
+  };
+}
+
+/** Who connected it: a member's name, or who it was when they've left. */
+function connectedByName(c: Connection, names: Map<string, string>): string {
+  if (c.connectedBy === null) return "an Ember operator";
+  return names.get(c.connectedBy) ?? "a former member";
+}
+
+type SettingsParams = {
+  github?: string | string[];
+  account?: string | string[];
+  disconnect?: string | string[];
+  source?: string | string[];
+};
+
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ github?: string | string[]; account?: string | string[] }>;
+  searchParams: Promise<SettingsParams>;
 }) {
   const user = await requireOrganization("/settings");
   const org = user.organization;
@@ -60,14 +124,17 @@ export default async function SettingsPage({
   const requestHeaders = await headers();
   const inviter = canInvite(org.role);
   const pool = ingestionPool();
-  const [{ members }, invitations, github] = await Promise.all([
+  const [{ members }, invitations, connections] = await Promise.all([
     auth.api.listMembers({ query: { organizationId: org.id }, headers: requestHeaders }),
     inviter ? invitationsOf(auth, org.id, requestHeaders) : Promise.resolve([]),
-    pool ? listConnections(pool, org.tenant, "github") : Promise.resolve([] as Connection[]),
+    pool ? listConnections(pool, org.tenant) : Promise.resolve([] as Connection[]),
   ]);
-  const notice = githubNotice(await searchParams);
+  const params = await searchParams;
+  const githubApp = githubAppConfig();
+  const notice: DisconnectNotice | null = githubNotice(params) ?? disconnectNotice(params, connections, githubApp?.slug ?? "ember-ingest");
   const canConnect = canConnectSources(org.role);
-  const connectable = pool !== null && githubAppConfig() !== null;
+  const connectable = pool !== null && githubApp !== null;
+  const memberNames = new Map(members.map((m) => [m.user.id, m.user.name]));
   return (
     <div className={styles.page}>
       <header className={styles.header}>
@@ -109,35 +176,51 @@ export default async function SettingsPage({
         </dl>
       </section>
 
-      <section id="github" className={styles.section} aria-labelledby="github-title">
+      <section id="connections" className={styles.section} aria-labelledby="connections-title">
         <div className={styles.aside}>
-          <h2 id="github-title">GitHub</h2>
+          <h2 id="connections-title">Connections</h2>
         </div>
         {notice && (
           <p className={`alert ${notice.error ? "alert-error" : ""} ${styles.notice}`} role={notice.error ? "alert" : "status"}>
             {notice.text}
+            {notice.link && (
+              <>
+                {" "}
+                <a href={notice.link.href} target="_blank" rel="noreferrer">
+                  {notice.link.text}
+                </a>
+              </>
+            )}
           </p>
         )}
-        {github.length > 0 ? (
+        {connections.length > 0 ? (
           <ul className={styles.list} role="list">
-            {github.map((c) => (
-              <li key={c.accountId} className={styles.listRow}>
+            {connections.map((c) => (
+              <li key={`${c.source}:${c.accountId}`} className={styles.listRow}>
                 <div className={styles.listText}>
-                  <b>{c.label ?? `Installation ${c.accountId}`}</b>
+                  <b>{connectionName(c)}</b>
                   <span>
-                    Installation {c.accountId} · connected {SHORT_DATE.format(c.addedAt)}
+                    {sourceName(c.source)}
+                    {c.source === "github" ? ` · installation ${c.accountId}` : c.label && c.label !== c.accountId ? ` · ${c.accountId}` : ""} · connected{" "}
+                    {SHORT_DATE.format(c.addedAt)} by {connectedByName(c, memberNames)}
+                    {c.disconnectedAt && ` · disconnected ${SHORT_DATE.format(c.disconnectedAt)}`}
                   </span>
                 </div>
-                {c.disconnectedAt ? <span className="badge badge-danger">disconnected</span> : <span className="badge">connected</span>}
+                <div className={styles.listActions}>
+                  {c.disconnectedAt ? <span className="badge badge-danger">disconnected</span> : <span className="badge">connected</span>}
+                  {canConnect && !c.disconnectedAt && (
+                    <DisconnectForm organizationId={org.id} source={c.source} accountId={c.accountId} name={connectionName(c)} />
+                  )}
+                </div>
               </li>
             ))}
           </ul>
         ) : (
-          <p className={styles.empty}>No GitHub account is connected to {org.name}.</p>
+          <p className={styles.empty}>No source is connected to {org.name}.</p>
         )}
         <div className={styles.connectActions}>
           {!canConnect ? (
-            <span className="field-hint">Owners and admins connect sources.</span>
+            <span className="field-hint">Owners and admins connect and disconnect sources.</span>
           ) : !connectable ? (
             <span className="field-hint">
               Connecting GitHub needs {pool ? "the App's client ID and secret (GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET)" : "the Postgres database ingestion uses"}.
@@ -146,7 +229,7 @@ export default async function SettingsPage({
             <>
               <span className="field-hint">Installs the ember-ingest GitHub App on the repositories you choose.</span>
               <a className="btn btn-secondary" href="/connect/github?existing=1">
-                Connect an existing installation
+                Connect an existing GitHub installation
               </a>
               <a className="btn btn-primary" href="/connect/github">
                 Connect GitHub

@@ -17,6 +17,8 @@ export interface Connection {
   label: string | null;
   addedAt: Date;
   disconnectedAt: Date | null;
+  /** The Better Auth user who connected it; null for rows `make map-tenant` wrote. */
+  connectedBy: string | null;
 }
 
 export interface ConnectInput {
@@ -124,14 +126,76 @@ export async function handOffAgainLater(pool: pg.Pool, input: Pick<ConnectInput,
   }
 }
 
-/** A tenant's connections for one source, oldest first. */
-export async function listConnections(pool: pg.Pool, tenant: string, source: string): Promise<Connection[]> {
-  const { rows } = await pool.query<{ account_id: string; label: string | null; added_at: Date; disconnected_at: Date | null }>(
-    `select account_id, label, added_at, disconnected_at from public.installations
-     where tenant = $1 and source = $2 order by added_at, account_id`,
-    [tenant, source],
+/** A tenant's connections, of one source or of all, by source then oldest first. */
+export async function listConnections(pool: pg.Pool, tenant: string, source?: string): Promise<Connection[]> {
+  const { rows } = await pool.query<{
+    source: string;
+    account_id: string;
+    label: string | null;
+    added_at: Date;
+    disconnected_at: Date | null;
+    connected_by: string | null;
+  }>(
+    `select source, account_id, label, added_at, disconnected_at, connected_by from public.installations
+     where tenant = $1 and ($2::text is null or source = $2) order by source, added_at, account_id`,
+    [tenant, source ?? null],
   );
-  return rows.map((r) => ({ source, accountId: r.account_id, label: r.label, addedAt: r.added_at, disconnectedAt: r.disconnected_at }));
+  return rows.map((r) => ({
+    source: r.source,
+    accountId: r.account_id,
+    label: r.label,
+    addedAt: r.added_at,
+    disconnectedAt: r.disconnected_at,
+    connectedBy: r.connected_by,
+  }));
+}
+
+export type DisconnectResult =
+  /** `already`: it was disconnected before, by an owner or by the source's own uninstall event. */
+  | { ok: true; already: boolean }
+  /** No such connection in this tenant. */
+  | { ok: false; reason: "not-found" };
+
+/**
+ * Disconnect (ADR 0010): stop ingesting the account without deleting what was
+ * stored (EMBER-53). From the next delivery on, intake stores it with no
+ * tenant, as it does an unmapped account's. Its credentials are deleted in the
+ * same transaction, so enrich can't call the source with them again. Removing
+ * the hook on the source's side is the caller's job, per source.
+ *
+ * Reconnecting the same account to the same tenant (`connectAccount`) clears
+ * `disconnected_at`; connecting it to another tenant stays refused.
+ */
+export async function disconnectAccount(
+  pool: pg.Pool,
+  { source, accountId, tenant }: Pick<ConnectInput, "source" | "accountId" | "tenant">,
+): Promise<DisconnectResult> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const { rows } = await client.query<{ already: boolean }>(
+      `with target as (
+         select source, account_id, disconnected_at is not null as already from public.installations
+         where source = $1 and account_id = $2 and tenant = $3 for update
+       )
+       update public.installations i set disconnected_at = coalesce(i.disconnected_at, now())
+       from target where i.source = target.source and i.account_id = target.account_id
+       returning target.already`,
+      [source, accountId, tenant],
+    );
+    if (rows.length === 0) {
+      await client.query("rollback");
+      return { ok: false, reason: "not-found" };
+    }
+    await client.query("delete from public.source_credentials where source = $1 and account_id = $2", [source, accountId]);
+    await client.query("commit");
+    return { ok: true, already: rows[0].already };
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**

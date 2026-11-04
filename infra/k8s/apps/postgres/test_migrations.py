@@ -40,7 +40,7 @@ select 'column', c.relname, a.attnum, a.attname, format_type(a.atttypid, a.attty
  where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
    and c.relname <> 'schema_migrations' and a.attnum > 0 and not a.attisdropped
  order by 2, 3;
-select 'constraint', conrelid::regclass, conname, pg_get_constraintdef(oid)
+select 'constraint', conrelid::regclass::text, conname, pg_get_constraintdef(oid)  -- by name: a regclass sorts by oid, i.e. creation order
   from pg_constraint
  where connamespace = 'public'::regnamespace and conrelid::regclass::text <> 'schema_migrations'
  order by 2, 3;
