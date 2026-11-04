@@ -6,6 +6,7 @@ import dataclasses
 import json
 import logging
 import os
+import re
 import sys
 from importlib.metadata import version
 from pathlib import Path
@@ -128,7 +129,9 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
     from .search_suite import run_search, run_temporal
 
     notifications = _NotificationLog()
-    logging.getLogger("neo4j").addHandler(notifications)  # neo4j.notifications propagates here
+    neo4j_log = logging.getLogger("neo4j")  # neo4j.notifications propagates here
+    neo4j_log.addHandler(notifications)
+    neo4j_log.propagate = bool(args.verbose)  # counted in the reference; one line per query would drown the log
 
     all_rows = list(load_rows())
     rows = select_rows(all_rows, args.limit)
@@ -177,8 +180,8 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
         online = [i for i in indexes if i["state"] == "ONLINE"]
         reference = build_reference(
             fake=is_fake,
-            engine={"graphiti_core": version("graphiti-core"), "neo4j_driver": version("neo4j"), "backend": "neo4j",
-                    "server": server},
+            engine={"graphiti_core": version("graphiti-core"), "neo4j_driver": version("neo4j"),
+                    "openai": version("openai"), "httpx": version("httpx"), "backend": "neo4j", "server": server},
             models={"profile": profile.name, "llm_model": profile.llm_model, "embedding_model": profile.embedding_model,
                     "embedding_dimensions": profile.embedding_dimensions, "send_dimensions": profile.send_dimensions,
                     "query_template": profile.query_template, "query_task": DEFAULT_TASK,
@@ -203,7 +206,7 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
         return 1 if failed else 0
     finally:
         await graphiti.close()
-        logging.getLogger("neo4j").removeHandler(notifications)
+        neo4j_log.removeHandler(notifications)
 
 
 async def _query_embedder(graphiti, profile: Profile):

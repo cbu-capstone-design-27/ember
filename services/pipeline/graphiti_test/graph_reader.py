@@ -70,7 +70,9 @@ class GraphReader:
         [episodes] = await self._rows(
             "MATCH (e:Episodic {group_id: $g}) WHERE NOT e.name ENDS WITH $suffix RETURN count(e) AS n",
             g=group, suffix=RESEND_SUFFIX)
-        [mentions] = await self._rows("MATCH (:Episodic {group_id: $g})-[r:MENTIONS]->() RETURN count(r) AS n", g=group)
+        [mentions] = await self._rows(
+            "MATCH (e:Episodic {group_id: $g})-[r:MENTIONS]->() WHERE NOT e.name ENDS WITH $suffix RETURN count(r) AS n",
+            g=group, suffix=RESEND_SUFFIX)
 
         by_label, missing_source_ref = Counter(), Counter()
         for node in nodes:

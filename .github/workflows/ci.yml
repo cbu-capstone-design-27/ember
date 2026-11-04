@@ -314,6 +314,14 @@ jobs:
       - name: Benchmark unit tests
         working-directory: services/pipeline
         run: python -m unittest discover -s benchmarks -t . -p "test_*.py" -v
+      # EMBER-146. Its own venv: graphiti-core stays out of the pipeline's requirements. Fake models and no database;
+      # the Neo4j tests stay opt-in through NEO4J_TEST_URI.
+      - name: Graphiti test harness
+        working-directory: services/pipeline
+        run: |
+          python -m venv "$RUNNER_TEMP/graphiti-venv"
+          "$RUNNER_TEMP/graphiti-venv/bin/pip" install -q -r graphiti_test/requirements.txt
+          "$RUNNER_TEMP/graphiti-venv/bin/python" -m unittest discover -s graphiti_test -t . -p "test_*.py" -v
 
   # EMBER-51. The web app: type check, production build, and the sign-up /
   # log-in / log-out tests on SQLite and on a real Postgres (DATABASE_URL swap),

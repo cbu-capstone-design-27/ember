@@ -11,6 +11,7 @@ to the Pydantic class name.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import math
@@ -44,9 +45,15 @@ def _block(text: str, *tags: str) -> str:
 
 
 def _json_block(text: str, *tags: str) -> list:
+    """A list a prompt holds: JSON in most blocks, a Python repr in dedupe_edges.resolve_edge's."""
+    block = _block(text, *tags) or "[]"
     try:
-        return json.loads(_block(text, *tags) or "[]")
+        return json.loads(block)
     except ValueError:
+        pass
+    try:
+        return ast.literal_eval(block)
+    except (ValueError, SyntaxError):
         return []
 
 
