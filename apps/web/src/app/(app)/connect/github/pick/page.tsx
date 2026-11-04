@@ -57,7 +57,7 @@ export default async function PickInstallationsPage() {
             </ul>
             <div className={`${styles.inline} ${styles.formActions}`}>
               <span className="field-hint">Connecting files its data under {organization?.name}.</span>
-              <Link className="btn btn-ghost" href="/settings#github">
+              <Link className="btn btn-ghost" href="/settings#connections">
                 Cancel
               </Link>
               <button className="btn btn-primary" type="submit" disabled={open.length === 0}>

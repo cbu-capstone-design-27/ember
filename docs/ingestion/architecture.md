@@ -227,7 +227,7 @@ Raise `CONCURRENCY` first, then replicas, then add KEDA.
 
 ## Per-source auth
 
-Each source has two credentials, and they never sit in the same pod. Intake holds the one that **verifies** deliveries, which cannot call any API. That source's enrich worker holds the one that **calls** the API. Per-tenant credentials come from the tenant secret store (EMBER-12); on the homelab they are `*.sops.yaml` Secrets (`infra/docs/flux.md`).
+Each source has two credentials, and they never sit in the same pod. Intake holds the one that **verifies** deliveries, which cannot call any API. That source's enrich worker holds the one that **calls** the API. Per-account credentials go in `source_credentials` ([Storage](#storage)) when an owner connects the account, encrypted by the application with one key for `api` rows (web app and enrich) and another for `webhook` rows (web app and intake), as [ADR 0010](../adr/0010-connecting-sources.md#credentials) decides. Credentials that are one per source, and the accounts connected before that, stay in `*.sops.yaml` Secrets (`infra/docs/flux.md`).
 
 | Source | Inbound: intake verifies | Outbound: enrich calls the API | Scope of the outbound credential |
 |---|---|---|---|
@@ -286,8 +286,10 @@ begin
 end
 $$;
 
--- retention, daily: done events go 30 days after completion; unfinished ones stay until the source is removed
+-- retention, daily: done events go 30 days after completion; unfinished ones stay until the source is removed.
+-- Unmapped ones (no connected account) go 30 days after they arrived, so an unclaimed account can't grow without limit (ADR 0010)
 delete from raw_events where completed_at < now() - interval '30 days';
+delete from raw_events where tenant is null and received_at < now() - interval '30 days';
 
 -- EMBER-77: pgvector, for source_records.embedding. Not a trusted extension: creating it needs a superuser
 create extension if not exists vector;
@@ -369,6 +371,19 @@ create table installations (
 );
 create index installations_external_id on installations (source, external_id) where external_id is not null;   -- a reinstall can't move tenants
 
+-- EMBER-147, own migration: per-account credentials the web app stores when an owner connects a source (ADR 0010).
+-- Encrypted by the application (packages/source-credentials); never granted to the metrics exporter
+create table source_credentials (
+  source     text not null,
+  account_id text not null,
+  kind       text not null check (kind in ('api', 'webhook')),   -- api: enrich calls the source with it; webhook: intake verifies with it
+  key_id     text not null,          -- which key of that kind's ring sealed it, so a rotation re-encrypts by key
+  ciphertext bytea not null,         -- AES-256-GCM: 12-byte nonce, ciphertext, 16-byte tag; the additional data names (source, account_id, kind)
+  updated_at timestamptz not null default now(),
+  primary key (source, account_id, kind),
+  foreign key (source, account_id) references installations (source, account_id) on delete cascade
+);
+
 create table rate_limits (
   source text, tenant text, bucket text,   -- GitHub: installation · Slack: method × workspace · Jira: site
   next_allowed_at timestamptz not null,    -- Graph: app × tenant · GitLab: token
@@ -389,7 +404,7 @@ end
 $$;
 ```
 
-Retention for `raw_events` is 30 days after an event is fully processed. One that has not finished processing stays until its source is removed from the tenant. Replaying enrich therefore reaches back 30 days; anything older comes back through reconcile. Retention for `source_records` and `episodes` is still open.
+Retention for `raw_events` is 30 days after an event is fully processed. One that has not finished processing stays until its source is removed from the tenant. One that no connected account claims (`tenant` is null) goes 30 days after it arrived, so connecting an account replays at most its last 30 days ([ADR 0010](../adr/0010-connecting-sources.md#replay-and-backfill-on-connect)). Nothing runs these deletes yet. Replaying enrich therefore reaches back 30 days; anything older comes back through reconcile. Retention for `source_records` and `episodes` is still open.
 
 ### Source ordering value (EMBER-63)
 
@@ -549,7 +564,7 @@ Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images 
 | Where Postgres runs | On the cluster |
 | How Postgres is installed | The CloudNativePG operator, one instance; migrations with dbmate (ADR 0005) |
 | Queue code | A library on the same Postgres, not hand-written; Procrastinate proposed |
-| Raw event retention | 30 days after an event is fully processed; until its source is removed if it is not |
+| Raw event retention | 30 days after an event is fully processed; until its source is removed if it is not; 30 days after arrival if no connected account claims it |
 | Accounts with no tenant | Left unmapped for now: stored with `tenant = null`, not processed until mapped |
 | Source ordering value | `raw_events.occurred_at timestamptz`, set by whoever writes the row, ties broken by `id` (EMBER-63) |
 | Reconcile interval | Set per source, in that source's scheduler CronJob |

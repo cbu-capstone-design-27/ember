@@ -147,6 +147,15 @@ jobs:
           grep -F 'location /webhook/ {' <<<"$out"
       - name: Ingestion envelope contract
         run: python3 packages/ingestion-envelope/test_contract.py
+      # EMBER-147: the source_credentials format the web app seals and the Python workers open. The web
+      # job's test/connections.test.ts checks the same vectors from TypeScript
+      - name: Source credentials format
+        run: |
+          set -euo pipefail
+          # A venv, because the runner's system Python refuses pip installs (PEP 668)
+          python3 -m venv "$RUNNER_TEMP/credentials-venv"
+          "$RUNNER_TEMP/credentials-venv/bin/pip" install -q -r packages/source-credentials/requirements.txt
+          "$RUNNER_TEMP/credentials-venv/bin/python3" packages/source-credentials/test_source_credentials.py
       # EMBER-62: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
       - name: Intake against Postgres
         env:

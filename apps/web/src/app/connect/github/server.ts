@@ -43,12 +43,12 @@ export function onMainAddress(request: NextRequest): URL | null {
   return new URL(request.nextUrl.pathname + request.nextUrl.search, main.origin);
 }
 
-/** Settings, scrolled to the GitHub card, with a notice (settings/page.tsx GITHUB_NOTICES). */
+/** Settings, scrolled to Connections, with a notice (settings/page.tsx GITHUB_NOTICES). */
 export function settingsUrl(request: NextRequest, notice: string, account?: string): URL {
   const url = new URL("/settings", appOrigin(request));
   url.searchParams.set("github", notice);
   if (account) url.searchParams.set("account", account);
-  url.hash = "github";
+  url.hash = "connections";
   return url;
 }
 

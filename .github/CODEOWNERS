@@ -23,6 +23,7 @@
 
 # Shared packages
 /packages/              @RyanStoffel
+/packages/source-credentials/  @RyanStoffel
 
 # Infrastructure and CI
 /infra/                 @RyanStoffel

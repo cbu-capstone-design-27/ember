@@ -15,7 +15,7 @@ import { connector, cookieSecret, ingestionPool, type PickState } from "../../..
 function settings(notice: string, account?: string): never {
   const query = new URLSearchParams({ github: notice });
   if (account) query.set("account", account);
-  redirect(`/settings?${query}#github`);
+  redirect(`/settings?${query}#connections`);
 }
 
 export async function connectPicked(formData: FormData) {
