@@ -176,7 +176,7 @@ Connect Jira stores one `api` row per site in `source_credentials` (`account_id`
 
 **Refreshing:** lock the row (`select … for update`), refresh if `expires_at` is less than 5 minutes away, write the new pair back, and commit before using it. Two workers refreshing the same token at once would leave one with a refresh token that no longer works. `freshJiraCredential` in `apps/web/src/lib/jira-connect.ts` and `SiteCredentials.fresh` in `services/jira-ingestion/atlassian.py` do this.
 
-**Who uses it:** enrich calls `api.atlassian.com/ex/jira/<cloud_id>` with `access_token`, but only for rows of the tenant that connected the site, and only while it is connected. Other rows of a site fall back to the API token in `JIRA_BASE_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN`, if that is the site. Both ways share the site's `rate_limits` bucket (`https://<site>`).
+**Who uses it:** enrich calls `api.atlassian.com/ex/jira/<cloud_id>` with `access_token`, but only for rows of the tenant that connected the site, and only while it is connected. It has no other way to read Jira: a row without its tenant's token fails and is retried on the next poll. The site's `rate_limits` bucket is `https://<site>`.
 
 ## Keeping dynamic webhooks alive
 
