@@ -228,7 +228,14 @@ kubectl --context homelab -n ember logs deploy/enrich-jira
 
 It logs `enrich:jira listening on raw_events` once connected, which `make apps-health` waits for.
 
-To set or rotate the token: create one at **id.atlassian.com → Security → API tokens** for the account, put the account's email in the vault as `vault_jira_email` and the token as `vault_jira_api_token`, run `make enrich-jira-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-jira`. Revoke the old token once the new pod is listening. The same target writes the Atlassian app's client from `vault_jira_oauth_client_id` and `vault_jira_oauth_client_secret`, the values `make web-secret` and `make intake-secret` use.
+To rotate the Atlassian app's client secret: generate a new one in the developer console, put it in the vault as `vault_jira_oauth_client_secret`, and run `make web-secret`, `make intake-secret` and `make enrich-jira-secret`. Commit the three files, and after they merge restart `web`, `intake` and `enrich-jira`.
+
+**Keep-alive.** CronJob `enrich-jira-keep-alive` (`apps/enrich-jira/keep-alive.yaml`) runs `python3 keep_alive.py` from the same image every day at 10:17 UTC. For each connected site it refreshes the token and extends the site's dynamic webhooks by 30 days. A refused refresh (`invalid_grant`) disconnects the site, and Settings asks for a reconnect ([`jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md#keeping-dynamic-webhooks-alive)). Any other failure fails the Job, and the next day's run tries again. To run it now:
+
+```bash
+kubectl --context homelab -n ember create job --from=cronjob/enrich-jira-keep-alive keep-alive-manual
+kubectl --context homelab -n ember logs -f job/keep-alive-manual
+```
 
 ### enrich-gitlab
 

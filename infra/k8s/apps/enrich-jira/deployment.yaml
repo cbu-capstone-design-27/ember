@@ -31,11 +31,11 @@ spec:
       containers:
         - name: enrich
           # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
-          image: ghcr.io/cbu-capstone-design-27/ember/jira-ingestion:develop-229-b3b242d
+          image: ghcr.io/cbu-capstone-design-27/ember/jira-ingestion:develop-306-b1f0cf8
           # The image's default command is the stdout-only receiver.py; intake receives Jira's webhooks
           command: ["python3", "enrich.py"]
           env:
-            # The pod stays in CreateContainerConfigError until both Secrets exist
+            # The pod stays in CreateContainerConfigError until its Secrets exist
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -58,21 +58,6 @@ spec:
                 secretKeyRef:
                   name: enrich-jira-api
                   key: JIRA_OAUTH_CLIENT_SECRET
-            # Every other row of this one site is read with an API token: sites mapped by hand, and
-            # the tenant the site was mapped to before Connect Jira (enrich.py)
-            - name: JIRA_BASE_URL
-              value: https://ember-capstone.atlassian.net
-            # Secret enrich-jira-api (jira-api.sops.yaml): an Atlassian account's email and API token
-            - name: JIRA_EMAIL
-              valueFrom:
-                secretKeyRef:
-                  name: enrich-jira-api
-                  key: JIRA_EMAIL
-            - name: JIRA_API_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: enrich-jira-api
-                  key: JIRA_API_TOKEN
             - name: CONCURRENCY
               value: "4"
           # Idle it holds a LISTEN connection and a small pool, plus one thread per runner for Jira calls

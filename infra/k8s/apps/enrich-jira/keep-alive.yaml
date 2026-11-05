@@ -1,0 +1,79 @@
+# Keep Connect Jira's sites working (EMBER-131, services/jira-ingestion/keep_alive.py). Once a day it
+# refreshes each connected site's token, which keeps the 90-day refresh token alive, and extends the
+# site's dynamic webhooks by 30 days. A refused refresh disconnects the site; any other failure fails
+# the Job, and the next day's run tries again (docs/ingestion/jira-webhooks.md, Keeping dynamic
+# webhooks alive). Run it now: kubectl -n ember create job --from=cronjob/enrich-jira-keep-alive <name>
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: enrich-jira-keep-alive
+  namespace: ember
+  labels:
+    app: enrich-jira-keep-alive
+spec:
+  schedule: "17 10 * * *"
+  timeZone: Etc/UTC
+  # Two runs would refresh the same token at once; the row lock makes that safe, but there's no need
+  concurrencyPolicy: Forbid
+  # A node down at 10:17 still gets the day's run when it comes back
+  startingDeadlineSeconds: 43200
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A failed run is retried tomorrow, well inside the 30 days, so a retry now buys little
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app: enrich-jira-keep-alive
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: keep-alive
+              # The enrich-jira Deployment's image; pin both to the same <branch>-<run>-<sha> tag
+              image: ghcr.io/cbu-capstone-design-27/ember/jira-ingestion:develop-306-b1f0cf8
+              command: ["python3", "keep_alive.py"]
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-app
+                      key: uri
+                - name: SOURCE_CREDENTIALS_API_KEYS
+                  valueFrom:
+                    secretKeyRef:
+                      name: source-credentials-api
+                      key: SOURCE_CREDENTIALS_API_KEYS
+                - name: JIRA_OAUTH_CLIENT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: enrich-jira-api
+                      key: JIRA_OAUTH_CLIENT_ID
+                - name: JIRA_OAUTH_CLIENT_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: enrich-jira-api
+                      key: JIRA_OAUTH_CLIENT_SECRET
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
