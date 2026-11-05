@@ -86,14 +86,24 @@ class CountingTransport(httpx.AsyncBaseTransport):
         inputs = 0
         if self.role == "embedding":
             try:
-                sent = json.loads(request.content).get("input")
+                body = json.loads(request.content)
+                sent = body.get("input", body.get("instances", body.get("contents")))
                 inputs = len(sent) if isinstance(sent, list) else 1
             except ValueError:
                 pass
         response = await self.inner.handle_async_request(request)
         await response.aread()
         try:
-            usage = json.loads(response.content).get("usage") or {}
+            body = json.loads(response.content)
+            usage = body.get("usage") or {}
+            if "usageMetadata" in body:
+                native = body["usageMetadata"] or {}
+                usage = {"input_tokens": native.get("promptTokenCount", 0),
+                         "output_tokens": (native.get("candidatesTokenCount", 0) or 0)
+                         + (native.get("thoughtsTokenCount", 0) or 0)}
+            elif "predictions" in body:  # Vertex embedding :predict
+                usage = {"input_tokens": sum(p.get("embeddings", {}).get("statistics", {}).get("token_count", 0)
+                                             for p in body["predictions"])}
         except (ValueError, AttributeError):
             usage = {}
         self.counters.add_request(self.role, response.status_code, usage, inputs, current_prompt.get())

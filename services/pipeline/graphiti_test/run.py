@@ -32,6 +32,25 @@ class SetupError(Exception):
     """The run cannot start (exit 2)."""
 
 
+def model_identity(out: Path, profile: Profile, vertex, existing: set[str], reset: bool, fake: bool = False) -> None:
+    """Do not resume a graph with different vectors, even if their dimensions happen to match."""
+    path = out / "model-identity.json"
+    identity = {"provider": "vertex-ai" if vertex else "openai-compatible", "profile": profile.name,
+                "llm": profile.llm_model, "embedding": profile.embedding_model,
+                "dimensions": profile.embedding_dimensions, "query_template": profile.query_template,
+                "revision": profile.embedding_revision, "fake_models": fake}
+    if vertex:
+        identity.update(project=vertex.project, location=vertex.location,
+                        document_task="RETRIEVAL_DOCUMENT", query_task="RETRIEVAL_QUERY")
+    if not reset:
+        if path.exists() and json.loads(path.read_text(encoding="utf-8")) != identity:
+            raise SetupError("model configuration changed; use a fresh throwaway graph and output, or --reset")
+        if vertex and existing and not path.exists():
+            raise SetupError("cannot verify existing graph's Vertex model identity; use a fresh graph or --reset")
+    out.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(identity, sort_keys=True), encoding="utf-8")
+
+
 def _graphiti_environment(profile: Profile) -> None:
     """Must run before graphiti_core is imported: it reads both at import time or on first use.
 
@@ -126,23 +145,32 @@ async def _resend_check(graphiti, reader, rows, tenant, groups, episode_type, ma
 
 async def run(args) -> int:
     out = Path(args.out)
-    profile = load_profile(args.profile)
+    vertex = None
+    if getattr(args, "vertex", False):
+        from .vertex import VertexSettings
+
+        vertex = VertexSettings.from_env()
+        profile = vertex.profile
+    else:
+        profile = load_profile(args.profile)
     fake = FakeModels(profile.embedding_dimensions) if args.fake else None
     if fake:
         fake.__enter__()
         profile = dataclasses.replace(profile, llm_base_url=fake.base_url, embedding_base_url=fake.base_url)
         llm_key = embedding_key = FAKE_KEY
+    elif vertex:
+        llm_key = embedding_key = ""  # native Google SDK refreshes ADC; no static bearer key
     else:
         llm_key, embedding_key = profile.llm_key(), profile.embedding_key()
     secrets = (llm_key, embedding_key, os.environ.get("NEO4J_PASSWORD", ""))
     try:
-        return await _run(args, out, profile, llm_key, embedding_key, secrets, bool(fake))
+        return await _run(args, out, profile, llm_key, embedding_key, secrets, bool(fake), vertex)
     finally:
         if fake:
             fake.__exit__()
 
 
-async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> int:
+async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake, vertex=None) -> int:
     _graphiti_environment(profile)
     uri, user, password, database = neo4j_settings(args)
 
@@ -165,8 +193,13 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
     counters = Counters()
 
     driver = Neo4jDriver(uri, user, password, database)
-    graphiti = Graphiti(graph_driver=driver, max_coroutines=args.concurrency,
-                        **build_clients(profile, llm_key, embedding_key, counters, args.structured_mode))
+    if vertex:
+        from .vertex import build_vertex_clients
+
+        clients = build_vertex_clients(vertex, counters)
+    else:
+        clients = build_clients(profile, llm_key, embedding_key, counters, args.structured_mode)
+    graphiti = Graphiti(graph_driver=driver, max_coroutines=args.concurrency, **clients)
     reader = GraphReader(driver)
     ledger = Ledger(out / "episodes.jsonl")
     resend_marker = out / "resend.json"
@@ -175,6 +208,9 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
             await reader.reset(groups)
             ledger.clear()
             resend_marker.unlink(missing_ok=True)
+
+        existing = await reader.episode_names(groups)
+        model_identity(out, profile, vertex, existing, args.reset, is_fake)
 
         index_error = None
         try:
@@ -188,7 +224,6 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
         vector_of = await _query_embedder(graphiti, profile)
         await vector_of("dimension check")  # a wrong dimension should stop the run now, not at the first search
 
-        existing = await reader.episode_names(groups)
         summary = await ingest(graphiti, rows, args.tenant, ledger, counters, lambda name: EpisodeType[name],
                                existing, secrets)
 
@@ -211,7 +246,11 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
             models={"profile": profile.name, "llm_model": profile.llm_model, "embedding_model": profile.embedding_model,
                     "embedding_dimensions": profile.embedding_dimensions, "send_dimensions": profile.send_dimensions,
                     "query_template": profile.query_template, "query_task": DEFAULT_TASK,
-                    "structured_output_mode": args.structured_mode, "llm_client": type(graphiti.llm_client).__name__,
+                    "structured_output_mode": "native_gemini" if vertex else args.structured_mode,
+                    **({"provider": "vertex-ai", "project": vertex.project, "location": vertex.location,
+                        "document_task": "RETRIEVAL_DOCUMENT", "query_task": "RETRIEVAL_QUERY",
+                        "google_genai": version("google-genai")} if vertex else {}),
+                    "llm_client": type(graphiti.llm_client).__name__,
                     "temperature": 0},
             run={"tenant": args.tenant, "limit": args.limit, "selected": [r.name for r in rows],
                  "concurrency": args.concurrency, "total_available": len(all_rows)},
@@ -231,8 +270,14 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
         failed = summary["failed"] or summary["stopped_early"] or index_error
         return 1 if failed else 0
     finally:
-        await graphiti.close()
-        neo4j_log.removeHandler(notifications)
+        try:
+            await graphiti.close()
+        finally:
+            neo4j_log.removeHandler(notifications)
+            if vertex:
+                from .vertex import close_vertex_clients
+
+                await close_vertex_clients(graphiti)
 
 
 async def _query_embedder(graphiti, profile: Profile):
@@ -246,7 +291,10 @@ async def _query_embedder(graphiti, profile: Profile):
     async def vector_of(query: str) -> list[float]:
         if query not in cache:
             text = profile.query_template.format(task=DEFAULT_TASK, query=query)
-            vector = await graphiti.embedder.create(input_data=[text])
+            if hasattr(graphiti.embedder, "create_query"):
+                vector = await graphiti.embedder.create_query(text)
+            else:
+                vector = await graphiti.embedder.create(input_data=[text])
             if len(vector) != profile.embedding_dimensions:
                 raise SetupError(f"embedding has {len(vector)} dimensions, profile {profile.name} expects "
                                  f"{profile.embedding_dimensions}")
