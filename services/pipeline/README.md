@@ -214,4 +214,9 @@ retrieval quality (BM25, vector, hybrid). The retrieval suite makes paid embeddi
 how to read the scores, the exit codes, and what is not measured yet: `docs/benchmarks.md`. Saved
 results: `benchmarks/results/`. The baseline scores are not recorded yet.
 
+EMBER-132/134's store-independent comparison lives in `benchmarks/unified/`, with a separate metric
+contract, draft photon questions and graph variants. See [the experiment workflow](../../docs/research/unified-search-workflow.md)
+and [results](../../docs/research/unified-search-results.md). The default is BM25; simulated embedding
+runs require an explicit diagnostic flag and cannot establish retrieval quality.
+
 Tests (no key, no network): `cd services/pipeline && python -m unittest discover -s benchmarks -t . -p "test_*.py" -v`.
