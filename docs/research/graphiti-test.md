@@ -114,7 +114,61 @@ Also unverified, each read from the code and only answerable on the Spark:
 - **`encoding_format`.** The OpenAI SDK asks for base64 embeddings by default. The fake ignores that and returns floats, which the SDK accepts. The Spark's vLLM may behave differently.
 - **`openai-dev`** goes through `OpenAIClient` (the Responses API), since gpt-5 models reject the `max_tokens` the generic client sends. It has not been run and is paid.
 
-## The real run on the Spark profile
+## The real run on Vertex AI (EMBER-155)
+
+The test now has `--vertex` for stock Graphiti's native Gemini extraction and relevance reranker, plus a native
+Vertex embedder. The production embed worker and MCP embedding provider remain EMBER-116 (Ryan).
+This change prepares the test; **no real Vertex quality/cost results have been measured yet**.
+
+Use Google Application Default Credentials (ADC), with permission to invoke the chosen models on the billing
+project. For a local user, authenticate with `gcloud auth application-default login`; workload credentials can
+use `GOOGLE_APPLICATION_CREDENTIALS` pointing to an ignored credential configuration. SDK-managed ADC refreshes
+access tokens, so do not paste a short-lived token into `LLM_API_KEY`. This path uses standard Vertex AI with a
+project and location, not the Gemini Developer API or Vertex express API keys.
+
+Set these non-secret variables explicitly; there are no model or dimension defaults to accidentally choose
+for the team:
+
+| Variable | Value |
+| --- | --- |
+| `GOOGLE_CLOUD_PROJECT` | Approved project with billing and the Vertex AI API enabled |
+| `GOOGLE_CLOUD_LOCATION` | Region supporting both selected models (or `global` where supported) |
+| `VERTEX_LLM_MODEL` | Chosen Gemini model ID supporting structured output |
+| `VERTEX_EMBEDDING_MODEL` | Chosen text embedding model supported by the native Google Gen AI SDK |
+| `VERTEX_EMBEDDING_DIMENSIONS` | Positive output dimension supported by that model |
+
+With the harness requirements installed and a **fresh local throwaway Neo4j** as below, start with:
+
+    python -m graphiti_test run --vertex --tenant photon --limit 16 --concurrency 1 --out ../../data/out/graphiti-vertex-sample
+
+Inspect `summary.md` and failures before the full run. For the full reference, use a fresh graph or reset the
+sample graph, and a separate output:
+
+    python -m graphiti_test run --vertex --tenant photon --reset --concurrency 1 --out ../../data/out/graphiti-vertex
+
+The native path sets `RETRIEVAL_DOCUMENT` for indexed text and `RETRIEVAL_QUERY` for benchmark questions, requests
+the configured output dimension, rejects invalid vectors, and normalizes them. Internal Graphiti entity/fact
+matching continues using the document embeddings. The query template is plain `{query}`, without Qwen prefixes.
+Each embedding request contains one text, avoiding model-dependent batch limits. The reference records the
+project, location, models, dimensions, task settings and SDK version. `model-identity.json` prevents resuming the
+same output with another model, including a different model with the same dimensions. An existing graph without
+that identity is rejected in Vertex mode; use a fresh graph or `--reset`. Use a dedicated graph/output pair for
+each configuration; this local identity file does not describe arbitrary other databases.
+
+HTTP accounting includes SDK retries, prompt/candidate/thinking tokens, embedding token statistics, and separate
+reranker calls. This is usage accounting, not a currency estimate. Gemini uses stock Graphiti's numeric relevance
+reranker, which avoids OpenAI token IDs and logprobs. Its three-token answer budget is still a real-model test risk,
+especially with thinking models; inspect the reranker results before treating them as a baseline.
+
+`--fake` and `--profile` cannot be combined with `--vertex`. Offline Vertex tests use the real SDK and Graphiti
+clients over a simulated HTTP transport, with no cloud calls. They verify request schemas and accounting, not
+extraction quality. The Spark profile below remains available until the Vertex cutover is validated.
+
+Provider references: [Google Gen AI SDK](https://googleapis.github.io/python-genai/),
+[retrieval task types](https://cloud.google.com/vertex-ai/generative-ai/docs/embeddings/task-types),
+[Graphiti Gemini clients](https://github.com/getzep/graphiti/tree/v0.31.2/graphiti_core/llm_client).
+
+## The real run on the Spark profile (legacy fallback)
 
 From the repo root, on a machine that can reach the Spark, with Python 3.12 and Docker. A throwaway Neo4j, on the version the cluster runs:
 
