@@ -204,14 +204,30 @@ docker compose -f infra/docker-compose.yml --env-file .env --profile postgres ru
 python3 -m venv .venv && .venv/bin/pip install -r services/jira-ingestion/requirements.txt
 export DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable'
 export JIRA_BASE_URL JIRA_EMAIL JIRA_API_TOKEN   # from .env; only comment, worklog and link events call Jira
+export PYTHONPATH=packages/source-credentials       # source_credentials.py; the image copies it in
 .venv/bin/python services/jira-ingestion/enrich.py
 ```
 
-Only rows with a `tenant` are claimed. Calls go to `JIRA_BASE_URL` alone, so a row from another site fails and is retried on the next poll. Its test needs a Postgres it can create a database on, and dbmate:
+Only rows with a `tenant` are claimed. Only comment, worklog and link events call Jira, and each call needs a credential for the row's site:
+
+| Variables | Used for |
+|---|---|
+| `SOURCE_CREDENTIALS_API_KEYS`, `JIRA_OAUTH_CLIENT_ID`, `JIRA_OAUTH_CLIENT_SECRET` | Sites connected in the web app (Connect Jira, EMBER-131). `atlassian.py` opens the site's stored token with the api key ring and refreshes it with the Atlassian app's client. A site's token reads only the rows of the tenant that connected it |
+| `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | One site read with an account's API token: sites mapped by hand (`make map-tenant`) |
+
+Give one group or both. A row with neither fails and is retried on the next poll.
+
+### Keep-alive
+
+`keep_alive.py` runs daily as a CronJob (EMBER-131). For every connected site with a stored token, it refreshes the token and extends the site's dynamic webhooks by 30 days. A refresh Atlassian refuses with `invalid_grant` disconnects the site, so Settings asks for a reconnect. Any other failure exits 1, and the next day's run tries again ([`jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md#keeping-dynamic-webhooks-alive)). It needs `DATABASE_URL` and the first group above.
+
+Both tests need a Postgres they can create a database on, and dbmate. Atlassian is stubbed:
 
 ```sh
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
     .venv/bin/python services/jira-ingestion/test_enrich.py
+PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
+    .venv/bin/python services/jira-ingestion/test_keep_alive.py
 ```
 
 ## Test

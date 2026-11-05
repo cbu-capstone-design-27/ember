@@ -146,7 +146,7 @@ enrich-github-secret: ## Write k8s/apps/enrich-github/github-app.sops.yaml, encr
 enrich-slack-secret: ## Write k8s/apps/enrich-slack/slack-bot.sops.yaml, encrypted, from vault_slack_bot_token. Commit it
 	ansible-playbook playbooks/enrich.yml --tags secret-slack
 
-enrich-jira-secret: ## Write k8s/apps/enrich-jira/jira-api.sops.yaml, encrypted, from vault_jira_email and vault_jira_api_token. Commit it
+enrich-jira-secret: ## Write k8s/apps/enrich-jira/jira-api.sops.yaml, encrypted, from vault_jira_email, vault_jira_api_token and the 3LO app's client. Commit it
 	ansible-playbook playbooks/enrich.yml --tags secret-jira
 
 enrich-gitlab-secret: ## Write k8s/apps/enrich-gitlab/gitlab-api.sops.yaml, encrypted, from vault_gitlab_api_token. Commit it

@@ -2,5 +2,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - deployment.yaml
-  # Secret enrich-jira-api: JIRA_EMAIL and JIRA_API_TOKEN, for the lookups a webhook lacks (k8s/README.md, enrich-jira)
+  # Secret enrich-jira-api: JIRA_EMAIL and JIRA_API_TOKEN, for the lookups a webhook lacks, and the
+  # Atlassian app's JIRA_OAUTH_CLIENT_ID and _SECRET, to refresh Connect Jira's tokens (k8s/README.md, enrich-jira)
   - jira-api.sops.yaml

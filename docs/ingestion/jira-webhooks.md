@@ -174,17 +174,22 @@ Connect Jira stores one `api` row per site in `source_credentials` (`account_id`
 | `jql` | The webhook's filter, `project in (<ids>)` |
 | `atlassian_account_id`, `atlassian_name` | The Atlassian user who consented. The token and the webhooks are theirs |
 
-**Refreshing:** lock the row (`select … for update`), refresh if `expires_at` is less than 5 minutes away, write the new pair back, and commit before using it. Two workers refreshing the same token at once would leave one with a refresh token that no longer works. `freshJiraCredential` in `apps/web/src/lib/jira-connect.ts` is the reference.
+**Refreshing:** lock the row (`select … for update`), refresh if `expires_at` is less than 5 minutes away, write the new pair back, and commit before using it. Two workers refreshing the same token at once would leave one with a refresh token that no longer works. `freshJiraCredential` in `apps/web/src/lib/jira-connect.ts` and `SiteCredentials.fresh` in `services/jira-ingestion/atlassian.py` do this.
+
+**Who uses it:** enrich calls `api.atlassian.com/ex/jira/<cloud_id>` with `access_token`, but only for rows of the tenant that connected the site, and only while it is connected. Other rows of a site fall back to the API token in `JIRA_BASE_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN`, if that is the site. Both ways share the site's `rate_limits` bucket (`https://<site>`).
 
 ## Keeping dynamic webhooks alive
 
-A dynamic webhook lapses 30 days after it was registered or last extended (`PUT /rest/api/3/webhook/refresh`, which adds 30 days). A refresh token expires after 90 days without use. A daily Kubernetes CronJob refreshes each connected site's token and extends its `webhook_ids`. When the refresh is refused (`invalid_grant`: the user lost access or revoked the app), it marks the connection disconnected and Settings asks for a reconnect. The CronJob is the next part of EMBER-131.
+A dynamic webhook lapses 30 days after it was registered or last extended (`PUT /rest/api/3/webhook/refresh`, which moves the expiry to 30 days from now). A refresh token expires after 90 days without use. `services/jira-ingestion/keep_alive.py` runs daily as CronJob `enrich-jira-keep-alive`. For each connected site with an `api` credential, it refreshes the token whether or not it is due, then extends the site's `webhook_ids`.
+
+- **Refresh refused** (`invalid_grant`: the user lost access to the site, revoked the app, or left the token unused for 90 days): it disconnects the site, as Settings' Disconnect does, without the webhook delete that no token can make. Settings then asks for a reconnect. Any other refusal (a wrong client secret, say) is ours to fix, so the site stays connected.
+- **Anything else fails** (Atlassian down, a webhook id it no longer knows): the site is logged and the run exits 1, so the Job shows as failed. The next day's run tries again, well inside the 30 days.
 
 ## Open questions
 
 1. **Payload shapes Atlassian doesn't document:** `worklog`, `attachment`, `issueLink`, `property`, and the reduced `issue` on comment events. Capture one real delivery of each (the smoke script's bodies are hand-written) and fix this doc before EMBER-66 relies on them. In particular, does `attachment_created` name its issue?
 2. **Status code:** today's receiver answers 202, and Atlassian counts anything but 200 as unsuccessful. Intake answers 200. Should the stub receiver change now, before a real webhook is registered?
-3. **Site for `delivery_id` and `account_id`:** read from the `self` URL as proposed, or give each site its own path (`/webhook/jira/<site>`)? The second changes `architecture.md`'s HTTP contract. For dynamic webhooks, also: do the `self` URLs carry the site's host, as Atlassian's examples show, or `api.atlassian.com/ex/jira/<cloud id>`? And which claims does the bearer token carry (perhaps the cloud id, which would bind a delivery to its site)? Intake logs the claim names on its first dynamic delivery. Capture one and settle both.
+3. **Site for `delivery_id` and `account_id`:** read from the `self` URL as proposed, or give each site its own path (`/webhook/jira/<site>`)? The second changes `architecture.md`'s HTTP contract. Dynamic deliveries carry the site's host in `self`, as admin ones do: the first one, a `comment_created` on 2026-11-05, was stored for `ember-capstone.atlassian.net`. Its bearer token's claims are `context`, `exp`, `iat`, `iss`, `jti` and `sub`. Still open: does `context` name the site, so intake could refuse a delivery whose `self` names another?
 4. **Version events:** subscribe to `jira:version_*`? The backfill already stores versions, and the README mentions them as optional.
 5. **Deleted projects and issues:** worth a periodic check that compares stored issue ids with a search, to tombstone what disappeared without a webhook?
 

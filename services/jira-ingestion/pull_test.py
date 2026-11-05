@@ -557,8 +557,13 @@ def _reject_binary(url: str) -> None:
 
 def fetch_json(url: str, email: str, api_token: str, exchange, *, optional: bool = False):
     """GET JSON. optional 403/404 returns None. The body is not rewritten."""
+    return get_json(url, _headers(email, api_token), exchange, optional=optional)
+
+
+def get_json(url: str, headers: dict[str, str], exchange, *, optional: bool = False):
+    """fetch_json with the caller's headers, e.g. a 3LO bearer token (atlassian.py)."""
     _reject_binary(url)
-    response = exchange("GET", url, _headers(email, api_token), None)
+    response = exchange("GET", url, headers, None)
     if optional and response.status in (403, 404):
         print(f"skipped optional {response.status} {url}", file=sys.stderr)
         return None

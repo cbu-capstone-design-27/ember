@@ -41,7 +41,25 @@ spec:
                 secretKeyRef:
                   name: postgres-app
                   key: uri
-            # One site's credentials for now (enrich.py, EMBER-12): rows from any other site fail
+            # Connect Jira's tokens (EMBER-131): the api key ring opens them, and the Atlassian app's
+            # client refreshes them. A site's token reads only the rows of the tenant that connected it
+            - name: SOURCE_CREDENTIALS_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: source-credentials-api
+                  key: SOURCE_CREDENTIALS_API_KEYS
+            - name: JIRA_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: enrich-jira-api
+                  key: JIRA_OAUTH_CLIENT_ID
+            - name: JIRA_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: enrich-jira-api
+                  key: JIRA_OAUTH_CLIENT_SECRET
+            # Every other row of this one site is read with an API token: sites mapped by hand, and
+            # the tenant the site was mapped to before Connect Jira (enrich.py)
             - name: JIRA_BASE_URL
               value: https://ember-capstone.atlassian.net
             # Secret enrich-jira-api (jira-api.sops.yaml): an Atlassian account's email and API token
