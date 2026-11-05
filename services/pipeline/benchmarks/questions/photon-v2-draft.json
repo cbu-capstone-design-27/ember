@@ -1,0 +1,746 @@
+{
+  "format": "ember-search-questions/v1",
+  "review_note": "Agent-authored candidate judgments grounded in the photon fixtures. All validation-only and unreviewed. Human reviewers must check relevance completeness, group related topic families, remove near duplicates, and allocate a sealed test set before adoption decisions. This is not EMBER-58's human benchmark.",
+  "questions": [
+    {
+      "id": "single-8",
+      "text": "Which ticket covers a launcher shortcut that conflicts with Spotlight?",
+      "answers": [
+        "jira:WorkItem:PHO-8"
+      ],
+      "category": "single-source",
+      "family": "pho-8",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-9",
+      "text": "Where is frequency-aware fuzzy application launching specified?",
+      "answers": [
+        "jira:WorkItem:PHO-9"
+      ],
+      "category": "single-source",
+      "family": "pho-9",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-10",
+      "text": "Which ticket introduces a searchable clipboard history?",
+      "answers": [
+        "jira:WorkItem:PHO-10"
+      ],
+      "category": "single-source",
+      "family": "pho-10",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-11",
+      "text": "Where is the initial lightweight notes feature defined?",
+      "answers": [
+        "jira:WorkItem:PHO-11"
+      ],
+      "category": "single-source",
+      "family": "pho-11",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-12",
+      "text": "Which ticket defines searching for files and opening the results?",
+      "answers": [
+        "jira:WorkItem:PHO-12"
+      ],
+      "category": "single-source",
+      "family": "pho-12",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-13",
+      "text": "Which work item combines app hotkeys with window management?",
+      "answers": [
+        "jira:WorkItem:PHO-13"
+      ],
+      "category": "single-source",
+      "family": "pho-13",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-14",
+      "text": "Where is the original settings window planned?",
+      "answers": [
+        "jira:WorkItem:PHO-14"
+      ],
+      "category": "single-source",
+      "family": "pho-14",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-15",
+      "text": "Which ticket sets up linting, builds and tests in CI?",
+      "answers": [
+        "jira:WorkItem:PHO-15"
+      ],
+      "category": "single-source",
+      "family": "pho-15",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-16",
+      "text": "Where is the tagged release build workflow tracked?",
+      "answers": [
+        "jira:WorkItem:PHO-16"
+      ],
+      "category": "single-source",
+      "family": "pho-16",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-17",
+      "text": "Which task publishes Photon through a Homebrew cask?",
+      "answers": [
+        "jira:WorkItem:PHO-17"
+      ],
+      "category": "single-source",
+      "family": "pho-17",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-18",
+      "text": "Which ticket tracks Developer ID signing and notarization?",
+      "answers": [
+        "jira:WorkItem:PHO-18"
+      ],
+      "category": "single-source",
+      "family": "pho-18",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-19",
+      "text": "Where is the clipboard integration into LauncherMode tracked?",
+      "answers": [
+        "jira:WorkItem:PHO-19"
+      ],
+      "category": "single-source",
+      "family": "pho-19",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-20",
+      "text": "Which bug involves an NSInternalInconsistencyException in the launcher?",
+      "answers": [
+        "jira:WorkItem:PHO-20"
+      ],
+      "category": "single-source",
+      "family": "pho-20",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-21",
+      "text": "Which ticket addresses application icons appearing as placeholder squares?",
+      "answers": [
+        "jira:WorkItem:PHO-21"
+      ],
+      "category": "single-source",
+      "family": "pho-21",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-22",
+      "text": "Where is the compact launcher appearance redesign specified?",
+      "answers": [
+        "jira:WorkItem:PHO-22"
+      ],
+      "category": "single-source",
+      "family": "pho-22",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-23",
+      "text": "Which ticket introduces a native notes sidebar and toolbar?",
+      "answers": [
+        "jira:WorkItem:PHO-23"
+      ],
+      "category": "single-source",
+      "family": "pho-23",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-24",
+      "text": "Where is the macOS screenshot test harness planned?",
+      "answers": [
+        "jira:WorkItem:PHO-24"
+      ],
+      "category": "single-source",
+      "family": "pho-24",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-25",
+      "text": "Which work item fixes the notes sidebar height and toolbar controls?",
+      "answers": [
+        "jira:WorkItem:PHO-25"
+      ],
+      "category": "single-source",
+      "family": "pho-25",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-26",
+      "text": "Which ticket makes System Settings searchable by its human-readable name?",
+      "answers": [
+        "jira:WorkItem:PHO-26"
+      ],
+      "category": "single-source",
+      "family": "pho-26",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-27",
+      "text": "Where is an inline calculator with unit conversions proposed?",
+      "answers": [
+        "jira:WorkItem:PHO-27"
+      ],
+      "category": "single-source",
+      "family": "pho-27",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-28",
+      "text": "Which ticket brings home-folder file search into the launcher's Files interface?",
+      "answers": [
+        "jira:WorkItem:PHO-28"
+      ],
+      "category": "single-source",
+      "family": "pho-28",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-29",
+      "text": "Which work item applies the compact visual style to clipboard history?",
+      "answers": [
+        "jira:WorkItem:PHO-29"
+      ],
+      "category": "single-source",
+      "family": "pho-29",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-30",
+      "text": "Where is dragging the launcher with center snap guides introduced?",
+      "answers": [
+        "jira:WorkItem:PHO-30"
+      ],
+      "category": "single-source",
+      "family": "pho-30",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-31",
+      "text": "Which ticket adds the calculator result card?",
+      "answers": [
+        "jira:WorkItem:PHO-31"
+      ],
+      "category": "single-source",
+      "family": "pho-31",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-32",
+      "text": "Which bug tracks spacing and a hairline in the calculator card?",
+      "answers": [
+        "jira:WorkItem:PHO-32"
+      ],
+      "category": "single-source",
+      "family": "pho-32",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-33",
+      "text": "Where is filtering system paths out of file search results specified?",
+      "answers": [
+        "jira:WorkItem:PHO-33"
+      ],
+      "category": "single-source",
+      "family": "pho-33",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-34",
+      "text": "Which work item makes Cmd+Shift+V open the compact clipboard bar?",
+      "answers": [
+        "jira:WorkItem:PHO-34"
+      ],
+      "category": "single-source",
+      "family": "pho-34",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-35",
+      "text": "Which ticket fixes unreliable drag guides?",
+      "answers": [
+        "jira:WorkItem:PHO-35"
+      ],
+      "category": "single-source",
+      "family": "pho-35",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-36",
+      "text": "Which bug concerns clipboard arrow keys failing to cycle through history?",
+      "answers": [
+        "jira:WorkItem:PHO-36"
+      ],
+      "category": "single-source",
+      "family": "pho-36",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-37",
+      "text": "Which ticket removes the launcher's visible mode pills?",
+      "answers": [
+        "jira:WorkItem:PHO-37"
+      ],
+      "category": "single-source",
+      "family": "pho-37",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-38",
+      "text": "Where is launcher jitter while dragging with the pointer tracked?",
+      "answers": [
+        "jira:WorkItem:PHO-38"
+      ],
+      "category": "single-source",
+      "family": "pho-38",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-40",
+      "text": "Which bug concerns the empty Files panel being too tall?",
+      "answers": [
+        "jira:WorkItem:PHO-40"
+      ],
+      "category": "single-source",
+      "family": "pho-40",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-41",
+      "text": "Which ticket fixes the clipped clipboard view when reopening it?",
+      "answers": [
+        "jira:WorkItem:PHO-41"
+      ],
+      "category": "single-source",
+      "family": "pho-41",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-42",
+      "text": "Where is the live horizontal snap behavior corrected?",
+      "answers": [
+        "jira:WorkItem:PHO-42"
+      ],
+      "category": "single-source",
+      "family": "pho-42",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-43",
+      "text": "Which bug says Documents PDFs are missing and Searching remains stuck?",
+      "answers": [
+        "jira:WorkItem:PHO-43"
+      ],
+      "category": "single-source",
+      "family": "pho-43",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-44",
+      "text": "Which work item covers Down to recents and a dark search hairline?",
+      "answers": [
+        "jira:WorkItem:PHO-44"
+      ],
+      "category": "single-source",
+      "family": "pho-44",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-46",
+      "text": "Which ticket says Down should expand clipboard history and dismissal should restore the compact bar?",
+      "answers": [
+        "jira:WorkItem:PHO-46"
+      ],
+      "category": "single-source",
+      "family": "pho-46",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-50",
+      "text": "Where is trusted clipboard pasting from the expanded view tracked?",
+      "answers": [
+        "jira:WorkItem:PHO-50"
+      ],
+      "category": "single-source",
+      "family": "pho-50",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-51",
+      "text": "Which ticket introduces guided access to protected folders?",
+      "answers": [
+        "jira:WorkItem:PHO-51"
+      ],
+      "category": "single-source",
+      "family": "pho-51",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "single-52",
+      "text": "Where is file metadata in the recent files list specified?",
+      "answers": [
+        "jira:WorkItem:PHO-52"
+      ],
+      "category": "single-source",
+      "family": "pho-52",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "cross-45",
+      "text": "Find the rewrite proposal and the discussion explaining why the team tried Rust and GPUI.",
+      "answers": [
+        "jira:WorkItem:PHO-45",
+        "slack:Message:C08PHOTONDV:1789455180.000100"
+      ],
+      "category": "cross-source",
+      "family": "pho-45",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "cross-48",
+      "text": "Find the rollback ticket and the team decision returning the release stack to Swift.",
+      "answers": [
+        "jira:WorkItem:PHO-48",
+        "slack:Message:C08PHOTONDV:1789488300.000100"
+      ],
+      "category": "cross-source",
+      "family": "pho-48",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "cross-87",
+      "text": "Find the Caps Lock Hyper bug and the explanation of how the remap handles lock state.",
+      "answers": [
+        "jira:WorkItem:PHO-87",
+        "slack:Message:C08PHOTONDV:1790009100.000100"
+      ],
+      "category": "cross-source",
+      "family": "pho-87",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "cross-39",
+      "text": "Find the empty file search bug and the discussion of switching to home-scoped Spotlight mdfind.",
+      "answers": [
+        "jira:WorkItem:PHO-39",
+        "slack:Message:C08PHOTONDV:1789421400.000100"
+      ],
+      "category": "cross-source",
+      "family": "pho-39",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "cross-47",
+      "text": "Find the PDF ranking work and the bug report about an Ember pitch document missing from Documents.",
+      "answers": [
+        "jira:WorkItem:PHO-47",
+        "slack:Message:C08PHOTONBG:1789420200.000100"
+      ],
+      "category": "cross-source",
+      "family": "pho-47",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "cross-49",
+      "text": "Find the real-file keyboard-routing fix and the discussion of testing Documents and pasteboard rows through Accessibility.",
+      "answers": [
+        "jira:WorkItem:PHO-49",
+        "slack:Message:C08PHOTONBG:1789494900.000100"
+      ],
+      "category": "cross-source",
+      "family": "pho-49",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "cross-70",
+      "text": "Find the footer metadata overlap ticket and the Slack regression report for version 0.3.7.",
+      "answers": [
+        "jira:WorkItem:PHO-70",
+        "slack:Message:C08PHOTONBG:1789676400.000100"
+      ],
+      "category": "cross-source",
+      "family": "pho-70",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "cross-71",
+      "text": "Find the folder permission dialog bug and the team report that the dialog closes the panel.",
+      "answers": [
+        "jira:WorkItem:PHO-71",
+        "slack:Message:C08PHOTONBG:1789676400.000100"
+      ],
+      "category": "cross-source",
+      "family": "pho-71",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "cross-72",
+      "text": "Find the panel drag surface ticket and the report that only the top edge could be dragged.",
+      "answers": [
+        "jira:WorkItem:PHO-72",
+        "slack:Message:C08PHOTONBG:1789676400.000100"
+      ],
+      "category": "cross-source",
+      "family": "pho-72",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "cross-102",
+      "text": "Find the windowed onboarding ticket and the discussion that the fullscreen walkthrough covers too much.",
+      "answers": [
+        "jira:WorkItem:PHO-102",
+        "slack:Message:C08PHOTONDV:1790092800.000100"
+      ],
+      "category": "cross-source",
+      "family": "pho-102",
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "related-10",
+      "text": "Which launcher integration task is related to the original clipboard feature?",
+      "answers": [
+        "jira:WorkItem:PHO-19"
+      ],
+      "category": "related",
+      "family": "pho-19",
+      "anchor": "jira:WorkItem:PHO-10",
+      "hidden_pairs": [
+        [
+          "jira:WorkItem:PHO-10",
+          "jira:WorkItem:PHO-19"
+        ]
+      ],
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "related-12",
+      "text": "Which integration task connects file search with the launcher's modes?",
+      "answers": [
+        "jira:WorkItem:PHO-19"
+      ],
+      "category": "related",
+      "family": "pho-19",
+      "anchor": "jira:WorkItem:PHO-12",
+      "hidden_pairs": [
+        [
+          "jira:WorkItem:PHO-12",
+          "jira:WorkItem:PHO-19"
+        ]
+      ],
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "related-45",
+      "text": "Which rollback task is related to the Rust rewrite attempt?",
+      "answers": [
+        "jira:WorkItem:PHO-48"
+      ],
+      "category": "related",
+      "family": "pho-48",
+      "anchor": "jira:WorkItem:PHO-45",
+      "hidden_pairs": [
+        [
+          "jira:WorkItem:PHO-45",
+          "jira:WorkItem:PHO-48"
+        ]
+      ],
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "related-54",
+      "text": "Which release task is related to restoring PDF search and the Files split UI?",
+      "answers": [
+        "jira:WorkItem:PHO-58"
+      ],
+      "category": "related",
+      "family": "pho-58",
+      "anchor": "jira:WorkItem:PHO-54",
+      "hidden_pairs": [
+        [
+          "jira:WorkItem:PHO-54",
+          "jira:WorkItem:PHO-58"
+        ]
+      ],
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "related-55",
+      "text": "Which release task is related to correcting drag guides at the panel edges?",
+      "answers": [
+        "jira:WorkItem:PHO-58"
+      ],
+      "category": "related",
+      "family": "pho-58",
+      "anchor": "jira:WorkItem:PHO-55",
+      "hidden_pairs": [
+        [
+          "jira:WorkItem:PHO-55",
+          "jira:WorkItem:PHO-58"
+        ]
+      ],
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "related-56",
+      "text": "Which release task is related to verifying clipboard Enter on a real Mac?",
+      "answers": [
+        "jira:WorkItem:PHO-58"
+      ],
+      "category": "related",
+      "family": "pho-58",
+      "anchor": "jira:WorkItem:PHO-56",
+      "hidden_pairs": [
+        [
+          "jira:WorkItem:PHO-56",
+          "jira:WorkItem:PHO-58"
+        ]
+      ],
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "related-59",
+      "text": "Which release task is related to vertical-only panel expansion?",
+      "answers": [
+        "jira:WorkItem:PHO-62"
+      ],
+      "category": "related",
+      "family": "pho-62",
+      "anchor": "jira:WorkItem:PHO-59",
+      "hidden_pairs": [
+        [
+          "jira:WorkItem:PHO-59",
+          "jira:WorkItem:PHO-62"
+        ]
+      ],
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "related-60",
+      "text": "Which release task is related to finding a real Documents PDF?",
+      "answers": [
+        "jira:WorkItem:PHO-62"
+      ],
+      "category": "related",
+      "family": "pho-62",
+      "anchor": "jira:WorkItem:PHO-60",
+      "hidden_pairs": [
+        [
+          "jira:WorkItem:PHO-60",
+          "jira:WorkItem:PHO-62"
+        ]
+      ],
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "related-61",
+      "text": "Which release task is related to Documents path parity checks?",
+      "answers": [
+        "jira:WorkItem:PHO-62"
+      ],
+      "category": "related",
+      "family": "pho-62",
+      "anchor": "jira:WorkItem:PHO-61",
+      "hidden_pairs": [
+        [
+          "jira:WorkItem:PHO-61",
+          "jira:WorkItem:PHO-62"
+        ]
+      ],
+      "reviewed": false,
+      "split": "validation"
+    },
+    {
+      "id": "related-93",
+      "text": "Which later sidebar focus fix is related to the earlier stuck Settings focus bug?",
+      "answers": [
+        "jira:WorkItem:PHO-108"
+      ],
+      "category": "related",
+      "family": "pho-108",
+      "anchor": "jira:WorkItem:PHO-93",
+      "hidden_pairs": [
+        [
+          "jira:WorkItem:PHO-93",
+          "jira:WorkItem:PHO-108"
+        ]
+      ],
+      "reviewed": false,
+      "split": "validation"
+    }
+  ]
+}
