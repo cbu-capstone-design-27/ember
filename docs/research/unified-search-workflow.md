@@ -108,6 +108,11 @@ content endpoints participate. Person, Container and other hubs are excluded. Th
 initial controls, not tuned or adopted settings. Related-item retrieval uses the anchor's text/vector
 and excludes the anchor from results. Its requested natural-language question is descriptive only.
 
+The optional photon source-time cutoff excludes future rows before replay. The seed supplies only
+the latest Jira issue records, so this cannot reconstruct older Jira properties or status history
+that is absent from those rows. It provides safe temporal experiment plumbing, not a complete
+historical graph or a measured temporal retrieval method. Changelog-based validity remains separate.
+
 ## Work across all assigned tickets
 
 | Ticket | Current work / next dependency |
