@@ -1,8 +1,12 @@
 """enrich:jira (EMBER-66): turns Jira rows in raw_events into source_records.
 
     DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable' \
-    JIRA_BASE_URL=https://<site>.atlassian.net JIRA_EMAIL=... JIRA_API_TOKEN=... \
-        python3 enrich.py
+    SOURCE_CREDENTIALS_API_KEYS=... JIRA_OAUTH_CLIENT_ID=... JIRA_OAUTH_CLIENT_SECRET=... \
+    PYTHONPATH=../../packages/source-credentials python3 enrich.py
+
+What it fetches from Jira it fetches with the token Connect Jira stored for the row's site
+(EMBER-131, atlassian.py), and only for rows of the tenant that connected the site. A row with no
+such token fails and is retried on the next poll: connecting the site is the only way in.
 
 Rows are claimed as docs/ingestion/architecture.md, "Interim: claiming without the job queue",
 describes: LISTEN on RAW_EVENTS_CHANNEL (default raw_events), then claim once at start, on any
@@ -23,26 +27,26 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from urllib.parse import urlsplit
 
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
+from atlassian import OAuthClient, SiteCredentials, api_origin, bearer_headers
 from models import RateLimit, RawEvent, SourceRecord
 from pull_test import (
     PullError,
     Response,
     exchange_with_retry,
-    fetch_json,
+    get_json,
     is_rate_limited,
     issue_url,
     rate_limit_wait,
     throttle_seconds,
-    site_origin,
     urllib_exchange,
 )
+from source_credentials import CredentialError, KeyRing
 
 SOURCE = "jira"
 POLL_SECONDS = 30.0
@@ -139,15 +143,14 @@ def make_engine(database_url: str, pool_size: int) -> AsyncEngine:
 class Worker:
     """Claims and enriches Jira raw_events until stop(). Construct it inside the running event loop.
 
-    exchange is pull_test's (method, url, headers, body) -> Response boundary. Tests stub it."""
+    credentials reads the sites' Connect Jira tokens. exchange is pull_test's
+    (method, url, headers, body) -> Response boundary for the API calls. Tests stub both."""
 
     def __init__(
         self,
         engine: AsyncEngine,
         *,
-        origin: str,
-        email: str,
-        api_token: str,
+        credentials: SiteCredentials,
         exchange=urllib_exchange,
         concurrency: int = DEFAULT_CONCURRENCY,
         poll_seconds: float = POLL_SECONDS,
@@ -155,9 +158,7 @@ class Worker:
     ) -> None:
         self.engine = engine
         self.session = async_sessionmaker(engine, expire_on_commit=False)
-        self.origin = origin   # also the rate_limits bucket
-        self.email = email
-        self.api_token = api_token
+        self.credentials = credentials
         self.exchange = exchange
         self.poll_seconds = poll_seconds
         self.channel = channel
@@ -260,7 +261,7 @@ class Worker:
             issues = {}
             for issue_id in issue_ids:
                 if not await self._issue_stored(session, row.tenant, issue_id):
-                    issue = await self._fetch(row, issue_url(self.origin, issue_id))
+                    issue = await self._fetch(row, issue_id)
                     if issue is not None:
                         issues[issue_id] = issue
             if issues:
@@ -285,39 +286,44 @@ class Worker:
         )
         return found is not None
 
-    async def _fetch(self, row: RawEvent, url: str) -> Optional[dict]:
-        """GET through pull_test's fetch_json (basic auth) and exchange_with_retry (429, 5xx), with every
+    async def _fetch(self, row: RawEvent, issue_id: str) -> Optional[dict]:
+        """GET one issue through pull_test's get_json and exchange_with_retry (429, 5xx), with every
         attempt waiting on and updating the rate_limits row for this site. A 403 or 404 returns None."""
-        # ponytail: one site's credentials from the environment. Per-site credentials come with EMBER-12.
-        if row.account_id and row.account_id != urlsplit(self.origin).hostname:
-            raise PullError(f"no credentials for site {row.account_id}")
+        site = row.account_id
+        credential = await self.credentials.fresh(site, tenant=row.tenant) if site else None
+        if credential is None:
+            raise PullError(f"no Connect Jira token for site {site} and tenant {row.tenant}")
+        url = issue_url(api_origin(credential["cloud_id"]), issue_id)
+        headers = bearer_headers(credential["access_token"])
+        bucket = f"https://{site}"
         loop = asyncio.get_running_loop()
 
         def limited(method: str, url: str, headers: dict[str, str], body: Optional[bytes]) -> Response:
-            asyncio.run_coroutine_threadsafe(self._wait_turn(row.tenant), loop).result()
+            asyncio.run_coroutine_threadsafe(self._wait_turn(row.tenant, bucket), loop).result()
             response = self.exchange(method, url, headers, body)
-            asyncio.run_coroutine_threadsafe(self._record_limit(row.tenant, response), loop).result()
+            asyncio.run_coroutine_threadsafe(self._record_limit(row.tenant, bucket, response), loop).result()
             return response
 
         def retrying(method: str, url: str, headers: dict[str, str], body: Optional[bytes]) -> Response:
             return exchange_with_retry(limited, method, url, headers, body)
 
-        return await asyncio.to_thread(fetch_json, url, self.email, self.api_token, retrying, optional=True)
+        return await asyncio.to_thread(get_json, url, headers, retrying, optional=True)
 
-    def _limit_key(self, tenant: str):
-        return (RateLimit.source == SOURCE, RateLimit.tenant == tenant, RateLimit.bucket == self.origin)
+    @staticmethod
+    def _limit_key(tenant: str, bucket: str):
+        return (RateLimit.source == SOURCE, RateLimit.tenant == tenant, RateLimit.bucket == bucket)
 
-    async def _wait_turn(self, tenant: str) -> None:
+    async def _wait_turn(self, tenant: str, bucket: str) -> None:
         """Sleep until the site's next_allowed_at, by the database's clock."""
         async with self.engine.connect() as conn:
             delay = await conn.scalar(
-                select(func.extract("epoch", RateLimit.next_allowed_at - func.now())).where(*self._limit_key(tenant))
+                select(func.extract("epoch", RateLimit.next_allowed_at - func.now())).where(*self._limit_key(tenant, bucket))
             )
         if delay is not None and delay > 0:
-            log.info("rate limit: waiting %.1fs for %s", delay, self.origin)
+            log.info("rate limit: waiting %.1fs for %s", delay, bucket)
             await asyncio.sleep(float(delay))
 
-    async def _record_limit(self, tenant: str, response: Response) -> None:
+    async def _record_limit(self, tenant: str, bucket: str, response: Response) -> None:
         """Push next_allowed_at out by pull_test's wait for a 429 or a low quota, and keep X-RateLimit-Remaining."""
         now = time.time()
         wait = max(rate_limit_wait(response, now=now) if is_rate_limited(response) else 0.0,
@@ -325,7 +331,7 @@ class Worker:
         headers = {key.lower(): value for key, value in response.headers.items()}
         remaining = headers.get("x-ratelimit-remaining")
         stmt = insert(RateLimit).values(
-            source=SOURCE, tenant=tenant, bucket=self.origin,
+            source=SOURCE, tenant=tenant, bucket=bucket,
             next_allowed_at=func.now() + timedelta(seconds=wait),
             remaining=int(remaining) if remaining and remaining.isdigit() else None,
         )
@@ -347,20 +353,25 @@ def main(exchange=urllib_exchange) -> int:
         print("DATABASE_URL is required", file=sys.stderr)
         return 2
     try:
-        origin = site_origin(os.environ.get("JIRA_BASE_URL", ""))
+        ring = KeyRing.from_env("api")
         concurrency = int(os.environ.get("CONCURRENCY", "") or DEFAULT_CONCURRENCY)
-    except (PullError, ValueError) as exc:
+    except (CredentialError, ValueError) as exc:
         print(exc, file=sys.stderr)
+        return 2
+    client = OAuthClient.from_env()
+    if ring is None or client is None:
+        print("SOURCE_CREDENTIALS_API_KEYS and the Atlassian app's JIRA_OAUTH_CLIENT_ID and "
+              "JIRA_OAUTH_CLIENT_SECRET are required", file=sys.stderr)
         return 2
 
     async def run() -> None:
-        # Each in-flight row holds a connection and may open one for rate_limits, plus the listener
+        # Each in-flight row holds a connection and opens one at a time for its credential or
+        # rate_limits, plus the listener
         engine = make_engine(database_url, pool_size=2 * concurrency + 1)
         try:
             await Worker(
-                engine, origin=origin, email=os.environ.get("JIRA_EMAIL", ""),
-                api_token=os.environ.get("JIRA_API_TOKEN", ""), exchange=exchange, concurrency=concurrency,
-                channel=os.environ.get("RAW_EVENTS_CHANNEL", "").strip() or DEFAULT_CHANNEL,
+                engine, credentials=SiteCredentials(engine, ring, client, exchange=exchange), exchange=exchange,
+                concurrency=concurrency, channel=os.environ.get("RAW_EVENTS_CHANNEL", "").strip() or DEFAULT_CHANNEL,
             ).run()
         finally:
             await engine.dispose()

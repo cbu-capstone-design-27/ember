@@ -7,12 +7,16 @@ COPY services/jira-ingestion/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY services/jira-ingestion/envelope.py services/jira-ingestion/receiver.py services/jira-ingestion/pull_test.py \
-     services/jira-ingestion/models.py services/jira-ingestion/enrich.py ./
+     services/jira-ingestion/models.py services/jira-ingestion/enrich.py services/jira-ingestion/atlassian.py \
+     services/jira-ingestion/keep_alive.py ./
+# Opens Connect Jira's tokens (packages/source-credentials/README.md: each consumer copies it in)
+COPY packages/source-credentials/source_credentials.py ./
 
 ENV JIRA_INGESTION_PORT=8081
 EXPOSE 8081
 
 USER nobody
 # Default: the stub receiver. The same image runs the enrich worker (`python3 enrich.py`), which is
-# what the cluster deploys (EMBER-109); intake receives Jira's webhooks.
+# what the cluster deploys (EMBER-109), and the keep-alive CronJob (`python3 keep_alive.py`, EMBER-131);
+# intake receives Jira's webhooks.
 CMD ["python3", "receiver.py"]

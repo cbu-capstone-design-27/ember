@@ -1,3 +1,4 @@
-# enrich.py (EMBER-66). The other scripts here use the standard library only.
+# enrich.py (EMBER-66) and keep_alive.py (EMBER-131). The other scripts here use the standard library only.
 SQLAlchemy[asyncio]==2.0.54   # the extra installs greenlet, which async engines need
 asyncpg==0.32.0
+cryptography==50.0.2          # source_credentials.py, copied from packages/source-credentials (EMBER-131)

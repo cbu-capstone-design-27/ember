@@ -6,7 +6,8 @@
 # Slack: k8s/apps/enrich-slack/slack-bot.sops.yaml, Secret enrich-slack-bot, from vault_slack_bot_token,
 # the Slack app's Bot User OAuth Token (k8s/README.md, enrich-slack). Use make enrich-slack-secret.
 # Jira: k8s/apps/enrich-jira/jira-api.sops.yaml, Secret enrich-jira-api, from vault_jira_email and
-# vault_jira_api_token, an Atlassian account and its API token (k8s/README.md, enrich-jira). Use
+# vault_jira_api_token, an Atlassian account and its API token (k8s/README.md, enrich-jira), plus
+# vault_jira_oauth_client_id and _secret when the vault has them (the 3LO app, EMBER-131). Use
 # make enrich-jira-secret.
 # GitLab: k8s/apps/enrich-gitlab/gitlab-api.sops.yaml, Secret enrich-gitlab-api, from
 # vault_gitlab_api_token, a read_api token (k8s/README.md, enrich-gitlab). Use make enrich-gitlab-secret.
@@ -43,9 +44,15 @@
       metadata:
         name: enrich-jira-api
         namespace: ember
-      stringData:
-        JIRA_EMAIL: "{{ vault_jira_email | default('') | trim }}"
-        JIRA_API_TOKEN: "{{ vault_jira_api_token | default('') | trim }}"
+      # Plus the Atlassian 3LO app's client when the vault has it (EMBER-131): enrich refreshes the
+      # tokens Connect Jira stored, and the keep-alive CronJob reads the same Secret
+      stringData: "{{ jira_api | combine(jira_oauth if vault_jira_oauth_client_id is defined else {}) }}"
+    jira_api:
+      JIRA_EMAIL: "{{ vault_jira_email | default('') | trim }}"
+      JIRA_API_TOKEN: "{{ vault_jira_api_token | default('') | trim }}"
+    jira_oauth:
+      JIRA_OAUTH_CLIENT_ID: "{{ vault_jira_oauth_client_id | default('') }}"
+      JIRA_OAUTH_CLIENT_SECRET: "{{ vault_jira_oauth_client_secret | default('') }}"
     gitlab_secret_file: infra/k8s/apps/enrich-gitlab/gitlab-api.sops.yaml
     gitlab_secret:
       apiVersion: v1
@@ -176,6 +183,21 @@
               Add vault_jira_email, the Atlassian account the worker reads Jira as, and
               vault_jira_api_token, an API token for it (id.atlassian.com, Security, API tokens), with
               .venv/bin/ansible-vault edit group_vars/all/vault.yml
+            quiet: true
+          no_log: true
+
+        - name: Require both of the Atlassian app's client id and secret, or neither
+          ansible.builtin.assert:
+            that:
+              - (vault_jira_oauth_client_id is defined) == (vault_jira_oauth_client_secret is defined)
+              - >-
+                vault_jira_oauth_client_id is not defined or
+                (vault_jira_oauth_client_id | length > 0 and vault_jira_oauth_client_secret | length > 0
+                 and vault_jira_oauth_client_id == vault_jira_oauth_client_id | trim
+                 and vault_jira_oauth_client_secret == vault_jira_oauth_client_secret | trim)
+            fail_msg: >-
+              Set both vault_jira_oauth_client_id and vault_jira_oauth_client_secret (the Atlassian 3LO app's
+              Client ID and Secret), without spaces around them, or neither
             quiet: true
           no_log: true
 

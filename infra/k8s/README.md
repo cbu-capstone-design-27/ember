@@ -28,7 +28,7 @@ Run these from `infra/ansible` (`make deps` first, which installs `flux`, `kubec
 | `make intake-secret` | Writes `apps/intake/webhooks.sops.yaml`, encrypted, from the GitHub App's webhook secret, the Slack app's signing secret, the Jira webhook's secret, the GitLab signing token and, if set, the Atlassian app's client secret in the vault ([The webhook secret](#the-webhook-secret), [The Slack signing secret](#the-slack-signing-secret), [The Jira webhook secret](#the-jira-webhook-secret), [The Atlassian app's client secret](#the-atlassian-apps-client-secret)). Commit the result |
 | `make enrich-github-secret` | Writes `apps/enrich-github/github-app.sops.yaml`, encrypted, from the GitHub App's private key in the vault ([enrich-github](#enrich-github)). Commit the result |
 | `make enrich-slack-secret` | Writes `apps/enrich-slack/slack-bot.sops.yaml`, encrypted, from the Slack app's bot token in the vault ([enrich-slack](#enrich-slack)). Commit the result |
-| `make enrich-jira-secret` | Writes `apps/enrich-jira/jira-api.sops.yaml`, encrypted, from the Atlassian account and API token in the vault ([enrich-jira](#enrich-jira)). Commit the result |
+| `make enrich-jira-secret` | Writes `apps/enrich-jira/jira-api.sops.yaml`, encrypted, from the Atlassian account, its API token and the Atlassian app's client in the vault ([enrich-jira](#enrich-jira)). Commit the result |
 | `make web-secret` | Writes `apps/web/auth.sops.yaml`, encrypted, from the web app's session secret and, if set, the GitHub App's and the Atlassian app's OAuth clients in the vault ([web](#web), [The Atlassian app's client secret](#the-atlassian-apps-client-secret)). Commit the result |
 | `make source-credentials-secret` | Writes `apps/source-credentials/api.sops.yaml` and `webhook.sops.yaml`, encrypted, from the two key rings in the vault ([Source credential keys](#source-credential-keys)). Commit the result |
 | `make web-test-accounts` | Creates the web app's test accounts on the cluster, or checks they are there ([Test accounts](#test-accounts)). Safe to re-run |
@@ -217,9 +217,9 @@ To set or rotate the token: copy **OAuth & Permissions → Bot User OAuth Token*
 `enrich:jira` (EMBER-66, `services/jira-ingestion/enrich.py`): turns the Jira rows intake stores in `raw_events` into `source_records`. One replica in namespace `ember` from `apps/enrich-jira/`, with no Service, because it serves nothing. It claims rows with `FOR UPDATE SKIP LOCKED`, as `enrich-github` does.
 
 - **Image.** `deployment.yaml` pins a `develop-<run>-<sha>` tag of `ghcr.io/cbu-capstone-design-27/ember/jira-ingestion` and runs `python3 enrich.py`. The image's default command is `receiver.py`, a stdout-only stub that is never deployed; intake receives Jira's webhooks.
-- **Credentials.** `DATABASE_URL` comes from Secret `postgres-app`. `JIRA_BASE_URL` is `https://ember-capstone.atlassian.net`, the one site it has credentials for: a row from another site fails (per-site credentials come with EMBER-12). Secret `enrich-jira-api` holds `JIRA_EMAIL` and `JIRA_API_TOKEN`, an Atlassian account that can browse the projects, used for the lookups a webhook lacks. Intake never sees the token, and this worker never sees the webhook secret.
+- **Credentials.** `DATABASE_URL` comes from Secret `postgres-app`. For the lookups a webhook lacks, it reads a site only with the token Connect Jira (EMBER-131) stored for it, and only for the rows of the tenant that connected it. `SOURCE_CREDENTIALS_API_KEYS` (Secret `source-credentials-api`) opens the token, and the Atlassian app's `JIRA_OAUTH_CLIENT_ID` and `JIRA_OAUTH_CLIENT_SECRET` (Secret `enrich-jira-api`) refresh it. A row of a site its tenant hasn't connected fails and waits. Intake holds the Atlassian app's client secret too, to verify dynamic webhooks ([ADR 0010](../../docs/adr/0010-connecting-sources.md#jira-ember-131)), but no token.
 - **Rate limits.** The gates live in Postgres table `rate_limits`, bucket = site, so every worker shares one site's quota.
-- **Tenants.** Intake stores a delivery with `tenant` null until its site is in `installations`. Map it with `make map-tenant SOURCE=jira ACCOUNT=ember-capstone.atlassian.net TENANT=<tenant>` ([Mapping a tenant](#mapping-a-tenant)). The site is the host of the event's `self` URL.
+- **Tenants.** Intake stores a delivery with `tenant` null until its site is in `installations`. An owner connects the site in the web app (Settings → Connections → Connect Jira), which maps it and hands over what was stored. `make map-tenant` can map a site too, but enrich has no token for it then, so its rows wait until the tenant connects it. The site is the host of the event's `self` URL.
 - **Stopping.** On SIGTERM it stops claiming and finishes the rows in flight, for up to 60 s.
 
 ```bash
@@ -228,7 +228,7 @@ kubectl --context homelab -n ember logs deploy/enrich-jira
 
 It logs `enrich:jira listening on raw_events` once connected, which `make apps-health` waits for.
 
-To set or rotate the token: create one at **id.atlassian.com → Security → API tokens** for the account, put the account's email in the vault as `vault_jira_email` and the token as `vault_jira_api_token`, run `make enrich-jira-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-jira`. Revoke the old token once the new pod is listening.
+To set or rotate the token: create one at **id.atlassian.com → Security → API tokens** for the account, put the account's email in the vault as `vault_jira_email` and the token as `vault_jira_api_token`, run `make enrich-jira-secret`, commit the file, and after it merges `kubectl --context homelab -n ember rollout restart deploy/enrich-jira`. Revoke the old token once the new pod is listening. The same target writes the Atlassian app's client from `vault_jira_oauth_client_id` and `vault_jira_oauth_client_secret`, the values `make web-secret` and `make intake-secret` use.
 
 ### enrich-gitlab
 
@@ -296,7 +296,7 @@ Per-account source credentials (a Jira token pair, a Slack bot token, a GitLab t
 
 | Secret | Variable | Vault value | Pods |
 |---|---|---|---|
-| `source-credentials-api` | `SOURCE_CREDENTIALS_API_KEYS` | `vault_source_credentials_api_keys` | web; each enrich worker once it reads `source_credentials` (`enrich-jira` from EMBER-131) |
+| `source-credentials-api` | `SOURCE_CREDENTIALS_API_KEYS` | `vault_source_credentials_api_keys` | web, `enrich-jira` (EMBER-131); the other enrich workers once they read `source_credentials` |
 | `source-credentials-webhook` | `SOURCE_CREDENTIALS_WEBHOOK_KEYS` | `vault_source_credentials_webhook_keys` | web; intake once it verifies with a per-account token (GitLab, EMBER-149) |
 
 Each value is a key ring: `<key id>:<base64 of 32 bytes>`, comma-separated, the sealing key first (`packages/source-credentials/README.md`). To set one up:

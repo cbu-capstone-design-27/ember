@@ -109,9 +109,10 @@ Ember moves from a site admin webhook to an Atlassian OAuth 2.0 (3LO) app:
 - **Between the callback and the picker, the tokens wait server side.** They are sealed with the `api` key ring in Better Auth's `verification` table for 15 minutes, so they never reach the browser.
 - **The `api` credential holds** the token pair, the cloud id, the webhook ids and the JQL (`jira-webhooks.md`, The `api` credential). Whoever refreshes it locks the row and commits the rotated pair before using it.
 - **Disconnect deletes the webhooks** with the stored token before deleting the credential. If Jira refuses, the webhook lapses within 30 days.
-- **`scheduler:jira` is a daily Kubernetes CronJob** in the jira-ingestion image, not part of EMBER-128's sweeper.
+- **`scheduler:jira` is a daily Kubernetes CronJob** in the jira-ingestion image (`keep_alive.py`), not part of EMBER-128's sweeper. It refreshes each connected site's token and extends its webhooks. When Atlassian refuses the refresh token (`invalid_grant`), it disconnects the site, as Disconnect does but without deleting the webhooks, since nothing can any more.
+- **Enrich reads Jira only with Connect Jira's tokens, and a site's token only for the rows of the tenant that connected it.** The single API-token site enrich used before (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`) is gone, with no fallback: a row whose tenant hasn't connected its site fails and waits. `make map-tenant` still assigns Jira rows a tenant, but enrich can't fetch for them until that tenant connects the site.
 - **The app's client secret sits in intake and in enrich.** Intake verifies deliveries with it, and enrich and the keep-alive need it to refresh tokens. That bends ADR 0004's rule that the verifying and the calling credential never share a pod: Atlassian uses one secret for both. Enrich could forge a delivery, but intake still holds no token to call Jira with.
-- **The `self` URL question is still open.** Atlassian's examples show site hosts, so intake keeps reading them. Intake logs the token's claim names on its first dynamic delivery, to settle this and whether the claims name the site.
+- **Dynamic deliveries carry the site's host in `self` URLs**, as admin ones do, so intake reads the site the same way (first live delivery, 2026-11-05). The token's claims are `context`, `exp`, `iat`, `iss`, `jti` and `sub`. Intake checks only the signature and `exp`; binding a delivery to its site through `context` is a possible hardening.
 
 #### GitLab
 

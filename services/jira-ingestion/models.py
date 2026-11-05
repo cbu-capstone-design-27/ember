@@ -1,4 +1,4 @@
-"""SQLAlchemy models for the ingestion tables enrich:jira touches (EMBER-66).
+"""SQLAlchemy models for the ingestion tables enrich:jira and the keep-alive touch (EMBER-66, EMBER-131).
 
 They map docs/ingestion/architecture.md (Storage) and nothing more. The dbmate migrations in
 infra/k8s/apps/postgres/migrations own the schema, so never call create_all on these.
@@ -14,8 +14,10 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     Integer,
+    LargeBinary,
     Text,
     UniqueConstraint,
     func,
@@ -76,3 +78,34 @@ class RateLimit(Base):
     bucket: Mapped[str] = mapped_column(Text, primary_key=True)
     next_allowed_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ)
     remaining: Mapped[Optional[int]] = mapped_column(Integer)
+
+
+class Installation(Base):
+    __tablename__ = "installations"
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    account_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    tenant: Mapped[str] = mapped_column(Text)
+    added_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    disconnected_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ)
+    label: Mapped[Optional[str]] = mapped_column(Text)
+    external_id: Mapped[Optional[str]] = mapped_column(Text)
+    connected_by: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class SourceCredential(Base):
+    """Sealed with packages/source-credentials; this model never sees plaintext."""
+
+    __tablename__ = "source_credentials"
+    __table_args__ = (
+        CheckConstraint("kind in ('api', 'webhook')"),
+        ForeignKeyConstraint(["source", "account_id"], ["installations.source", "installations.account_id"],
+                             ondelete="CASCADE"),
+    )
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    account_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    key_id: Mapped[str] = mapped_column(Text)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
