@@ -72,7 +72,7 @@ Forge apps, Atlassian Connect (JWT `sharedSecret`), and OAuth 2.0 dynamic webhoo
 | --- | --- |
 | `JIRA_BASE_URL` | Site origin for `pull_test.py`, such as `https://<site>`. No path. The webhook receiver does not read it. |
 | `JIRA_EMAIL` | Atlassian account email for basic auth. `pull_test.py` only. |
-| `JIRA_API_TOKEN` | API token for basic auth. `pull_test.py` only. Never commit it. |
+| `JIRA_API_TOKEN` | API token for basic auth. `pull_test.py` only, run by hand. Nothing deployed reads it: enrich and the keep-alive use Connect Jira's tokens. Never commit it. |
 | `JIRA_WEBHOOK_SECRET` | HMAC key for `X-Hub-Signature`. Empty skips verification. Not used by `pull_test.py`. |
 | `JIRA_INGESTION_PORT` | Receiver port. Default `8081`. |
 | `JIRA_TEST_PROJECT` | Project key for `pull_test.py` only. When unset, the script uses `EMBER`. Not a filter on the webhook path. |
