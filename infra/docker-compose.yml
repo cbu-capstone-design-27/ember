@@ -209,11 +209,8 @@ services:
     ports:
       - "${JIRA_INGESTION_PORT:-8081}:${JIRA_INGESTION_PORT:-8081}"
     environment:
+      # receiver.py reads only these two. The API token is pull_test.py's, run by hand, not here.
       JIRA_WEBHOOK_SECRET: "${JIRA_WEBHOOK_SECRET:-}"
-      JIRA_BASE_URL: "${JIRA_BASE_URL:-}"
-      JIRA_EMAIL: "${JIRA_EMAIL:-}"
-      JIRA_API_TOKEN: "${JIRA_API_TOKEN:-}"
-      JIRA_TEST_PROJECT: "${JIRA_TEST_PROJECT:-}"
       JIRA_INGESTION_PORT: "${JIRA_INGESTION_PORT:-8081}"
 
   # EMBER-54. Webhook receiver. Holds the webhook secrets only, never the API
