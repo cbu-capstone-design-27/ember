@@ -7,7 +7,9 @@ runs the same worker against Postgres.
 
 from __future__ import annotations
 
+import io
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -15,14 +17,28 @@ import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(REPO / "packages" / "source-credentials"))
 
 import enrich  # noqa: E402
-from enrich import ConfigError, Permanent, database_urls, describe, enrich_delivery, run_async, slack_time  # noqa: E402
+from enrich import (  # noqa: E402
+    ConfigError,
+    Lifecycle,
+    Permanent,
+    TokenRejected,
+    database_urls,
+    describe,
+    ends_connection,
+    enrich_delivery,
+    lifecycle,
+    run_async,
+    slack_time,
+)
 from pull_test import MethodGates, Response, make_client  # noqa: E402
 
 TOKEN = "xoxb-test-token"
@@ -50,9 +66,15 @@ class FakeSlackApi:
     errors maps a method to an ok:false error. throttle maps a method to how many 429s it answers
     first. delay maps a method to seconds it takes. garbage lists methods that answer with a body
     that is not JSON. started[method] is set once that method has been called.
+
+    tokens are the bot tokens Slack accepts; any other answers invalid_auth, as Slack does for an
+    uninstalled app's. tokens_used lists the token each call was made with, in order.
     """
 
-    def __init__(self, *, users=None, channels=None, threads=None, errors=None, throttle=None, delay=None, garbage=()):
+    def __init__(self, *, users=None, channels=None, threads=None, errors=None, throttle=None, delay=None, garbage=(),
+                 tokens=(TOKEN,)):
+        self.tokens = set(tokens)
+        self.tokens_used: list[str] = []
         self.users = dict(USERS if users is None else users)
         self.channels = dict(CHANNELS if channels is None else channels)
         self.threads = dict(THREADS if threads is None else threads)
@@ -75,10 +97,16 @@ class FakeSlackApi:
         api_method = parts.path.rsplit("/", 1)[-1]
         params = {key: values[0] for key, values in parse_qs(parts.query).items()}
         assert method == "GET" and body is None
-        assert headers.get("Authorization") == f"Bearer {TOKEN}"
+        authorization = headers.get("Authorization", "")
+        assert authorization.startswith("Bearer "), "the token goes in the Authorization header only"
+        token = authorization.removeprefix("Bearer ")
+        assert token not in url, "the token never goes in a URL"
         with self._lock:
             self.calls.append((api_method, params))
+            self.tokens_used.append(token)
             self.started.setdefault(api_method, threading.Event()).set()
+            if token not in self.tokens:
+                return _json({"ok": False, "error": "invalid_auth"})
             if self.throttle.get(api_method):
                 self.throttle[api_method] -= 1
                 return _json({"ok": False, "error": "ratelimited"}, 429, {"Retry-After": "1"})
@@ -373,10 +401,19 @@ class EnrichDeliveryTest(unittest.TestCase):
         self.assertIsNone(records[-1].record["user"])
         self.assertEqual(fake.count("users.info"), 0)
 
-    def test_auth_and_scope_errors_are_permanent(self):
-        for error in ("invalid_auth", "token_revoked", "missing_scope"):
-            with self.subTest(error=error), self.assertRaises(Permanent):
+    def test_a_refused_token_is_told_apart_from_a_missing_scope(self):
+        # The token is gone (uninstalled, revoked): the worker disconnects the workspace (EMBER-148)
+        for error in ("invalid_auth", "token_revoked", "account_inactive", "not_authed", "token_expired"):
+            with self.subTest(error=error), self.assertRaises(TokenRejected) as caught:
                 self.run_enrich(callback(message("1700000200.000100")), fake=FakeSlackApi(errors={"users.info": error}))
+            self.assertEqual(caught.exception.error, error)
+            self.assertNotIsInstance(caught.exception, Permanent)
+        # The app is set up wrong: no retry helps this row
+        with self.assertRaises(Permanent):
+            self.run_enrich(callback(message("1700000200.000100")), fake=FakeSlackApi(errors={"users.info": "missing_scope"}))
+        # A token Slack doesn't know at all
+        with self.assertRaises(TokenRejected):
+            self.run_enrich(callback(message("1700000200.000100")), fake=FakeSlackApi(tokens=["xoxb-other"]))
 
     def test_skipped_events_become_no_records(self):
         reaction = callback({"type": "reaction_added", "user": "U0ADA", "reaction": "eyes",
@@ -587,9 +624,45 @@ class OtherEventsTest(unittest.TestCase):
             self.run_enrich(body)
 
     def test_auth_errors_on_a_lookup_are_permanent(self):
-        with self.assertRaises(Permanent):
+        with self.assertRaises(TokenRejected):
             self.run_enrich(callback({"type": "channel_created", "channel": {"id": CHANNEL}}),
                             fake=FakeSlackApi(errors={"conversations.info": "invalid_auth"}))
+        with self.assertRaises(Permanent):
+            self.run_enrich(callback({"type": "channel_created", "channel": {"id": CHANNEL}}),
+                            fake=FakeSlackApi(errors={"conversations.info": "missing_scope"}))
+
+
+class LifecycleTest(unittest.TestCase):
+    """app_uninstalled and tokens_revoked (slack-webhooks.md, Everything else; EMBER-148)."""
+
+    def test_which_deliveries_are_lifecycle_events(self):
+        self.assertEqual(lifecycle(callback({"type": "app_uninstalled"})), Lifecycle("app_uninstalled"))
+        revoked = callback({"type": "tokens_revoked", "tokens": {"oauth": ["U0ADA"], "bot": ["U0BOT"]}})
+        self.assertEqual(lifecycle(revoked), Lifecycle("tokens_revoked", ("U0BOT",)))
+        users_only = callback({"type": "tokens_revoked", "tokens": {"oauth": ["U0ADA"]}})
+        self.assertEqual(lifecycle(users_only), Lifecycle("tokens_revoked", ()))
+        garbled = callback({"type": "tokens_revoked", "tokens": {"bot": "U0BOT"}})
+        self.assertEqual(lifecycle(garbled), Lifecycle("tokens_revoked", ()))
+        for body in (callback(message("1")), {"type": "app_uninstalled"}, {"type": "app_rate_limited"}, None, "x"):
+            with self.subTest(body=body):
+                self.assertIsNone(lifecycle(body))
+
+    def test_which_ones_end_the_connection(self):
+        uninstalled = Lifecycle("app_uninstalled")
+        self.assertTrue(ends_connection(uninstalled, None))
+        self.assertTrue(ends_connection(uninstalled, BOT))
+        ours = Lifecycle("tokens_revoked", (BOT,))
+        self.assertTrue(ends_connection(ours, BOT))
+        self.assertTrue(ends_connection(ours, None))  # one bot per workspace: an unknown id is still ours
+        self.assertFalse(ends_connection(Lifecycle("tokens_revoked", ("U0OTHER",)), BOT))
+        self.assertFalse(ends_connection(Lifecycle("tokens_revoked", ()), BOT))  # user tokens only: Ember holds none
+
+    def test_they_make_no_records_and_no_calls(self):
+        for body in (callback({"type": "app_uninstalled"}), callback({"type": "tokens_revoked", "tokens": {"bot": [BOT]}})):
+            fake = FakeSlackApi()
+            with self.subTest(event=body["event"]["type"]):
+                self.assertEqual(run_async(enrich_delivery(body, cache=DictCache(), call=caller(fake))), [])
+                self.assertEqual(fake.calls, [])
 
 
 class ConfigAndSeedTest(unittest.TestCase):
@@ -653,6 +726,28 @@ class ConfigAndSeedTest(unittest.TestCase):
                 path.write_text(content, encoding="utf-8")
                 with self.subTest(name=name):
                     self.assertEqual(list(enrich.read_envelopes(str(path))), [one] * (1 if name == "object.json" else 2))
+
+    def test_the_api_key_ring_is_required(self):
+        with self.assertRaises(ConfigError) as caught:
+            enrich.api_key_ring({})
+        self.assertIn("SOURCE_CREDENTIALS_API_KEYS", str(caught.exception))
+        with self.assertRaises(ConfigError):
+            enrich.api_key_ring({"SOURCE_CREDENTIALS_API_KEYS": "test:not-base64"})
+        ring = enrich.api_key_ring({"SOURCE_CREDENTIALS_API_KEYS": "2026-11:" + "A" * 43 + "="})
+        self.assertEqual((ring.kind, ring.current), ("api", "2026-11"))
+
+    def test_the_worker_refuses_to_start_without_the_ring_and_never_reads_slack_bot_token(self):
+        env = {"DATABASE_URL": "postgresql://u:p@127.0.0.1:1/db", "SLACK_BOT_TOKEN": TOKEN}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(enrich.main([]), 1)
+        self.assertIn("SOURCE_CREDENTIALS_API_KEYS", err.getvalue())
+
+    def test_a_workspace_token_never_prints_its_token(self):
+        from workspaces import WorkspaceToken
+
+        token = WorkspaceToken(TEAM, "acme", TOKEN, BOT, datetime(2026, 11, 11, tzinfo=timezone.utc))
+        self.assertNotIn(TOKEN, repr(token))
+        self.assertNotIn(TOKEN, str(token))
 
     def test_seed_refuses_a_bad_tenant(self):
         with self.assertRaises(ConfigError):

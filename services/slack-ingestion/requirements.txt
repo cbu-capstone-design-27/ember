@@ -1,3 +1,4 @@
-# enrich.py, models.py and pg_gates.py only (EMBER-67). receiver.py and pull_test.py stay stdlib-only.
+# enrich.py, models.py, pg_gates.py and workspaces.py only (EMBER-67, EMBER-148). receiver.py and pull_test.py stay stdlib-only.
 SQLAlchemy[asyncio]==2.0.54
 psycopg[binary]==3.2.13
+cryptography==50.0.2          # source_credentials.py, copied from packages/source-credentials (EMBER-148)
