@@ -12,7 +12,7 @@ Next.js (App Router, TypeScript) serves the pages and the auth API from one Node
 | `/signup` | Step 1 of 2: name, email, password (at least 8 characters, with a strength meter). Signing up also logs in. With `?next=`, it goes back there instead of onboarding. |
 | `/onboarding` | Step 2 of 2: a grid of the launch sources (GitHub, GitLab, Jira, Slack, Teams). Pick one or more. Anyone signed in without sources lands here. |
 | `/login` | Email and password. Goes back to `?next=` (same-site paths only). |
-| `/dashboard` | **Needs attention** (where the sources disagree, with the evidence from each, and a one-click fix), summary numbers, **work in flight** (each ticket with its PR and where it was last discussed), your sources, and recent activity. Everything is clickable: cards, evidence, rows, numbers and activity open a detail drawer. |
+| `/dashboard` | The active organization's real records, read from `source_records` for its tenant ([Dashboard data](#dashboard-data)): open pull requests, open issues and the last week's messages, the newest activity with a link to each original, and a record count and last activity per source. A tenant with no records, or a server on SQLite, gets an empty state. |
 | `/graph` | The knowledge graph, one shaded region per source (GitHub, Jira, Slack) with people in the middle and the cross-source links between them. Drag, zoom, search, filter by subgraph and node type. Click a node for the same details and actions as the drawer. `?focus=<node id>` opens on one node, and every "Show in graph" link uses it. |
 | `/organizations` | Create or join an organization. Anyone signed in who belongs to none lands here. Lists invites sent to your email and the organizations you're in ([Organizations](#organizations)). |
 | `/invite/<id>` | An invite link: log in or sign up, then accept or decline. Only the invited email can. |
@@ -25,13 +25,13 @@ Light and dark mode follow the system setting (`prefers-color-scheme`), in CSS o
 
 ## Sources
 
-`src/lib/sources.ts` is the catalog of the five launch sources from `docs/graph-schema.md`. The user's pick is a Better Auth field on the `user` table (`sources`, a `string[]`: JSON text on SQLite, `jsonb` on Postgres). It's validated on the server: known ids only, at least one, deduplicated, and stored in catalog order. The dashboard and the graph only show data from the picked sources.
+`src/lib/sources.ts` is the catalog of the five launch sources from `docs/graph-schema.md`. The user's pick is a Better Auth field on the `user` table (`sources`, a `string[]`: JSON text on SQLite, `jsonb` on Postgres). It's validated on the server: known ids only, at least one, deduplicated, and stored in catalog order. The graph only shows preview data from the picked sources. The dashboard shows whatever its tenant holds; the sources card also lists the picked ones that have no records yet.
 
-A user who picked only GitLab or Teams sees an empty state, because the preview has no data for those yet.
+A user who picked only GitLab or Teams sees an empty graph, because the preview has no data for those yet.
 
 ## Preview data
 
-Nothing is connected yet, so the dashboard and the graph read **`src/data/preview-workspace.json`**. It describes a made-up team, Kestrel Labs, with:
+The graph (and the drawer and actions it shares with the preview) reads **`src/data/preview-workspace.json`**. The dashboard no longer does (EMBER-125). It describes a made-up team, Kestrel Labs, with:
 - 6 people
 - 3 GitHub repositories and 11 pull requests
 - a Jira project with 17 issues, comments and status history
@@ -63,7 +63,18 @@ The rest is real code that keeps working when the data comes from the graph inst
 | `src/lib/workspace/text.ts` | Ticket keys, `repo#123`, PR links, Slack mentions and permalinks. Done, blocked and decision signals (keyword rules, standing in for the pipeline's extraction). |
 | `src/lib/workspace/insights.ts` | The rules: blockers, failing checks, status drift, stale reviews, missing links, unrecorded decisions. Each rule needs only the sources it reads. |
 | `src/lib/workspace/graph.ts` | Builds the graph in the ontology's terms: the nine node types, the relationship names from `services/pipeline/ontology/edges.py`, and `<tenant>_<source>` subgraph ids. A test checks every edge against the allowed endpoint pairs. |
-| `src/lib/workspace/summary.ts` | Dashboard numbers, the work table, the activity feed. |
+| `src/lib/workspace/summary.ts` | The preview's dashboard numbers, work table and activity feed. Nothing shows them now; they return with ticket-to-PR linking. |
+
+## Dashboard data
+
+`src/lib/source-records.ts` is the one module that reads ingestion's `source_records`, and it only reads. `loadDashboard(pool, tenant)` returns the summary numbers, the sources card and the activity feed for one tenant, and the API from EMBER-115 can wrap it as it is. Every query filters on the tenant (the active organization's, never one from the request), and `test/source-records.test.ts` shows one organization can't see another's records.
+
+- **One row per object version.** A row is unique on `(source, tenant, object_id, version)`, so everything reads the newest version of each object, ordered by the source's own time (`occurred_at`, then `id`), not by arrival ([EMBER-63](../../docs/ingestion/architecture.md#source-ordering-value-ember-63)). An object whose newest version is a tombstone (`record.tombstone` on GitHub and GitLab, `record.deleted` on Jira and Slack) is gone.
+- **Open** means each source's own words: GitHub `open`, GitLab `opened`, and for Jira any status category but `done`. A pull request GitHub also sends as an issue counts once, as a pull request. Messages are Slack's, from the last 7 days.
+- **Activity** shows pull and merge requests, issues, reviews, comments and messages. Commits, refs, labels, users and channels count toward a source's records but aren't activity. A message links to its channel: Slack's permalink needs the workspace domain, which a record doesn't hold.
+- **Not shown yet:** "Needs attention" and "Work in flight" need tickets linked to pull requests. The code for them (`insights.tsx`, `src/lib/workspace/`) stays until linking exists.
+
+Tests run against Postgres when `TEST_POSTGRES_URL` is set, with the ingestion migrations applied (CI's web job does both). The query reads every version of the tenant's rows to find the newest; if a tenant grows large enough for that to show, keep the current state in a table of its own rather than adding indexes to this one.
 
 ## Database
 

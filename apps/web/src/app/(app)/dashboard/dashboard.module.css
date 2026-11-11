@@ -100,7 +100,7 @@
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -126,6 +126,13 @@
 
 .stat:first-child {
   border-left: 0;
+}
+
+/* A figure that isn't a link: nothing opens from it */
+.statStatic,
+.statStatic:hover {
+  background: none;
+  cursor: default;
 }
 
 .stat:hover {
@@ -694,12 +701,35 @@
   color: inherit;
   font: inherit;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
   transition: background-color var(--duration-fast) var(--ease-out);
 }
 
 .activityItem:hover {
   background: var(--surface-2);
+}
+
+/* A record with no link to open */
+.activityStatic,
+.activityStatic:hover {
+  background: none;
+  cursor: default;
+}
+
+.activityTitle {
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quiet {
+  margin: 0;
+  padding: var(--space-6) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-3);
 }
 
 .activityItem:focus-visible {
