@@ -167,7 +167,16 @@ export class SlackClient {
       is_enterprise_install?: boolean;
       authed_user?: { id?: string };
     }>("oauth.v2.access", { client_id: this.config.clientId, client_secret: this.config.clientSecret, code, redirect_uri: redirectUri });
-    if (body.is_enterprise_install) throw new SlackError("an organization-wide Enterprise Grid install isn't supported", "enterprise_install");
+    if (body.is_enterprise_install) {
+      // Slack installed the app across the organization already. Take it back out, so it doesn't send
+      // events Ember stores for no one; if that fails, an org admin removes it under Manage apps
+      if (body.access_token) {
+        await this.uninstall(body.access_token).catch((error: Error) => {
+          console.warn(`[connect] Slack: couldn't uninstall a refused Enterprise Grid install: ${error.message}`);
+        });
+      }
+      throw new SlackError("an organization-wide Enterprise Grid install isn't supported", "enterprise_install");
+    }
     const teamId = body.team?.id;
     if (!isTeamId(teamId)) throw new SlackError("Slack named no workspace for the install", "no_team");
     if (body.token_type !== "bot" || !body.access_token?.startsWith("xoxb-") || !body.bot_user_id) {
@@ -199,7 +208,7 @@ export function missingScopes(granted: string): string[] {
 
 // ---------------------------------------------------------------------------
 // The `api` credential. Its JSON is what enrich:slack reads
-// (services/slack-ingestion/enrich.py, WorkspaceTokens), so the field names
+// (services/slack-ingestion/workspaces.py, WorkspaceTokens), so the field names
 // are snake_case and stable.
 
 export interface SlackCredential {

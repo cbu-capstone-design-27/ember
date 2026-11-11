@@ -132,6 +132,13 @@ describe("Slack's API", () => {
     await assert.rejects(fakeSlack(installAnswer("T0ACME")).client.exchangeCode("stale", "x"), (e: SlackError) => e.code === "invalid_code");
     const grid = fakeSlack(installAnswer("T0ACME", { team: null, is_enterprise_install: true, enterprise: { id: "E01" } }));
     await assert.rejects(grid.client.exchangeCode("good-code", "x"), (e: SlackError) => e.code === "enterprise_install");
+    // The org-wide install Slack already made is taken back out with the token it gave
+    const uninstall = grid.calls.find((c) => c.method === "apps.uninstall");
+    assert.equal(uninstall?.params.get("token"), "xoxb-T0ACME-token");
+    assert.equal(uninstall?.params.get("client_secret"), CONFIG.clientSecret);
+    // If that fails too, the install is still refused, with the same reason
+    const stuck = fakeSlack(installAnswer("T0ACME", { team: null, is_enterprise_install: true }), { uninstallError: "internal_error" });
+    await assert.rejects(stuck.client.exchangeCode("good-code", "x"), (e: SlackError) => e.code === "enterprise_install");
     const user = fakeSlack(installAnswer("T0ACME", { token_type: "user", access_token: "xoxp-1" }));
     await assert.rejects(user.client.exchangeCode("good-code", "x"), (e: SlackError) => e.code === "no_bot_token");
     const noTeam = fakeSlack(installAnswer("T0ACME", { team: { name: "?" } }));
