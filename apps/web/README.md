@@ -194,7 +194,7 @@ Settings → Connections lists every source account feeding the organization's t
 
 What was already ingested stays (EMBER-53). The tenant comes from the caller's membership, never from the form. Connecting the same account to the same organization again clears `disconnected_at`. Another organization still can't take it.
 
-Removing the source's own hook is per source, and happens before the credential is deleted. Jira deletes its dynamic webhook with the stored token ([Connect Jira](#connect-jira)), and Slack will call `apps.uninstall` (EMBER-148). GitHub's uninstall needs the App's private key, which the web app doesn't hold, so after a GitHub disconnect Settings links the owner to GitHub to uninstall `ember-ingest` there. Until they do, GitHub keeps sending events, which intake stores with no tenant.
+Removing the source's own hook is per source, and happens before the credential is deleted. Jira deletes its dynamic webhook with the stored token ([Connect Jira](#connect-jira)), and Slack uninstalls the app with `apps.uninstall` ([Connect Slack](#connect-slack)). GitHub's uninstall needs the App's private key, which the web app doesn't hold, so after a GitHub disconnect Settings links the owner to GitHub to uninstall `ember-ingest` there. Until they do, GitHub keeps sending events, which intake stores with no tenant.
 
 ### Source credentials
 
@@ -263,6 +263,36 @@ In the [Atlassian developer console](https://developer.atlassian.com/console/mya
 
 For local dev, a second app with callback `http://localhost:3000/connect/jira/callback` keeps the shared app's settings alone. Deliveries need a public `JIRA_WEBHOOK_URL`, e.g. a tunnel to a local intake.
 
+## Connect Slack
+
+An organization's owners and admins connect a Slack workspace in Settings → Connections (EMBER-148, [ADR 0010](../../docs/adr/0010-connecting-sources.md#slack-ember-148)). It is Slack's OAuth v2 install of Ember's one Slack app (`src/lib/slack-connect.ts`):
+
+1. **Connect Slack** (`/connect/slack`) sends the owner to Slack's install screen for the bot scopes in `BOT_SCOPES` (the manifest's, and no user scopes), with a `state` that a signed, 15-minute cookie ties to this browser, user and organization. The owner picks the workspace there.
+2. **The callback** (`/connect/slack/callback`) trades Slack's `code` with `oauth.v2.access`. Only someone Slack lets install apps in the workspace gets a code, and the answer names the workspace (`team.id`), which is the proof of ownership. No id the browser sends is trusted. It refuses:
+   - an answer without a bot token, or without every scope in `BOT_SCOPES` (the app's configured scopes drifted from the manifest);
+   - an organization-wide Enterprise Grid install, which it uninstalls again with the token Slack gave. A workspace inside a Grid organization is a normal install;
+   - a workspace another organization holds. Its token there is unchanged.
+3. **In one transaction** (`connectWorkspace`, through `connectAccount`), it maps the workspace's `team_id` to the tenant in `installations`, with the workspace name as `label`, and seals the bot token as the workspace's `api` credential: `{bot_token, bot_user_id, scope, app_id, installed_by, enterprise_id}`. `enrich:slack` reads it (`services/slack-ingestion/workspaces.py`), and claims a workspace's rows only once both exist, so it never sees the mapping without the token.
+4. **It hands off** the workspace's stored deliveries, now and once more 10 s later, as Connect GitHub does.
+
+Reconnecting a workspace to the same organization (after a Disconnect, or after Slack disconnected it) clears `disconnected_at` and replaces the token. Slack bot tokens don't expire (token rotation is off), so there is nothing to refresh and no keep-alive.
+
+**Disconnect** uninstalls the app from the workspace with `apps.uninstall` and the stored token, then deletes the credential. That stops Slack's events and kills the token. If Slack already removed the app (`invalid_auth`, `account_inactive`, `token_revoked`), that counts as uninstalled. If Slack can't be reached, the notice tells the owner to remove Ember under the workspace's Manage apps: until then Slack keeps sending events, which intake stores with no tenant.
+
+**Slack can end a connection too.** When a workspace removes the app, Slack sends `app_uninstalled` (and `tokens_revoked`), and any call with the dead token is refused. `enrich:slack` then disconnects the workspace, as Disconnect does, and Settings shows it disconnected, to connect again.
+
+It needs Postgres with the ingestion migrations, the Slack app's OAuth client in `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`, and `SOURCE_CREDENTIALS_API_KEYS`. Without them Settings says what is missing.
+
+### Slack app settings
+
+On the Slack app's page at [api.slack.com/apps](https://api.slack.com/apps) (created from [`services/slack-ingestion/slack-app-manifest.json`](../../services/slack-ingestion/slack-app-manifest.json)):
+
+1. **OAuth & Permissions → Redirect URLs:** `https://pi-cp.tail470a31.ts.net/connect/slack/callback`, which is `BETTER_AUTH_URL` plus the path. It is a browser redirect, so a tailnet address works. The manifest's `redirect_urls` has a placeholder to replace.
+2. **Manage Distribution → Activate Public Distribution.** Without it the app installs only into the workspace that created it. Public distribution doesn't list it in the Slack Marketplace, and installs into other workspaces fall under Slack's non-Marketplace limits on `conversations.history` and `conversations.replies` (`docs/ingestion/slack.md`, Rate limits).
+3. **Basic Information → App Credentials:** put the Client ID and Client Secret in the vault as `vault_slack_client_id` and `vault_slack_client_secret`. Then run `make web-secret`, commit `infra/k8s/apps/web/auth.sops.yaml`, and restart the web app. The Signing Secret stays where it is, in intake's Secret: one per app, whatever the workspace.
+
+For local dev, a second Slack app with Redirect URL `http://localhost:3000/connect/slack/callback` keeps the shared app's settings alone. If Slack refuses a plain `http://localhost` URL there, use an HTTPS tunnel to the local app and its address.
+
 ## Settings
 
 | Variable | Required | Meaning |
@@ -275,6 +305,7 @@ For local dev, a second app with callback `http://localhost:3000/connect/jira/ca
 | `GITHUB_APP_SLUG` | no | The App's URL name, `github.com/apps/<slug>`. Defaults to `ember-ingest`. |
 | `JIRA_OAUTH_CLIENT_ID`, `JIRA_OAUTH_CLIENT_SECRET` | no | The Atlassian 3LO app's client, for [Connect Jira](#connect-jira). Unset means Settings can't connect Jira. |
 | `JIRA_WEBHOOK_URL` | no | Where Jira sends the webhooks Connect Jira registers: intake's public `/webhook/jira`, over https. |
+| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | no | The Slack app's OAuth client, for [Connect Slack](#connect-slack). Unset means Settings can't connect Slack. |
 | `SOURCE_CREDENTIALS_API_KEYS`, `SOURCE_CREDENTIALS_WEBHOOK_KEYS` | no | The key rings that seal [source credentials](#source-credentials): `<key id>:<base64 of 32 bytes>`, comma-separated, the sealing key first. Unset means no source that stores a credential can be connected. |
 
 ## Run

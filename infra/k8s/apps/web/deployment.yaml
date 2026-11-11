@@ -85,6 +85,21 @@ spec:
                   name: web-auth
                   key: JIRA_OAUTH_CLIENT_SECRET
                   optional: true
+            # The Slack app's OAuth client, for Connect Slack (EMBER-148, apps/web/README.md). Without them
+            # Settings says Connect Slack isn't set up. The app's Redirect URL is BETTER_AUTH_URL below +
+            # /connect/slack/callback
+            - name: SLACK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: SLACK_CLIENT_ID
+                  optional: true
+            - name: SLACK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: SLACK_CLIENT_SECRET
+                  optional: true
             # Where the webhooks Connect Jira registers send to: intake, through the public Funnel address
             - name: JIRA_WEBHOOK_URL
               value: https://ember.tail470a31.ts.net/webhook/jira

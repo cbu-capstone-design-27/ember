@@ -5,7 +5,9 @@
 #   With vault_web_github_client_id and vault_web_github_client_secret (the ember-ingest App's OAuth
 #   client, EMBER-130), it holds those too, and Settings offers Connect GitHub. With
 #   vault_jira_oauth_client_id and vault_jira_oauth_client_secret (the Atlassian 3LO app, EMBER-131),
-#   it holds those too, and Settings offers Connect Jira.
+#   it holds those too, and Settings offers Connect Jira. With vault_slack_client_id and
+#   vault_slack_client_secret (the Slack app's OAuth client, EMBER-148), it holds those too, and
+#   Settings offers Connect Slack.
 # test-accounts: creates the test accounts (files/web_test_accounts.py) on the deployed app, with the
 #   password in vault_web_test_password, or checks they are there. Use make web-test-accounts.
 # serve: on each node, `tailscale serve` answers https://<node>.<tailnet_domain> with a certificate
@@ -30,7 +32,8 @@
       stringData: >-
         {{ web_auth
            | combine(web_github if vault_web_github_client_id is defined else {})
-           | combine(web_jira if vault_jira_oauth_client_id is defined else {}) }}
+           | combine(web_jira if vault_jira_oauth_client_id is defined else {})
+           | combine(web_slack if vault_slack_client_id is defined else {}) }}
     web_auth:
       BETTER_AUTH_SECRET: "{{ vault_web_better_auth_secret | default('') }}"
     web_github:
@@ -39,6 +42,9 @@
     web_jira:
       JIRA_OAUTH_CLIENT_ID: "{{ vault_jira_oauth_client_id | default('') }}"
       JIRA_OAUTH_CLIENT_SECRET: "{{ vault_jira_oauth_client_secret | default('') }}"
+    web_slack:
+      SLACK_CLIENT_ID: "{{ vault_slack_client_id | default('') }}"
+      SLACK_CLIENT_SECRET: "{{ vault_slack_client_secret | default('') }}"
   tasks:
     - name: Secret
       tags: [secret]
@@ -81,6 +87,22 @@
               Set both vault_jira_oauth_client_id and vault_jira_oauth_client_secret (the Atlassian 3LO app's
               Client ID and Secret, from its Settings page in the developer console), without spaces around
               them, with .venv/bin/ansible-vault edit group_vars/all/vault.yml, or neither
+            quiet: true
+          no_log: true
+
+        - name: Require both halves of the Slack app's OAuth client, or neither
+          ansible.builtin.assert:
+            that:
+              - (vault_slack_client_id is defined) == (vault_slack_client_secret is defined)
+              - >-
+                vault_slack_client_id is not defined or
+                (vault_slack_client_id | length > 0 and vault_slack_client_secret | length > 0
+                 and vault_slack_client_id == vault_slack_client_id | trim
+                 and vault_slack_client_secret == vault_slack_client_secret | trim)
+            fail_msg: >-
+              Set both vault_slack_client_id and vault_slack_client_secret (the Slack app's Client ID and
+              Client Secret, from Basic Information -> App Credentials), without spaces around them, with
+              .venv/bin/ansible-vault edit group_vars/all/vault.yml, or neither
             quiet: true
           no_log: true
 

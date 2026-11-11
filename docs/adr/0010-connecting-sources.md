@@ -79,7 +79,7 @@ The other cases:
 - **`installation:deleted` and `installation:suspend`.** `enrich:github` sets `disconnected_at`, as `github-webhooks.md` already plans. Stored data stays (EMBER-53). `unsuspend` clears it.
 - **Reinstall.** A new install gets a new installation id, so it is a new connection through the same flow. If its `external_id` was connected to a different tenant before, it is refused (see [Moving](#disconnecting-reinstalling-and-moving)).
 
-#### Slack
+#### Slack (EMBER-148)
 
 The Slack connector already plans for this (`slack.md`, Install and multi-workspace):
 
@@ -88,6 +88,20 @@ The Slack connector already plans for this (`slack.md`, Install and multi-worksp
 - **`app_uninstalled`, and `tokens_revoked` naming our bot user,** make `enrich:slack` set `disconnected_at`, as `slack-webhooks.md` specifies.
 - **Reconnecting** the same workspace to the same tenant clears `disconnected_at` and replaces the token.
 - **Enterprise Grid** organization-wide installs are out of scope.
+
+**As built (EMBER-148, 2026-11-11):**
+
+- **The install asks for the manifest's bot scopes and nothing else**, with no user scopes. The callback refuses an answer missing any of them, without storing anything. An organization-wide Grid install is refused and uninstalled again with the token Slack gave. A workspace inside a Grid organization is a normal install.
+- **The mapping and the token are written in one transaction.** `connectAccount` takes an optional credential and stores it with the `installations` row, so enrich never sees a workspace mapped without its token.
+- **The `api` credential holds** `bot_token`, `bot_user_id`, `scope`, `app_id`, `installed_by` and `enterprise_id`. Bot tokens don't expire, since token rotation is off, so nothing refreshes them and there is no keep-alive.
+- **Enrich reads Slack only with Connect Slack's tokens, and a workspace's token only for the rows of the tenant that connected it** (`services/slack-ingestion/workspaces.py`), as Jira does. The single `SLACK_BOT_TOKEN` enrich used before is gone, with no fallback. Unlike Jira, a row with no token isn't claimed and failed: it waits unclaimed until its workspace is connected, which is what a connect's hand-off wakes. The worker logs how many rows wait per workspace. `make map-tenant` still assigns Slack rows a tenant, but enrich reads them only once that tenant connects the workspace. That includes `ember-development`'s workspace, mapped by hand before this.
+- **Rate limits are per workspace:** bucket `<team_id>/<method>` in `rate_limits`, since Slack counts per method, per workspace, per app.
+- **Disconnect uninstalls the app** with `apps.uninstall` and the stored token, before deleting it. An app the workspace already removed counts as uninstalled. If Slack can't be reached, the notice asks the owner to remove Ember under the workspace's Manage apps.
+- **Slack's side ends a connection three ways, and enrich handles each as Disconnect does, less `apps.uninstall`:** it sets `disconnected_at` and deletes the credential. That goes beyond "an enrich worker updates only `disconnected_at`" above, as Jira's keep-alive does: a dead token is no use to keep.
+  - `app_uninstalled`.
+  - `tokens_revoked` naming our bot. Revoked user tokens alone change nothing, since Ember holds none.
+  - Slack refusing the token on a call (`invalid_auth`, `token_revoked`, `account_inactive`, ...). The row rolls back and waits for a reconnect, instead of being given up on.
+- **A reconnect is never undone by a stale signal.** These two events are claimed whatever the connection's state, so they never sit pending. They disconnect only if the stored token is older than the event's `event_time`. A refused call disconnects only if the stored token is still the one that was refused. The `installations` row is locked meanwhile, so a reconnect committing at the same moment is seen.
 
 #### Jira (EMBER-131)
 
