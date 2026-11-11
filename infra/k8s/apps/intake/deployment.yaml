@@ -81,7 +81,16 @@ spec:
                   name: intake-webhooks
                   key: JIRA_OAUTH_CLIENT_SECRET
                   optional: true
-            # Serves /webhook/gitlab (services/intake/README.md, GitLab adapter)
+            # Opens the signing token Connect GitLab stores for each group (EMBER-149): the webhook key
+            # ring only, never the api one. The running image ignores it until the Connect GitLab build is pinned
+            - name: SOURCE_CREDENTIALS_WEBHOOK_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: source-credentials-webhook
+                  key: SOURCE_CREDENTIALS_WEBHOOK_KEYS
+                  optional: true
+            # Serves /webhook/gitlab (services/intake/README.md, GitLab adapter). Shared, for the webhook set up
+            # by hand before Connect GitLab: it verifies only groups with no stored signing token
             - name: GITLAB_WEBHOOK_SIGNING_TOKEN
               valueFrom:
                 secretKeyRef:

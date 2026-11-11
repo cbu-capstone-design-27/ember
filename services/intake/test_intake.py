@@ -41,6 +41,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "packages" / "ingestion-envelope"))
+sys.path.insert(0, str(REPO / "packages" / "source-credentials"))
 
 import intake  # noqa: E402
 import jwt  # noqa: E402
@@ -49,7 +50,8 @@ from adapters.github import RECOMMENDED_WEBHOOK_EVENTS, GitHubAdapter  # noqa: E
 from adapters.gitlab import GitLabAdapter  # noqa: E402
 from adapters.jira import JiraAdapter  # noqa: E402
 from adapters.slack import SlackAdapter  # noqa: E402
-from models import Installation, RawEvent  # noqa: E402
+from models import Installation, RawEvent, SourceCredential  # noqa: E402
+from source_credentials import KeyRing  # noqa: E402
 from validate import assert_valid  # noqa: E402
 
 MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
@@ -68,6 +70,11 @@ GITLAB_SIGNING_TOKEN = "whsec_" + base64.b64encode(GITLAB_KEY).decode()
 GITLAB_SECRET_TOKEN = "test-gitlab-secret-token"
 GITLAB_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "gitlab.json").read_text())["body"]
 GITLAB_ACCOUNT = "gitlab.com/acme"  # X-Gitlab-Instance's host and the fixture's top-level group
+# EMBER-149: the webhook key ring, and the signing token Connect GitLab stored for gitlab.com/acme
+WEBHOOK_KEYS = "test:" + base64.b64encode(bytes(range(32))).decode()
+WEBHOOK_RING = KeyRing.parse("webhook", WEBHOOK_KEYS)
+ACME_KEY = b"acme-own-signing-key-from-connect-gitlab"
+ACME_SIGNING_TOKEN = "whsec_" + base64.b64encode(ACME_KEY).decode()
 
 
 def database_url() -> str:
@@ -183,12 +190,17 @@ class Server:
     """create_app served by uvicorn on a free port, inside the test's event loop."""
 
     def __init__(self, url: str, registry: CollectorRegistry | None = None, *, timeout: float = intake.DB_TIMEOUT,
-                 deadline: float = intake.STORE_DEADLINE) -> None:
+                 deadline: float = intake.STORE_DEADLINE, gitlab_shared: str | None = GITLAB_SIGNING_TOKEN,
+                 gitlab_stored: bool = False) -> None:
+        """gitlab_stored: verify GitLab with the tokens Connect GitLab stored (EMBER-149); gitlab_shared: the shared token."""
         self.port = free_port()
         self.base = f"http://127.0.0.1:{self.port}"
-        app = intake.create_app(intake.create_engine(url, timeout), {"github": GitHubAdapter(SECRET), "slack": SlackAdapter(SLACK_SECRET),
-                                                                    "jira": JiraAdapter(JIRA_SECRET, JIRA_OAUTH_SECRET), "gitlab": GitLabAdapter(GITLAB_SIGNING_TOKEN),
-                                                                    "teams": FakeTeams()},
+        engine = intake.create_engine(url, timeout)
+        tokens = intake.StoredSigningTokens(engine, WEBHOOK_RING) if gitlab_stored else None
+        app = intake.create_app(engine, {"github": GitHubAdapter(SECRET), "slack": SlackAdapter(SLACK_SECRET),
+                                         "jira": JiraAdapter(JIRA_SECRET, JIRA_OAUTH_SECRET),
+                                         "gitlab": GitLabAdapter(gitlab_shared or "", tokens=tokens),
+                                         "teams": FakeTeams()},
                                 registry, deadline=deadline)
         self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning"))
 
@@ -250,7 +262,7 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
                 for s in family.samples if s.name == "intake_deliveries_total"}
 
     async def test_models_match_the_migrated_schema(self):
-        for model in (RawEvent, Installation):
+        for model in (RawEvent, Installation, SourceCredential):
             table = model.__table__
             rows = await self.db.fetch(
                 "select column_name, is_nullable = 'YES' as nullable from information_schema.columns"
@@ -851,8 +863,9 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
         legacy = GitLabAdapter("", GITLAB_SECRET_TOKEN)
         both = GitLabAdapter(GITLAB_SIGNING_TOKEN, GITLAB_SECRET_TOKEN)
         token = {"x-gitlab-token": GITLAB_SECRET_TOKEN}
-        legacy.verify(Delivery(token, {}, body))
-        both.verify(Delivery({**{k.lower(): v for k, v in headers.items()}, **token}, {}, body))
+        # verify is async since EMBER-149, which may look up the account's own token
+        await legacy.verify(Delivery(token, {}, body))
+        await both.verify(Delivery({**{k.lower(): v for k, v in headers.items()}, **token}, {}, body))
         cases = [
             ("legacy, wrong token", legacy, {"x-gitlab-token": "other"}),
             ("legacy, no token", legacy, {}),
@@ -861,7 +874,7 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
         ]
         for name, adapter, case_headers in cases:
             with self.subTest(name), self.assertRaises(Unauthorized):
-                adapter.verify(Delivery(case_headers, {}, body))
+                await adapter.verify(Delivery(case_headers, {}, body))
 
     async def test_adding_a_source_is_adding_an_adapter(self):
         self.assertEqual(await self.intake.post("/webhook/teams?validationToken=abc", b"", {}), (200, "abc"))
@@ -880,14 +893,148 @@ class IntakeTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f"`{event}`", readme)
 
 
+class ConnectedGitLabTest(unittest.IsolatedAsyncioTestCase):
+    """EMBER-149: a group connected from the web app is verified with its own signing token."""
+
+    async def asyncSetUp(self):
+        self.db = await asyncpg.connect(database_url())
+        await self.db.execute("truncate raw_events, installations restart identity cascade")
+        await self.db.execute("insert into installations (source, account_id, tenant) values"
+                              " ('gitlab', $1, 'acme'), ('gitlab', 'gitlab.com/globex', 'globex'),"
+                              " ('gitlab', 'gitlab.com/initech', 'initech')", GITLAB_ACCOUNT)
+        await self.store_token(GITLAB_ACCOUNT, ACME_SIGNING_TOKEN)
+        await self.store_token("gitlab.com/globex", "whsec_" + base64.b64encode(b"globex-own-key").decode())
+        self.servers: list[Server] = []
+
+    async def asyncTearDown(self):
+        for server in self.servers:
+            await server.__aexit__()
+        await self.db.close()
+
+    async def store_token(self, account: str, token: str, *, source: str = "gitlab") -> None:
+        sealed = WEBHOOK_RING.seal(source, account, {"signing_tokens": [token]})
+        await self.db.execute("insert into source_credentials (source, account_id, kind, key_id, ciphertext)"
+                              " values ($1, $2, 'webhook', $3, $4)", source, account, sealed.key_id, sealed.ciphertext)
+
+    async def serve(self, **kwargs) -> Server:
+        server = await Server(database_url(), gitlab_stored=True, **kwargs).__aenter__()
+        self.servers.append(server)
+        return server
+
+    @staticmethod
+    def of(group: str) -> dict:
+        return {**GITLAB_FIXTURE, "project": {**GITLAB_FIXTURE["project"], "path_with_namespace": f"{group}/app"}}
+
+    async def rows(self):
+        return [(r["delivery_id"], r["account_id"], r["tenant"])
+                for r in await self.db.fetch("select * from raw_events order by id")]
+
+    async def test_a_connected_group_lands_under_its_tenant_with_its_own_token(self):
+        server = await self.serve(gitlab_shared=None)
+        self.assertEqual(await server.post("/webhook/gitlab", *gitlab(GITLAB_FIXTURE, "own", key=ACME_KEY)),
+                         (200, '{"status":"stored"}'))
+        self.assertEqual(await self.rows(), [("own", GITLAB_ACCOUNT, "acme")])
+
+    async def test_each_webhook_of_a_group_verifies_with_its_own_token(self):
+        # On Free every project has its own webhook, and GitLab generates each one's signing token
+        second_key = b"acme-second-project-webhook-key"
+        sealed = WEBHOOK_RING.seal("gitlab", GITLAB_ACCOUNT, {"signing_tokens": [
+            ACME_SIGNING_TOKEN, "whsec_" + base64.b64encode(second_key).decode()]})
+        await self.db.execute("update source_credentials set key_id = $1, ciphertext = $2 where account_id = $3",
+                              sealed.key_id, sealed.ciphertext, GITLAB_ACCOUNT)
+        server = await self.serve(gitlab_shared=None)
+        for n, key in enumerate((ACME_KEY, second_key)):
+            self.assertEqual((await server.post("/webhook/gitlab", *gitlab(GITLAB_FIXTURE, f"hook-{n}", key=key)))[0], 200)
+        self.assertEqual((await server.post("/webhook/gitlab", *gitlab(GITLAB_FIXTURE, "other", key=b"x" * 32)))[0], 401)
+        self.assertEqual(await self.rows(), [("hook-0", GITLAB_ACCOUNT, "acme"), ("hook-1", GITLAB_ACCOUNT, "acme")])
+
+    async def test_a_group_connected_before_its_webhook_keeps_the_shared_token_meanwhile(self):
+        # Connected from the web app, no webhook token pasted yet: the hand-made webhook still lands
+        sealed = WEBHOOK_RING.seal("gitlab", GITLAB_ACCOUNT, {"signing_tokens": []})
+        await self.db.execute("update source_credentials set key_id = $1, ciphertext = $2 where account_id = $3",
+                              sealed.key_id, sealed.ciphertext, GITLAB_ACCOUNT)
+        server = await self.serve()
+        self.assertEqual((await server.post("/webhook/gitlab", *gitlab(GITLAB_FIXTURE, "shared")))[0], 200)
+        self.assertEqual(await self.rows(), [("shared", GITLAB_ACCOUNT, "acme")])
+
+    async def test_only_the_accounts_own_token_verifies_it(self):
+        server = await self.serve()  # the shared token is configured too
+        cases = [
+            # The shared token no longer verifies a group that has its own
+            ("shared token", gitlab(GITLAB_FIXTURE, "shared")),
+            # Another connected group's token, on a body naming acme
+            ("another group's token", gitlab(GITLAB_FIXTURE, "globex", key=b"globex-own-key")),
+            # acme's token, on a body naming globex: the account picks the token, so it fails globex's
+            ("signed by acme, names globex", gitlab(self.of("globex"), "spoof", key=ACME_KEY)),
+            ("unsigned", (gitlab(GITLAB_FIXTURE)[0], {"webhook-id": "x", "X-Gitlab-Instance": "https://gitlab.com"})),
+        ]
+        for name, (body, headers) in cases:
+            with self.subTest(name):
+                self.assertEqual((await server.post("/webhook/gitlab", body, headers))[0], 401)
+        self.assertEqual(await self.rows(), [])
+
+    async def test_an_account_with_no_signing_token_is_rejected(self):
+        server = await self.serve(gitlab_shared=None)
+        # initech is mapped but has no stored token; other-group is neither
+        for n, group in enumerate(("initech", "other-group")):
+            with self.subTest(group):
+                for key in (ACME_KEY, GITLAB_KEY):
+                    self.assertEqual((await server.post("/webhook/gitlab", *gitlab(self.of(group), f"{n}-{key[:4]}",
+                                                                                     key=key)))[0], 401)
+        # No account at all: nothing to look up
+        no_project = {k: v for k, v in GITLAB_FIXTURE.items() if k != "project"}
+        self.assertEqual((await server.post("/webhook/gitlab", *gitlab(no_project, "none", key=ACME_KEY)))[0], 401)
+        self.assertEqual(await self.rows(), [])
+
+    async def test_the_shared_token_still_serves_groups_set_up_by_hand(self):
+        server = await self.serve()
+        self.assertEqual((await server.post("/webhook/gitlab", *gitlab(self.of("initech"), "by-hand")))[0], 200)
+        self.assertEqual((await server.post("/webhook/gitlab", *gitlab(self.of("other-group"), "unmapped")))[0], 200)
+        self.assertEqual(await self.rows(), [("by-hand", "gitlab.com/initech", "initech"),
+                                             ("unmapped", "gitlab.com/other-group", None)])
+
+    async def test_disconnect_deletes_the_token_so_the_webhook_is_refused(self):
+        server = await self.serve(gitlab_shared=None)
+        self.assertEqual((await server.post("/webhook/gitlab", *gitlab(GITLAB_FIXTURE, "before", key=ACME_KEY)))[0], 200)
+        # What the web app's Disconnect does (lib/connections.ts disconnectAccount)
+        await self.db.execute("update installations set disconnected_at = now() where source = 'gitlab' and account_id = $1",
+                              GITLAB_ACCOUNT)
+        await self.db.execute("delete from source_credentials where source = 'gitlab' and account_id = $1", GITLAB_ACCOUNT)
+        self.assertEqual((await server.post("/webhook/gitlab", *gitlab(GITLAB_FIXTURE, "after", key=ACME_KEY)))[0], 401)
+        self.assertEqual(await self.rows(), [("before", GITLAB_ACCOUNT, "acme")])
+
+    async def test_a_token_stored_for_another_account_or_source_does_not_open(self):
+        # A row copied to another account fails AES-GCM's additional data, and is a bug, not a 401
+        sealed = WEBHOOK_RING.seal("gitlab", GITLAB_ACCOUNT, {"signing_tokens": [ACME_SIGNING_TOKEN]})
+        await self.db.execute("update source_credentials set key_id = $1, ciphertext = $2"
+                              " where source = 'gitlab' and account_id = 'gitlab.com/globex'", sealed.key_id, sealed.ciphertext)
+        server = await self.serve(gitlab_shared=None)
+        status, _ = await server.post("/webhook/gitlab", *gitlab(self.of("globex"), "copied", key=ACME_KEY))
+        self.assertEqual(status, 500)
+        # Other sources' webhook rows are never read as GitLab's
+        await self.db.execute("insert into installations (source, account_id, tenant) values ('jira', 'gitlab.com/hooli', 'hooli')")
+        await self.store_token("gitlab.com/hooli", ACME_SIGNING_TOKEN, source="jira")
+        self.assertEqual((await server.post("/webhook/gitlab", *gitlab(self.of("hooli"), "jira-row", key=ACME_KEY)))[0], 401)
+        self.assertEqual(await self.rows(), [])
+
+    def test_the_adapter_needs_some_way_to_verify(self):
+        with self.assertRaisesRegex(ValueError, "is required"):
+            GitLabAdapter()
+        GitLabAdapter(tokens=intake.StoredSigningTokens(None, WEBHOOK_RING))  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "webhook key ring"):
+            intake.StoredSigningTokens(None, KeyRing.parse("api", WEBHOOK_KEYS))  # type: ignore[arg-type]
+
+
 class ProcessTest(unittest.IsolatedAsyncioTestCase):
     """`python3 intake.py` as the container runs it."""
 
     def env(self, **extra: str) -> dict:
         env = {k: v for k, v in os.environ.items()
                if k not in ("GITHUB_WEBHOOK_SECRET", "SLACK_SIGNING_SECRET", "JIRA_WEBHOOK_SECRET", "DATABASE_URL",
-                             *intake.GITLAB_TOKENS)}
-        return {**env, "DATABASE_URL": database_url(), **extra}
+                             "SOURCE_CREDENTIALS_WEBHOOK_KEYS", *intake.GITLAB_TOKENS)}
+        # The image copies source_credentials.py beside intake.py; here it stays in packages/
+        path = os.pathsep.join(p for p in (str(REPO / "packages" / "source-credentials"), env.get("PYTHONPATH")) if p)
+        return {**env, "DATABASE_URL": database_url(), "PYTHONPATH": path, **extra}
 
     def test_refuses_to_start_without_a_usable_webhook_secret(self):
         for secret, message in ((None, "is required"), ("  ", "is required"), ("secret\n", "has leading or trailing")):
@@ -920,13 +1067,25 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn(f"GITLAB_WEBHOOK_SIGNING_TOKEN {message}", result.stderr)
 
+    def test_refuses_to_start_with_an_unreadable_webhook_key_ring(self):
+        for ring in ("no-colon", "test:not base64!", "test:" + base64.b64encode(b"short").decode()):
+            with self.subTest(ring):
+                result = subprocess.run([sys.executable, str(HERE / "intake.py")],
+                                        env=self.env(GITHUB_WEBHOOK_SECRET=SECRET, SOURCE_CREDENTIALS_WEBHOOK_KEYS=ring),
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("SOURCE_CREDENTIALS_WEBHOOK_KEYS can't be read", result.stderr)
+                self.assertNotIn("not base64!", result.stderr.replace("'test'", ""))
+
     async def test_gitlab_is_served_only_with_a_token(self):
         signed = gitlab(GITLAB_FIXTURE, "process-signed")
         legacy = (gitlab(GITLAB_FIXTURE)[0], {"Idempotency-Key": "process-legacy", "X-Gitlab-Token": GITLAB_SECRET_TOKEN,
                                                "Content-Type": "application/json"})
         cases = (({}, "github", signed, 404),
                  ({"GITLAB_WEBHOOK_SIGNING_TOKEN": GITLAB_SIGNING_TOKEN}, "github, gitlab", signed, 200),
-                 ({"GITLAB_WEBHOOK_SECRET_TOKEN": GITLAB_SECRET_TOKEN}, "github, gitlab", legacy, 200))
+                 ({"GITLAB_WEBHOOK_SECRET_TOKEN": GITLAB_SECRET_TOKEN}, "github, gitlab", legacy, 200),
+                 # EMBER-149: the key ring alone serves GitLab, and an account with no stored token gets a 401
+                 ({"SOURCE_CREDENTIALS_WEBHOOK_KEYS": WEBHOOK_KEYS}, "github, gitlab", signed, 401))
         for extra, sources, (body, headers), status in cases:
             with self.subTest(extra=sorted(extra)):
                 port = free_port()

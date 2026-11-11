@@ -88,6 +88,9 @@ spec:
             # Where the webhooks Connect Jira registers send to: intake, through the public Funnel address
             - name: JIRA_WEBHOOK_URL
               value: https://ember.tail470a31.ts.net/webhook/jira
+            # The webhook URL Connect GitLab (EMBER-149) tells owners to add to their group or projects
+            - name: GITLAB_WEBHOOK_URL
+              value: https://ember.tail470a31.ts.net/webhook/gitlab
             # Seal the credentials an owner connects a source with into source_credentials (EMBER-147,
             # ADR 0010). The web app holds both kinds; enrich gets only api, intake only webhook. From
             # k8s/apps/source-credentials (make source-credentials-secret). The pod waits until both exist
