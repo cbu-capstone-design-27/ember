@@ -2,6 +2,7 @@
 
 `search` is semantic (EMBER-78): the question is embedded by the embedding service the embed worker
 uses (ADR 0001, services/embedding/README.md) and matched against source_records.embedding.
+RETRIEVAL_BACKEND picks which `Search` the server calls (EMBER-122): this one, or a graph backend in graph.py.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from typing import TypedDict
+from typing import NotRequired, Protocol, TypedDict
 
 import asyncpg
 
@@ -34,6 +35,13 @@ class EmbeddingError(Exception):
     """The embedding service isn't configured, can't be reached, or returned the wrong vector. Safe to show the agent."""
 
 
+class Via(TypedDict):
+    """Why a graph backend added a hit: the seed hit it is one edge away from, and that edge's type."""
+    seed_source: str
+    seed_object_id: str
+    edge: str
+
+
 class Hit(TypedDict):
     source: str
     kind: str
@@ -44,6 +52,7 @@ class Hit(TypedDict):
     snippet: str
     url: str | None
     score: float
+    via: NotRequired[Via]   # only on hits a graph backend added
 
 
 # The payload object each enrich worker stores in record.payload (GitHub, Jira, GitLab, Slack)
@@ -71,11 +80,12 @@ URL = f"""coalesce(
 # Nearest embedded rows by cosine distance, ordered on the HNSW index. A row counts only while it is
 # its object's newest version and that version isn't a delete. Rows the embed worker hasn't reached are skipped.
 SEARCH = f"""
-select source, kind, object_id, version, occurred_at, {TITLE} as title,
+select id, tenant, source, kind, object_id, version, occurred_at, {TITLE} as title,
        left(embed_text, {SNIPPET_CHARS}) as snippet, {URL} as url, 1 - (embedding <=> $1::text::vector) as score
 from source_records r
 where embedding is not null
   and ($3::text[] is null or source = any($3))
+  and ($4::text is null or tenant = $4)
   and not (record ? 'tombstone' or record ? 'deleted')
   and not exists (select 1 from source_records n
                   where (n.source, n.tenant, n.object_id) = (r.source, r.tenant, r.object_id)
@@ -127,17 +137,37 @@ def embed_query(question: str) -> list[float]:
     return vector
 
 
-async def search(question: str, k: int = 8, sources: list[str] | None = None) -> list[Hit]:
-    """The k embedded source_records nearest to question in meaning, newest version per object, best first."""
+class Search(Protocol):
+    """The retrieval interface agreed for EMBER-119: question in, ranked hits out, best first. tenant None
+    searches every tenant. Every backend implements it, so the MCP server never changes when one is replaced."""
+
+    async def __call__(self, question: str, k: int, sources: list[str] | None, tenant: str | None) -> list[Hit]: ...
+
+
+HIT_KEYS = ("source", "kind", "object_id", "version", "occurred_at", "title", "snippet", "url", "score")
+
+
+def hit(row) -> Hit:
+    """A SEARCH row as a Hit, without the row's id and tenant."""
+    return Hit(**{**{key: row[key] for key in HIT_KEYS}, "occurred_at": row["occurred_at"].isoformat()})
+
+
+async def nearest(question: str, k: int, sources: list[str] | None, tenant: str | None) -> list:
+    """SEARCH's rows for the question, with each row's id and tenant (the graph backends seed from them)."""
     vector = await asyncio.to_thread(embed_query, question)
     conn = await connect()
     try:
         # Keep scanning the index past rows the filters drop, so k hits come back when k exist
         await conn.execute("set hnsw.iterative_scan = strict_order")
-        rows = await conn.fetch(SEARCH, "[" + ",".join(map(str, vector)) + "]", k, sources)
+        return await conn.fetch(SEARCH, "[" + ",".join(map(str, vector)) + "]", k, sources, tenant)
     finally:
         await conn.close()
-    return [Hit(**{**dict(row), "occurred_at": row["occurred_at"].isoformat()}) for row in rows]
+
+
+async def search(question: str, k: int = 8, sources: list[str] | None = None, tenant: str | None = None) -> list[Hit]:
+    """pgvector, the default backend: the k embedded source_records nearest to question in meaning, newest
+    version per object, best first."""
+    return [hit(row) for row in await nearest(question, k, sources, tenant)]
 
 
 async def get_record(source: str, object_id: str) -> dict | None:
