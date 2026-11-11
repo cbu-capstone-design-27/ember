@@ -2,3 +2,4 @@
 # The asyncio extra pulls in greenlet, which async engines need.
 SQLAlchemy[asyncio]==2.0.54
 asyncpg==0.32.0
+cryptography==50.0.2  # opens Connect GitLab's tokens (packages/source-credentials)

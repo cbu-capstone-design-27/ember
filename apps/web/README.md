@@ -274,6 +274,23 @@ In the [Atlassian developer console](https://developer.atlassian.com/console/mya
 
 For local dev, a second app with callback `http://localhost:3000/connect/jira/callback` keeps the shared app's settings alone. Deliveries need a public `JIRA_WEBHOOK_URL`, e.g. a tunnel to a local intake.
 
+## Connect GitLab
+
+An organization's owners and admins connect a top-level GitLab group in Settings → Connections (EMBER-149, [ADR 0010](../../docs/adr/0010-connecting-sources.md#gitlab)). GitLab has no install flow that works across GitLab.com and self-managed instances, so the connection is pasted, in two steps on `/connect/gitlab`:
+
+1. **The group.** The owner enters the instance URL (https only), the top-level group's path and a `read_api` token: a group access token on Premium or Ultimate, a personal access token on Free. `connectGroup` in `src/lib/gitlab-connect.ts` then:
+   1. Reads the token (`/personal_access_tokens/self`) and refuses one that is revoked, lacks `read_api`, or can write (`api`, `write_repository` and the like): every Ember source credential is read-only.
+   2. Reads the group and refuses a subgroup, then checks that the token's user is a member of it (`/groups/:id/members/all/:user`). Reading the group alone proves nothing for a public group. The bot of a group access token is a member of its own group only, so a bot member means a group access token, the strong proof. A personal access token is accepted, and the connection's label names it as the weaker case.
+   3. Maps `<instance host>/<group path>`, the `account_id` intake derives from a delivery, to the tenant, with `<host>:<group id>` as `external_id`, so a renamed group can't move tenants either. Runs the hand-off.
+   4. Seals the token, the instance URL and what was checked as the group's `api` credential, which `enrich:gitlab` reads. A reconnect replaces it.
+2. **The webhooks.** The owner adds a webhook pointing at intake (`GITLAB_WEBHOOK_URL`) to the group (Premium) or to each project (Free), with GitLab's **Generate signing token**, and pastes each one back. `addSigningToken` appends it to the group's `webhook` credential, `{"signing_tokens": [...]}`, which intake verifies deliveries with. GitLab's page can't take a token Ember made, only its API can (with the write scope), and each webhook gets its own, hence a list (at most 200). Settings links each GitLab connection to this step as **Add a webhook**.
+
+Neither token is logged or shown again. Ember doesn't register the webhook itself: that needs the `api` scope. **Disconnect** deletes both credentials. GitLab's webhook stays until the owner removes it; intake answers it 401, and GitLab turns it off after 40 failures.
+
+The web server calls the instance URL the owner typed, so only https is accepted and redirects aren't followed: the token goes to that address and nowhere else. Only owners and admins can reach the form.
+
+It needs Postgres with the ingestion migrations, intake's address in `GITLAB_WEBHOOK_URL`, and both key rings. Without them Settings says what is missing.
+
 ## Settings
 
 | Variable | Required | Meaning |
@@ -286,6 +303,7 @@ For local dev, a second app with callback `http://localhost:3000/connect/jira/ca
 | `GITHUB_APP_SLUG` | no | The App's URL name, `github.com/apps/<slug>`. Defaults to `ember-ingest`. |
 | `JIRA_OAUTH_CLIENT_ID`, `JIRA_OAUTH_CLIENT_SECRET` | no | The Atlassian 3LO app's client, for [Connect Jira](#connect-jira). Unset means Settings can't connect Jira. |
 | `JIRA_WEBHOOK_URL` | no | Where Jira sends the webhooks Connect Jira registers: intake's public `/webhook/jira`, over https. |
+| `GITLAB_WEBHOOK_URL` | no | The webhook URL [Connect GitLab](#connect-gitlab) tells owners to add: intake's public `/webhook/gitlab`, over https. Unset means Settings can't connect GitLab. |
 | `SOURCE_CREDENTIALS_API_KEYS`, `SOURCE_CREDENTIALS_WEBHOOK_KEYS` | no | The key rings that seal [source credentials](#source-credentials): `<key id>:<base64 of 32 bytes>`, comma-separated, the sealing key first. Unset means no source that stores a credential can be connected. |
 
 ## Run

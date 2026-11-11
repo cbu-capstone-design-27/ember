@@ -11,6 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # (EMBER-83). Secrets come only from environment variables.
 COPY services/gitlab-ingestion/envelope.py services/gitlab-ingestion/receiver.py services/gitlab-ingestion/pull.py \
      services/gitlab-ingestion/models.py services/gitlab-ingestion/enrich.py ./
+# Opens Connect GitLab's tokens (packages/source-credentials/README.md: each consumer copies it in)
+COPY packages/source-credentials/source_credentials.py ./
 
 ENV GITLAB_INGESTION_PORT=8083
 EXPOSE 8083

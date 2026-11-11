@@ -1,8 +1,17 @@
-"""The GitLab project webhook adapter (docs/ingestion/gitlab-webhooks.md).
+"""The GitLab webhook adapter (docs/ingestion/gitlab-webhooks.md).
 
-Verifies the signing token (webhook-signature) and the legacy secret token (X-Gitlab-Token), each when
-it is configured, and reads the delivery's id, account, event name and ordering value. It never calls
-the GitLab API. The checks are services/gitlab-ingestion/envelope.py's, which this replaces on the cluster.
+Verifies the delivery, then reads its id, account, event name and ordering value. It never calls the
+GitLab API. The checks are services/gitlab-ingestion/envelope.py's, which this replaces on the cluster.
+
+Which token verifies it (EMBER-149, ADR 0010, GitLab):
+
+- **The account's own signing tokens,** when Connect GitLab stored any for the `account_id` the body
+  names (`tokens`). GitLab generates one per webhook, and on Free each project has its own webhook,
+  so a group can have several. Only those verify the account's deliveries.
+- **Otherwise the shared tokens,** GITLAB_WEBHOOK_SIGNING_TOKEN and GITLAB_WEBHOOK_SECRET_TOKEN, each
+  when it is configured. They serve webhooks set up by hand before Connect GitLab, until each group is
+  connected from the web app and they are dropped.
+- **Neither:** 401, so an account no one connected is never stored.
 """
 
 from __future__ import annotations
@@ -14,6 +23,7 @@ import hmac
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Protocol
 from urllib.parse import urlsplit
 
 from adapters import BadRequest, Delivery, Unauthorized
@@ -29,16 +39,22 @@ APPROVALS = ("approval", "unapproval", "approved", "unapproved")
 UPDATED_AT_KINDS = ("merge_request", "issue", "work_item", "note")
 
 
-def signing_key(token: str) -> bytes:
+class SigningTokens(Protocol):
+    """The signing tokens Connect GitLab stored, one per account (intake.py's StoredSigningTokens)."""
+
+    async def get(self, account_id: str) -> list[str]: ...  # its whsec_ tokens, one per webhook; [] when none
+
+
+def signing_key(token: str, name: str = "GITLAB_WEBHOOK_SIGNING_TOKEN") -> bytes:
     """The HMAC key in a whsec_ signing token: the base64 after the prefix."""
     if not token.startswith(SIGNING_TOKEN_PREFIX):
-        raise ValueError(f"GITLAB_WEBHOOK_SIGNING_TOKEN must start with {SIGNING_TOKEN_PREFIX}")
+        raise ValueError(f"{name} must start with {SIGNING_TOKEN_PREFIX}")
     try:
         key = base64.b64decode(token[len(SIGNING_TOKEN_PREFIX):], validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise ValueError(f"GITLAB_WEBHOOK_SIGNING_TOKEN is not base64 after {SIGNING_TOKEN_PREFIX}") from exc
+        raise ValueError(f"{name} is not base64 after {SIGNING_TOKEN_PREFIX}") from exc
     if not key:
-        raise ValueError(f"GITLAB_WEBHOOK_SIGNING_TOKEN is empty after {SIGNING_TOKEN_PREFIX}")
+        raise ValueError(f"{name} is empty after {SIGNING_TOKEN_PREFIX}")
     return key
 
 
@@ -82,37 +98,56 @@ def _token(name: str, value: str) -> str:
 class GitLabAdapter:
     name = "gitlab"
 
-    def __init__(self, signing_token: str = "", secret_token: str = "", *, clock=time.time) -> None:
-        if not signing_token.strip() and not secret_token.strip():
-            raise ValueError("GITLAB_WEBHOOK_SIGNING_TOKEN or GITLAB_WEBHOOK_SECRET_TOKEN is required:"
-                             " intake never stores an unsigned GitLab delivery")
+    def __init__(self, signing_token: str = "", secret_token: str = "", *, tokens: SigningTokens | None = None,
+                 clock=time.time) -> None:
+        if not signing_token.strip() and not secret_token.strip() and tokens is None:
+            raise ValueError("SOURCE_CREDENTIALS_WEBHOOK_KEYS, GITLAB_WEBHOOK_SIGNING_TOKEN or GITLAB_WEBHOOK_SECRET_TOKEN"
+                             " is required: intake never stores an unsigned GitLab delivery")
         self._key = signing_key(_token("GITLAB_WEBHOOK_SIGNING_TOKEN", signing_token)) if signing_token.strip() else None
         self._secret_token = _token("GITLAB_WEBHOOK_SECRET_TOKEN", secret_token) if secret_token.strip() else ""
+        self._tokens = tokens
         self._clock = clock
 
     def handshake(self, delivery: Delivery) -> None:
         return None
 
-    def verify(self, delivery: Delivery) -> None:
-        """Every configured check must pass, as the webhook may carry both."""
+    async def verify(self, delivery: Delivery) -> None:
+        """The account's own signing token when one is stored, else every configured shared check.
+
+        The account comes from the body before the body is trusted, as ADR 0010 says: it only picks
+        which token to check, and a body naming another account fails that account's signature.
+        """
+        if self._tokens is not None:
+            account = self.account_id(delivery)
+            stored = await self._tokens.get(account) if account else []
+            if stored:
+                self._check_signature([signing_key(token, f"a stored signing token for {account}") for token in stored],
+                                      delivery)
+                return
+        if self._key is None and not self._secret_token:
+            raise Unauthorized("unknown account")
         if self._key is not None:
-            message_id = delivery.headers.get("webhook-id", "")
-            timestamp = delivery.headers.get("webhook-timestamp", "")
-            signature = delivery.headers.get("webhook-signature", "")
-            if not message_id or not timestamp or not signature:
-                raise Unauthorized("missing signature")
-            try:
-                sent = int(timestamp)
-            except ValueError:
-                raise Unauthorized("invalid timestamp") from None
-            if abs(self._clock() - sent) > MAX_TIMESTAMP_SKEW:
-                raise Unauthorized("stale timestamp")
-            if not verify_signature(self._key, delivery.body, message_id, timestamp, signature):
-                raise Unauthorized("invalid signature")
+            self._check_signature([self._key], delivery)
         if self._secret_token:
             token = delivery.headers.get("x-gitlab-token", "")
             if not hmac.compare_digest(self._secret_token.encode(), token.encode()):
                 raise Unauthorized("invalid token")
+
+    def _check_signature(self, keys: list[bytes], delivery: Delivery) -> None:
+        """Passes when the delivery is signed with any of `keys`, within the replay window."""
+        message_id = delivery.headers.get("webhook-id", "")
+        timestamp = delivery.headers.get("webhook-timestamp", "")
+        signature = delivery.headers.get("webhook-signature", "")
+        if not message_id or not timestamp or not signature:
+            raise Unauthorized("missing signature")
+        try:
+            sent = int(timestamp)
+        except ValueError:
+            raise Unauthorized("invalid timestamp") from None
+        if abs(self._clock() - sent) > MAX_TIMESTAMP_SKEW:
+            raise Unauthorized("stale timestamp")
+        if not any(verify_signature(key, delivery.body, message_id, timestamp, signature) for key in keys):
+            raise Unauthorized("invalid signature")
 
     def delivery_id(self, delivery: Delivery) -> str:
         """webhook-id, else Idempotency-Key: the same value, kept across GitLab's retries and a manual Resend."""

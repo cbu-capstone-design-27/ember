@@ -41,11 +41,19 @@ spec:
                 secretKeyRef:
                   name: postgres-app
                   key: uri
-            # Calls go only here, never to a host named in a payload
+            # Opens the read_api token Connect GitLab stores for each group (EMBER-149), whose calls go to
+            # the instance the owner connected. The running image ignores it until the Connect GitLab build is pinned
+            - name: SOURCE_CREDENTIALS_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: source-credentials-api
+                  key: SOURCE_CREDENTIALS_API_KEYS
+                  optional: true
+            # The fallback token's calls go only here, never to a host named in a payload
             - name: GITLAB_BASE_URL
               value: https://gitlab.com
             # Secret enrich-gitlab-api (gitlab-api.sops.yaml): a read_api token, for the merge request
-            # diffs and long pushes a webhook lacks. One token for now, so one tenant group
+            # diffs and long pushes a webhook lacks, for groups with no Connect GitLab token
             - name: GITLAB_API_TOKEN
               valueFrom:
                 secretKeyRef:

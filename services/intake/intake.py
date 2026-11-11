@@ -4,7 +4,9 @@
         GITHUB_WEBHOOK_SECRET=... SLACK_SIGNING_SECRET=... python3 intake.py
 
 GitHub's secret is required. Slack is served only when SLACK_SIGNING_SECRET is set, so intake still
-runs where the Slack app isn't set up; /webhook/slack is then an unknown source (404).
+runs where the Slack app isn't set up; /webhook/slack is then an unknown source (404). GitLab is served
+when SOURCE_CREDENTIALS_WEBHOOK_KEYS opens the signing tokens Connect GitLab stores (EMBER-149), or a
+shared GITLAB_WEBHOOK_SIGNING_TOKEN or GITLAB_WEBHOOK_SECRET_TOKEN is set.
 
 docs/ingestion/architecture.md, "The parent listener (intake)", is the design. The source's adapter
 answers a handshake or verifies the delivery. Intake then stores it as it arrived in raw_events,
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import os
 import sys
@@ -43,10 +46,11 @@ from adapters.github import GitHubAdapter
 from adapters.gitlab import GitLabAdapter
 from adapters.jira import JiraAdapter
 from adapters.slack import SlackAdapter
-from models import Installation, RawEvent
+from models import Installation, RawEvent, SourceCredential
+from source_credentials import CredentialError, KeyRing
 
 JIRA_SECRETS = ("JIRA_WEBHOOK_SECRET", "JIRA_OAUTH_CLIENT_SECRET")  # admin webhooks, dynamic webhooks; either or both
-GITLAB_TOKENS = ("GITLAB_WEBHOOK_SIGNING_TOKEN", "GITLAB_WEBHOOK_SECRET_TOKEN")  # either or both, as set on the webhook
+GITLAB_TOKENS = ("GITLAB_WEBHOOK_SIGNING_TOKEN", "GITLAB_WEBHOOK_SECRET_TOKEN")  # shared, for webhooks set up by hand
 LOG = logging.getLogger("intake")
 MAX_BODY_BYTES = 8 * 1024 * 1024  # nginx's client_max_body_size is the same
 BODIES_IN_MEMORY = 8  # deliveries handled at once; the rest wait unread, so bodies stay under 64 MiB
@@ -104,6 +108,36 @@ async def read_body(request: Request) -> bytes | None:
     return bytes(body)
 
 
+class StoredSigningTokens:
+    """The GitLab signing tokens Connect GitLab stored (EMBER-149): one `webhook` row per account.
+
+    The web app seals `{"signing_tokens": ["whsec_...", ...]}` with the webhook key ring, one token per
+    webhook the owner added: GitLab generates each webhook's own. Disconnect deletes the row, so a
+    disconnected account's deliveries fail verification again.
+    """
+
+    def __init__(self, engine: AsyncEngine, ring: KeyRing, source: str = "gitlab") -> None:
+        if ring.kind != "webhook":
+            raise ValueError("signing tokens are sealed with the webhook key ring")
+        self.engine = engine
+        self.ring = ring
+        self.source = source
+
+    async def get(self, account_id: str) -> list[str]:
+        query = select(SourceCredential.key_id, SourceCredential.ciphertext).where(
+            SourceCredential.source == self.source, SourceCredential.account_id == account_id,
+            SourceCredential.kind == "webhook",
+        )
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query)).first()
+        if row is None:
+            return []
+        tokens = self.ring.open(self.source, account_id, row.key_id, row.ciphertext).get("signing_tokens")
+        if not isinstance(tokens, list) or not all(isinstance(token, str) and token for token in tokens):
+            raise ValueError(f"the {self.source} webhook credential for {account_id} has no signing_tokens list")
+        return tokens
+
+
 class Intake:
     def __init__(self, engine: AsyncEngine, adapters: Mapping[str, SourceAdapter], registry: CollectorRegistry,
                  deadline: float) -> None:
@@ -147,7 +181,9 @@ class Intake:
             if handshake is not None:
                 self.deliveries.labels(source, "handshake").inc()
                 return handshake
-            adapter.verify(delivery)
+            verified = adapter.verify(delivery)
+            if inspect.isawaitable(verified):  # GitLab looks up the account's own token first
+                await verified
             row = {
                 "source": source,
                 "delivery_id": adapter.delivery_id(delivery),
@@ -233,6 +269,12 @@ def main() -> int:
         print("Set DATABASE_URL, e.g. postgresql://ember:...@localhost:5432/ember?sslmode=disable", file=sys.stderr)
         return 2
     try:
+        webhook_keys = KeyRing.from_env("webhook")
+    except CredentialError as error:  # never carries key material
+        print(f"SOURCE_CREDENTIALS_WEBHOOK_KEYS can't be read: {error}", file=sys.stderr)
+        return 2
+    engine = create_engine(database_url)
+    try:
         adapters: list[SourceAdapter] = [GitHubAdapter(os.environ.get("GITHUB_WEBHOOK_SECRET", ""))]
         if os.environ.get("SLACK_SIGNING_SECRET"):
             adapters.append(SlackAdapter(os.environ["SLACK_SIGNING_SECRET"]))
@@ -240,13 +282,14 @@ def main() -> int:
         if jira_admin or jira_oauth:
             adapters.append(JiraAdapter(jira_admin, jira_oauth))
         gitlab_signing, gitlab_secret = (os.environ.get(name, "") for name in GITLAB_TOKENS)
-        if gitlab_signing or gitlab_secret:
-            adapters.append(GitLabAdapter(gitlab_signing, gitlab_secret))
+        if gitlab_signing or gitlab_secret or webhook_keys:
+            tokens = StoredSigningTokens(engine, webhook_keys) if webhook_keys else None
+            adapters.append(GitLabAdapter(gitlab_signing, gitlab_secret, tokens=tokens))
     except ValueError as error:
         print(error, file=sys.stderr)
         return 2
     LOG.info("serving /webhook/{source} for %s", ", ".join(adapter.name for adapter in adapters))
-    app = create_app(create_engine(database_url), {adapter.name: adapter for adapter in adapters})
+    app = create_app(engine, {adapter.name: adapter for adapter in adapters})
     # Not INTAKE_PORT: Kubernetes sets that name for a Service called intake
     port = int(os.environ.get("LISTEN_PORT", "8080"))
     uvicorn.run(app, host="0.0.0.0", port=port, access_log=False, log_config=None,

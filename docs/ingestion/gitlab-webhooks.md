@@ -18,7 +18,7 @@ GitLab sends the data itself (`architecture.md`, [Webhooks per source](architect
 
 ## How a delivery arrives
 
-A project webhook posts JSON to `/webhook/gitlab`. Intake checks the signing token (`webhook-signature`, an HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`) or the legacy secret token (`X-Gitlab-Token`), stores the body, and answers. There is no handshake. Intake's `gitlab` adapter (`services/intake/adapters/gitlab.py`, EMBER-83) does this, with the checks `services/gitlab-ingestion/receiver.py` makes.
+A project or group webhook posts JSON to `/webhook/gitlab`. Intake checks the signing token (`webhook-signature`, an HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`), stores the body, and answers. The token is one Connect GitLab stored for the delivery's `account_id` (EMBER-149): GitLab generates one per webhook and the owner pastes each into the web app. A group with none is checked with the shared tokens for webhooks set up by hand (signing token, or legacy secret token in `X-Gitlab-Token`), and is refused when there are none. There is no handshake. Intake's `gitlab` adapter (`services/intake/adapters/gitlab.py`, EMBER-83) does this, with the checks `services/gitlab-ingestion/receiver.py` makes.
 
 GitLab sends deliveries "asynchronously from Sidekiq nodes" and documents no order. It wants a 200 or 201 within 10 seconds on GitLab.com. A 4xx, a 5xx or a timeout is a failure. After 4 failures in a row the webhook is temporarily disabled, for 1 minute at first and up to 24 hours. After 40 it is disabled for good, until someone re-enables it. GitLab says to "prepare for duplicate events if a webhook times out".
 
@@ -146,7 +146,7 @@ Catch-up has two steps, both run by `scheduler:gitlab` and done by `enrich:gitla
 | **Confidential issues and internal notes** | Not delivered with these triggers. Reconcile skips them too | None, by design ([`gitlab.md`](gitlab.md#webhooks)) |
 | **Group-level work items (epics)** | Only group webhooks send them, which need Premium or Ultimate | None. Out of scope for project webhooks |
 | **Project renamed or moved** | `path_with_namespace` changes | Nothing to do. `object_id` uses `project.id` |
-| **Group not mapped to a tenant** | Stored with `tenant = null`, not processed | `ember-admin map` assigns the tenant and enqueues what was stored |
+| **Group not mapped to a tenant** | Refused (401): a group no one connected has no signing token. Only a webhook still on the shared token is stored with `tenant = null` | Connect GitLab maps it and hands over what was stored (`make map-tenant` for an operator) |
 | **Times from an instance older than 19.0** | `YYYY-MM-DD HH:MM:SS UTC` instead of ISO 8601 | Enrich parses both and normalizes versions |
 
 ## Open questions
