@@ -48,9 +48,9 @@ spec:
       containers:
         - name: intake
           # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
-          image: ghcr.io/cbu-capstone-design-27/ember/intake:develop-300-8a1799b
+          image: ghcr.io/cbu-capstone-design-27/ember/intake:develop-321-3cff62b
           env:
-            # The pod stays in CreateContainerConfigError until both Secrets exist
+            # The pod stays in CreateContainerConfigError until every Secret not marked optional exists
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -82,13 +82,12 @@ spec:
                   key: JIRA_OAUTH_CLIENT_SECRET
                   optional: true
             # Opens the signing token Connect GitLab stores for each group (EMBER-149): the webhook key
-            # ring only, never the api one. The running image ignores it until the Connect GitLab build is pinned
+            # ring only, never the api one. From k8s/apps/source-credentials (make source-credentials-secret)
             - name: SOURCE_CREDENTIALS_WEBHOOK_KEYS
               valueFrom:
                 secretKeyRef:
                   name: source-credentials-webhook
                   key: SOURCE_CREDENTIALS_WEBHOOK_KEYS
-                  optional: true
             # Serves /webhook/gitlab (services/intake/README.md, GitLab adapter). Shared, for the webhook set up
             # by hand before Connect GitLab: it verifies only groups with no stored signing token
             - name: GITLAB_WEBHOOK_SIGNING_TOKEN

@@ -31,24 +31,23 @@ spec:
       containers:
         - name: enrich
           # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
-          image: ghcr.io/cbu-capstone-design-27/ember/gitlab-ingestion:develop-255-f83d5ad
+          image: ghcr.io/cbu-capstone-design-27/ember/gitlab-ingestion:develop-321-3cff62b
           # The image's default command is the stdout-only receiver.py; intake receives GitLab's webhooks
           command: ["python3", "enrich.py"]
           env:
-            # The pod stays in CreateContainerConfigError until both Secrets exist
+            # The pod stays in CreateContainerConfigError until all three Secrets exist
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: postgres-app
                   key: uri
             # Opens the read_api token Connect GitLab stores for each group (EMBER-149), whose calls go to
-            # the instance the owner connected. The running image ignores it until the Connect GitLab build is pinned
+            # the instance the owner connected. From k8s/apps/source-credentials (make source-credentials-secret)
             - name: SOURCE_CREDENTIALS_API_KEYS
               valueFrom:
                 secretKeyRef:
                   name: source-credentials-api
                   key: SOURCE_CREDENTIALS_API_KEYS
-                  optional: true
             # The fallback token's calls go only here, never to a host named in a payload
             - name: GITLAB_BASE_URL
               value: https://gitlab.com
