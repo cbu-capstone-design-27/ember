@@ -15,9 +15,11 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     Index,
     Integer,
+    LargeBinary,
     Text,
     UniqueConstraint,
     text,
@@ -89,7 +91,7 @@ class SourceRecord(Base):
 
 
 class RateLimit(Base):
-    """Shared rate-limit state. Slack: one row per (workspace tenant, Web API method)."""
+    """Shared rate-limit state. Slack: one row per (tenant, "<team_id>/<Web API method>") (EMBER-148)."""
 
     __tablename__ = "rate_limits"
 
@@ -98,3 +100,38 @@ class RateLimit(Base):
     bucket: Mapped[str] = mapped_column(Text, primary_key=True)
     next_allowed_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ)
     remaining: Mapped[int | None] = mapped_column(Integer)
+
+
+class Installation(Base):
+    """Which tenant a workspace (account_id = team_id) feeds. The web app writes it (ADR 0010);
+    enrich only sets disconnected_at, on app_uninstalled or tokens_revoked (EMBER-148)."""
+
+    __tablename__ = "installations"
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    account_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    tenant: Mapped[str] = mapped_column(Text)
+    added_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=text("now()"))
+    disconnected_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    label: Mapped[str | None] = mapped_column(Text)
+    external_id: Mapped[str | None] = mapped_column(Text)
+    connected_by: Mapped[str | None] = mapped_column(Text)
+
+
+class SourceCredential(Base):
+    """A workspace's bot token, sealed by Connect Slack (packages/source-credentials). Read-only here."""
+
+    __tablename__ = "source_credentials"
+    __table_args__ = (
+        CheckConstraint("kind in ('api', 'webhook')"),
+        ForeignKeyConstraint(
+            ["source", "account_id"], ["installations.source", "installations.account_id"], ondelete="CASCADE"
+        ),
+    )
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    account_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    key_id: Mapped[str] = mapped_column(Text)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=text("now()"))

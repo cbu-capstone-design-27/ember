@@ -7,6 +7,7 @@ import type pg from "pg";
 import { activeOrganizationId, getAuth } from "../../lib/auth.ts";
 import { isPostgresDatabase } from "../../lib/db.ts";
 import { activeMembership, canConnectSources, listMemberships, type Membership, type OrgAdapter } from "../../lib/organizations.ts";
+import { KeyRing } from "../../lib/source-credentials.ts";
 
 /**
  * The address a source sends people back to. BETTER_AUTH_URL on the cluster,
@@ -55,6 +56,16 @@ export function settingsUrl(request: NextRequest, query: Record<string, string>)
 export function ingestionPool(): pg.Pool | null {
   const { database } = getAuth().options;
   return isPostgresDatabase(database) ? database.pool : null;
+}
+
+/** The api key ring connected credentials are sealed with (Jira, Slack), or null while it isn't set. */
+export function apiKeyRing(): KeyRing | null {
+  try {
+    return KeyRing.fromEnv("api");
+  } catch (error) {
+    console.warn(`[connect] SOURCE_CREDENTIALS_API_KEYS can't be read: ${(error as Error).message}`);
+    return null;
+  }
 }
 
 /** The key the state and picker cookies are signed with: Better Auth's secret. */

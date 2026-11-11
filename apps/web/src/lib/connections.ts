@@ -7,6 +7,7 @@
 // Postgres only: SQLite has no ingestion tables.
 
 import type pg from "pg";
+import { storeCredential, type KeyRing } from "./source-credentials.ts";
 
 /** Seconds between the two hand-offs. Intake gives up on a commit after 8 s. */
 export const SECOND_HAND_OFF_DELAY_MS = 10_000;
@@ -44,8 +45,16 @@ export type ConnectResult =
  * deliveries stored while it was unmapped to enrich. Run `handOff` once more
  * SECOND_HAND_OFF_DELAY_MS later: a delivery intake was storing while this
  * committed can still land without a tenant.
+ *
+ * With `credential`, the account's credential of the ring's kind is sealed
+ * and stored in the same transaction, so enrich never claims a handed-off
+ * delivery before the token to fetch it with exists (Slack, EMBER-148).
  */
-export async function connectAccount(pool: pg.Pool, input: ConnectInput): Promise<ConnectResult> {
+export async function connectAccount(
+  pool: pg.Pool,
+  input: ConnectInput,
+  credential?: { ring: KeyRing; secret: Record<string, unknown> },
+): Promise<ConnectResult> {
   const client = await pool.connect();
   let result: ConnectResult;
   try {
@@ -77,6 +86,7 @@ export async function connectAccount(pool: pg.Pool, input: ConnectInput): Promis
     );
     // The check above ran under the lock, so the conflict, if any, is this tenant's own row
     result = { ok: true, reconnected: !rows[0]?.inserted };
+    if (credential) await storeCredential(client, credential.ring, { source: input.source, accountId: input.accountId }, credential.secret);
     await client.query("commit");
   } catch (error) {
     await client.query("rollback").catch(() => {});
