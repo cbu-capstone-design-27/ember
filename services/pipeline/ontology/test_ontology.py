@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "services" / "pipeline"))
 from ontology import (  # noqa: E402
     EDGE_TYPE_MAP, EDGE_TYPES, ENTITY_TYPES, EXPECTED, SOURCES,
     EmbeddingIdentity, EmbeddingMismatch, check_embedding_identity,
-    parse_subgraph_id, subgraph_id, tenant_subgraphs,
+    graph_group_id, graph_scope, parse_subgraph_id, subgraph_id, tenant_subgraphs,
 )
 
 FIXTURES = ROOT / "packages" / "ingestion-envelope" / "fixtures"
@@ -102,6 +102,30 @@ class OntologyTests(unittest.TestCase):
         for tenant, source in [("acme_co", "github"), ("Acme", "github"), ("acme", "discord"), ("", "jira")]:
             with self.assertRaises(ValueError):
                 subgraph_id(tenant, source)
+
+    def test_graph_scope_per_source(self):
+        site = "https://Acme.atlassian.net/rest/api/3/issue"
+        cases = [
+            ("github", "Cbu/Ember#12", {"payload": {}}, None, "cbu/ember"),
+            ("github", "Cbu/Ember@abc", {"payload": {"id": "abc"}}, None, "cbu/ember"),  # a push commit
+            ("github", "900001", {"payload": {"repository": {"full_name": "Cbu/Ember"}}}, None, "cbu/ember"),
+            ("gitlab", "g/sub/p#1", {"payload": {"project": {"path_with_namespace": "G/Sub/P"}}}, None, "g/sub/p"),
+            ("jira", "10001", {"payload": {"issue": {"key": "PHO-1", "self": f"{site}/10001"}}}, None,
+             "acme.atlassian.net/PHO"),
+            # a REST comment: its project comes from the issue key extract looked up
+            ("jira", "10001/comment/5", {"payload": {"self": f"{site}/10001/comment/5", "body": "x"}},
+             {"nodes": [], "edges": [{"dst_label": "WorkItem", "dst_key": "PHO-1"}]}, "acme.atlassian.net/PHO"),
+            ("slack", "C1/1.0", {"payload": {"type": "event_callback", "team_id": "T1"}}, None, "T1"),
+            ("slack", "C1/1.0", {"payload": None, "message": {"ts": "1.0", "team": "T1"}}, None, "T1"),
+            ("slack", "U1", {"id": "U1", "team_id": "T1"}, None, "T1"),
+            ("slack", "C1/1.0", {"payload": {"type": "message", "ts": "1.0"}}, None, None),
+            ("teams", "x", {"payload": {}}, None, None),
+        ]
+        for source, object_id, record, attrs, want in cases:
+            self.assertEqual(graph_scope(source, object_id, record, attrs), want, (source, object_id))
+        self.assertEqual(graph_group_id("acme", "github", 12), "acme_github_12")
+        with self.assertRaises(ValueError):
+            graph_group_id("Acme", "github", 12)
 
     def test_embedding_identity_check(self):
         check_embedding_identity(EXPECTED)

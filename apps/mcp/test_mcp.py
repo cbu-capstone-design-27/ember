@@ -181,7 +181,7 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         self.stub.requests.clear()
         self.stub.auth.clear()
         db = await asyncpg.connect(database_url())
-        await db.execute("truncate source_records, episodes restart identity")
+        await db.execute("truncate source_records, episodes restart identity cascade")
         await db.executemany(
             "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record, embed_text, embedding)"
             " values ($1, 'acme', $2, $3, $4, $5, $6, $7, $8::text::vector)",
