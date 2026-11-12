@@ -8,6 +8,11 @@ the job queue"): LISTEN on SOURCE_RECORDS_CHANNEL (default source_records), and 
 on any notification (the payload is ignored) and on a 30 s poll. A claim takes up to EMBED_BATCH
 (default 32) rows with embedded_at null, sends them in one request to the embedding service, and
 writes embedding, embed_text and embedded_at in the same transaction, each row in its own savepoint.
+
+EMBER-166: the same for the Postgres graph, with the same model and rules. graph.nodes rows with
+embed_text and no embedding get `embedding`, graph.edges rows with a fact and no fact_embedding get
+`fact_embedding`. Their triggers NOTIFY GRAPH_CHANNEL (default graph), and a node whose embed_text
+changes loses its embedding, so it is embedded again.
 429, 5xx and network errors are retried with backoff. SIGINT or SIGTERM stops claiming, lets the
 batch in flight finish, and exits 0.
 
@@ -32,9 +37,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from models import DIMENSION, SourceRecord
+from models import DIMENSION, GraphEdge, GraphNode, SourceRecord
 
 CHANNEL = os.environ.get("SOURCE_RECORDS_CHANNEL", "source_records")
+GRAPH_CHANNEL = os.environ.get("GRAPH_CHANNEL", "graph")
 DEFAULT_MODEL = "qwen3-embedding-0.6b"
 POLL_SECONDS = 30.0
 BATCH = 32
@@ -209,7 +215,7 @@ class Worker:
         self.wake = asyncio.Event()
         self.stopping = asyncio.Event()
         # ponytail: failed rows are skipped until the next poll, in memory. The job queue's retry and dead letter replace it.
-        self.failed: set[int] = set()
+        self.failed: set[tuple[str, int]] = set()   # (table, id)
 
     def stop(self) -> None:
         self.stopping.set()
@@ -236,7 +242,8 @@ class Worker:
             async with self.engine.connect() as conn:
                 listener = (await conn.get_raw_connection()).driver_connection
                 await listener.add_listener(CHANNEL, self._notified)
-                print(f"embed listening on {CHANNEL}", flush=True)
+                await listener.add_listener(GRAPH_CHANNEL, self._notified)
+                print(f"embed listening on {CHANNEL} and {GRAPH_CHANNEL}", flush=True)
                 while not self.stopping.is_set():
                     self.wake.clear()
                     await self._drain()
@@ -254,7 +261,7 @@ class Worker:
         """Embed batches until a claim finds no row. One batch at a time: the GPU endpoint is the limit."""
         while not self.stopping.is_set():
             try:
-                if not await self.embed_batch():
+                if not await self.embed_batch() + await self.embed_graph_batch():
                     return
             except Exception as exc:  # noqa: BLE001 an outage must not stop the worker; the rows wait in Postgres
                 print(f"batch failed, retried on the next wake or poll: {exc!r}", file=sys.stderr, flush=True)
@@ -270,34 +277,62 @@ class Worker:
                 .limit(self.batch)
                 .with_for_update(skip_locked=True)
             )
-            if self.failed:
-                claim = claim.where(SourceRecord.id.not_in(self.failed))
+            if skip := self._failed("source_records"):
+                claim = claim.where(SourceRecord.id.not_in(skip))
             rows = (await session.execute(claim)).all()
             if not rows:
                 return 0
             texts: dict[int, str] = {}
             for row in rows:
                 try:
-                    texts[row.id] = embed_text(row.source, row.kind, row.record)
+                    texts[("source_records", row.id)] = embed_text(row.source, row.kind, row.record)
                 except Exception as exc:  # noqa: BLE001 a record shape we don't expect fails only itself
-                    self._fail(row.id, exc)
+                    self._fail(("source_records", row.id), exc)
             written = 0
-            for row_id, vector in (await self._embed(texts)).items():
+            for (_, row_id), vector in (await self._embed(texts)).items():
                 try:
                     async with session.begin_nested():
                         await session.execute(
                             update(SourceRecord)
                             .where(SourceRecord.id == row_id, SourceRecord.embedded_at.is_(None))
                             # clock_timestamp(), not now(): now() is the claim, before the request
-                            .values(embedding=vector, embed_text=texts[row_id], embedded_at=func.clock_timestamp())
+                            .values(embedding=vector, embed_text=texts[("source_records", row_id)], embedded_at=func.clock_timestamp())
                         )
                     written += 1
                 except Exception as exc:  # noqa: BLE001 e.g. a wrong-length or NaN vector; the savepoint keeps the rest
-                    self._fail(row_id, exc)
+                    self._fail(("source_records", row_id), exc)
         print(f"embedded {written} of {len(rows)} source_records", flush=True)
         return len(rows)
 
-    async def _embed(self, texts: dict[int, str]) -> dict[int, list[float]]:
+    async def embed_graph_batch(self) -> int:
+        """Claim up to `batch` graph nodes, then edges, that need a vector, embed each table's rows in one
+        request and write them. The text is the node's embed_text or the edge's fact, cut to MAX_CHARS,
+        with no prefix. Returns rows claimed."""
+        claimed = 0
+        for model, text, vector, table in ((GraphNode, GraphNode.embed_text, GraphNode.embedding, "graph.nodes"),
+                                           (GraphEdge, GraphEdge.fact, GraphEdge.fact_embedding, "graph.edges")):
+            async with self.sessions.begin() as session:
+                claim = (select(model.id, text).where(vector.is_(None), text.is_not(None))
+                         .order_by(model.id).limit(self.batch).with_for_update(skip_locked=True))
+                if model is GraphNode:
+                    claim = claim.where(GraphNode.deleted.is_(False))
+                if skip := self._failed(table):
+                    claim = claim.where(model.id.not_in(skip))
+                rows = (await session.execute(claim)).all()
+                written = 0
+                for (_, row_id), embedded in (await self._embed({(table, r[0]): r[1][:MAX_CHARS] for r in rows})).items():
+                    try:
+                        async with session.begin_nested():
+                            await session.execute(update(model).where(model.id == row_id).values({vector.key: embedded}))
+                        written += 1
+                    except Exception as exc:  # noqa: BLE001 the savepoint keeps the rest
+                        self._fail((table, row_id), exc)
+            if rows:
+                print(f"embedded {written} of {len(rows)} {table}", flush=True)
+            claimed += len(rows)
+        return claimed
+
+    async def _embed(self, texts: dict[tuple[str, int], str]) -> dict[tuple[str, int], list[float]]:
         """One request for the batch. If the service rejects it, one per row, so only the bad row fails."""
         if not texts:
             return {}
@@ -307,14 +342,17 @@ class Worker:
             if len(texts) == 1:
                 self._fail(next(iter(texts)), exc)
                 return {}
-            vectors: dict[int, list[float]] = {}
+            vectors: dict[tuple[str, int], list[float]] = {}
             for row_id, text in texts.items():
                 vectors |= await self._embed({row_id: text})
             return vectors
 
-    def _fail(self, row_id: int, exc: Exception) -> None:
-        self.failed.add(row_id)
-        print(f"source_records {row_id} failed, retried after the next poll: {exc!r}", file=sys.stderr, flush=True)
+    def _failed(self, table: str) -> list[int]:
+        return [row_id for t, row_id in self.failed if t == table]
+
+    def _fail(self, key: tuple[str, int], exc: Exception) -> None:
+        self.failed.add(key)
+        print(f"{key[0]} {key[1]} failed, retried after the next poll: {exc!r}", file=sys.stderr, flush=True)
 
 
 def main() -> int:

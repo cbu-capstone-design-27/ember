@@ -276,7 +276,8 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/gitlab-enrich-venv"
           "$RUNNER_TEMP/gitlab-enrich-venv/bin/pip" install -q -r services/gitlab-ingestion/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/gitlab-enrich-venv/bin/python3" services/gitlab-ingestion/test_enrich.py
-      # EMBER-79: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      # EMBER-79: on the pg container and dbmate from "Postgres migrations match the ingestion doc". EMBER-166's
+      # graph tests load through the pipeline's extract and load, so it needs that service's packages too
       - name: MCP server against Postgres
         env:
           PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
@@ -284,7 +285,7 @@ jobs:
           set -euo pipefail
           # A venv, because the runner's system Python refuses pip installs (PEP 668)
           python3 -m venv "$RUNNER_TEMP/mcp-venv"
-          "$RUNNER_TEMP/mcp-venv/bin/pip" install -q -r apps/mcp/requirements.txt -r services/embed/requirements.txt
+          "$RUNNER_TEMP/mcp-venv/bin/pip" install -q -r apps/mcp/requirements.txt -r services/embed/requirements.txt -r services/pipeline/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/mcp-venv/bin/python3" apps/mcp/test_mcp.py
       - name: GitLab ingestion container
         run: |

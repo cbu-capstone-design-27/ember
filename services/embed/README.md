@@ -10,7 +10,8 @@ EMBER-77. Embeds every `source_records` row with the team's embedding model ([AD
 - Sends the batch in one `POST {EMBEDDING_URL}/v1/embeddings`, then writes `embedding`, `embed_text` and `embedded_at = clock_timestamp()` in the claim's transaction. Each row has its own savepoint, so a row Postgres rejects fails alone. If the service rejects the batch with a 4xx, rows are sent one at a time so only the bad one fails. Failed rows are skipped until the next 30 s poll.
 - Retries 429, 5xx and network errors up to 8 times, backing off 1, 2, 4 … 60 s, or `Retry-After` on a 429.
 - Never re-embeds a row that has `embedded_at`.
-- Wakes on `LISTEN source_records` (an insert trigger, EMBER-77 migration), catches up on start, and polls every 30 s. One batch is in flight at a time, since the shared GPU endpoint is the limit.
+- **The graph (EMBER-166).** The same model and rules fill `graph.nodes.embedding` from `embed_text` and `graph.edges.fact_embedding` from `fact`, for rows that have the text and no vector (nodes not deleted), cut to 8000 characters, with no prefix. A node whose `embed_text` changes loses its vector in a trigger, so it is embedded again. Rows are claimed the same way, in batches after `source_records`.
+- Wakes on `LISTEN source_records` (an insert trigger, EMBER-77 migration) and `LISTEN graph` (graph node and edge triggers, EMBER-166 migration), catches up on start, and polls every 30 s. One batch is in flight at a time, since the shared GPU endpoint is the limit.
 - On start, embeds one probe text and refuses to run (exit 2) unless the vector has 1024 dimensions.
 - SIGINT or SIGTERM: stops claiming, finishes the batch in flight, exits 0.
 
@@ -31,6 +32,7 @@ EMBEDDING_URL=http://<spark>:8000 EMBEDDING_API_KEY=... \
 | `EMBEDDING_MODEL` | `qwen3-embedding-0.6b` | The served name |
 | `EMBED_BATCH` | 32 | Rows per request |
 | `SOURCE_RECORDS_CHANNEL` | `source_records` | NOTIFY channel |
+| `GRAPH_CHANNEL` | `graph` | NOTIFY channel for graph rows |
 
 Postgres needs the `vector` extension. Locally, the compose `postgres` profile runs `pgvector/pgvector`; on the cluster, the CloudNativePG image ships it and `infra/k8s/apps/postgres/database.yaml` has the operator create it, since the migrate Job's role isn't a superuser.
 

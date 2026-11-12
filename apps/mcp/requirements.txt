@@ -1,3 +1,7 @@
 # ember_mcp (EMBER-79). mcp 2.x calls FastMCP MCPServer.
 mcp==2.3.0
 asyncpg==0.32.0
+# EMBER-166: the Graphiti fork with PostgresDriver, pinned by tag (docs/research/postgres-graph.md, Upstream).
+graphiti-core @ git+https://github.com/cbu-capstone-design-27/graphiti@ember-v0.31.2
+# graphiti-core imports httpx through openai; openai 3.x moved to httpx2 (services/pipeline/graphiti_test/requirements.txt)
+openai==2.54.0

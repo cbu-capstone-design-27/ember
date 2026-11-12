@@ -1,13 +1,15 @@
-"""ember_mcp against a real Postgres with pgvector and a stub embedding server (EMBER-79, EMBER-78).
+"""ember_mcp against a real Postgres with pgvector and a stub embedding server (EMBER-79, EMBER-78, EMBER-166).
 
-Needs psql, dbmate, the packages in requirements.txt and services/embed/requirements.txt (the photon
-seed embeds through the embed worker), and a Postgres server with the vector extension
-it may create and drop a database on:
+Needs psql, dbmate, the packages in requirements.txt, services/embed/requirements.txt (the photon
+seed embeds through the embed worker) and services/pipeline/requirements.txt (the graph tests load
+through extract and load with GRAPH_STORE=postgres's writer), and a Postgres server with the vector
+extension it may create and drop a database on, and create a login role on:
 
     PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
         python3 apps/mcp/test_mcp.py
 
-It builds the repo migrations in database ember_test_mcp.
+It builds the repo migrations in database ember_test_mcp, the web app's Better Auth tables, and login role
+ember_mcp_test in ember_graph_reader, which the server connects as.
 """
 
 from __future__ import annotations
@@ -35,19 +37,74 @@ from mcp import Client, StdioServerParameters
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(REPO / "services" / "pipeline"))
 
 import seed_photon  # noqa: E402
 from ember_mcp import retrieval, server  # noqa: E402
+from loader.pg_writer import PgWriter  # noqa: E402
+from loader.workers import ExtractWorker, LoadWorker  # noqa: E402
 
 MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_mcp"
 ISSUE_SELF = "https://photon.atlassian.net/rest/api/2/issue/10004"
+READER, READER_PASSWORD = "ember_mcp_test", "ember-mcp-test"
+ADA, BO = "ada@acme.test", "bo@globex.test"
+
+# The web app's Better Auth tables (schema web), the columns ember_user_tenants reads, as Better Auth names them.
+# Ada is in organizations acme and photon and has a personal workspace; Bo is in globex only.
+WEB = """
+create schema web;
+create table web."user" (id text primary key, name text not null, email text not null unique);
+create table web.organization (id text primary key, name text not null, slug text not null unique,
+                               tenant text not null unique, personal boolean);
+create table web.member (id text primary key, "organizationId" text not null references web.organization,
+                         "userId" text not null references web."user", role text not null);
+insert into web."user" values ('u-ada', 'Ada', 'Ada@acme.test'), ('u-bo', 'Bo', 'bo@globex.test');
+insert into web.organization values ('o-acme', 'Acme', 'acme', 'acme', false), ('o-photon', 'Photon', 'photon', 'photon', false),
+  ('o-ada', 'Ada', 'ada-personal', 'ada-personal', true), ('o-globex', 'Globex', 'globex', 'globex', false);
+insert into web.member values ('m1', 'o-acme', 'u-ada', 'owner'), ('m2', 'o-photon', 'u-ada', 'member'),
+  ('m3', 'o-ada', 'u-ada', 'owner'), ('m4', 'o-globex', 'u-bo', 'owner');
+"""
+
+SITE = "https://acme.atlassian.net"
 
 
-def database_url() -> str:
+def database_url(user: str | None = None, password: str | None = None) -> str:
+    """The test database, as PGTEST_URL's user (the tables' owner) or as user."""
     parts = urlsplit(os.environ["PGTEST_URL"])
+    if user:
+        parts = parts._replace(netloc=f"{user}:{password}@{parts.hostname}:{parts.port}")
     return urlunsplit(parts._replace(path="/" + DB))
+
+
+def jira(key: str, summary: str, assignee: str, status: str) -> dict:
+    """A jira:issue_updated record as enrich:jira stores it, on site acme or globex."""
+    site = SITE if key.startswith("ACME") else "https://globex.atlassian.net"
+    number = key.rpartition("-")[2]
+    return {"payload": {"webhookEvent": "jira:issue_updated", "issue": {
+        "id": f"20{number}", "key": key, "self": f"{site}/rest/api/3/issue/20{number}",
+        "fields": {"summary": summary, "project": {"key": key.rpartition("-")[0]}, "status": {"name": status},
+                   "assignee": {"accountId": assignee, "displayName": assignee.title()}}}}}
+
+
+def slack(ts: str, text: str) -> dict:
+    return {"payload": {"type": "message", "channel": "C1", "ts": ts, "user": "U1", "text": text, "team": "TACME"}}
+
+
+# (tenant, source, kind, object_id, version, day, record) loaded into the graph: ACME-1 moves from Dana to
+# Eli, a Slack thread names it, Globex has its own ticket, and Ada's personal workspace has an issue.
+GRAPH_ROWS = [
+    ("acme", "jira", "issue", "201", "v1", 1, jira("ACME-1", "Rotate the login signing key", "dana", "To Do")),
+    ("acme", "jira", "issue", "201", "v2", 3, jira("ACME-1", "Rotate the login signing key", "eli", "In Progress")),
+    ("acme", "slack", "message", "C1/1790000000.000100", "1790000000.000100", 2,
+     slack("1790000000.000100", "Eli takes ACME-1 since Dana is out, the signing key rotation can't wait")),
+    ("globex", "jira", "issue", "202", "v1", 1, jira("GLX-2", "Rotate the login signing key at Globex", "fay", "To Do")),
+    ("ada-personal", "github", "issue", "ada/notes#1", "v1", 1, {"payload": {"action": "opened", "repository": {"full_name": "ada/notes"},
+     "issue": {"number": 1, "title": "Signing key notes", "body": "What I learned rotating keys", "state": "open",
+               "user": {"login": "ada"}, "html_url": "https://github.com/ada/notes/issues/1",
+               "created_at": "2026-10-01T12:00:00Z", "updated_at": "2026-10-01T12:00:00Z"}}}),
+]
 
 
 def run(*command: str) -> None:
@@ -167,8 +224,15 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         run("psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", os.environ["PGTEST_URL"],
             "-c", f"drop database if exists {DB}", "-c", f"create database {DB}")
         run(DBMATE, "--url", database_url(), "--migrations-dir", str(MIGRATIONS), "--no-dump-schema", "migrate")
+        run("psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", database_url(), "-c", WEB, "-c",
+            f"""do $$ begin
+                  if not exists (select from pg_roles where rolname = '{READER}') then
+                    create role {READER} login password '{READER_PASSWORD}' in role ember_graph_reader;
+                  end if;
+                end $$""")
         cls.stub = StubEmbeddings()
-        os.environ.update(DATABASE_URL=database_url(), EMBEDDING_URL=cls.stub.url, EMBEDDING_API_KEY="test-key")
+        os.environ.update(DATABASE_URL=database_url(READER, READER_PASSWORD), EMBER_USER_EMAIL=ADA,
+                          EMBEDDING_URL=cls.stub.url, EMBEDDING_API_KEY="test-key")
 
     @classmethod
     def tearDownClass(cls):
@@ -181,7 +245,7 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         self.stub.requests.clear()
         self.stub.auth.clear()
         db = await asyncpg.connect(database_url())
-        await db.execute("truncate source_records, episodes restart identity cascade")
+        await db.execute("truncate source_records, episodes, graph.graphs restart identity cascade")
         await db.executemany(
             "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record, embed_text, embedding)"
             " values ($1, 'acme', $2, $3, $4, $5, $6, $7, $8::text::vector)",
@@ -213,7 +277,7 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         vector = "[" + ",".join(map(str, stub_vector(ISSUE_TEXT))) + "]"
         query = """select object_id, version from source_records where embedding is not null
                    order by embedding <=> $1::text::vector limit 3"""
-        with search_settings(enable_seqscan="off"):
+        with search_settings(enable_seqscan="off", **{"ember.tenants": "acme"}):
             conn = await retrieval.connect()
             try:
                 plan = await conn.fetchval("explain (format json) " + query, vector)
@@ -263,8 +327,8 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         while preserving the same questions and top-three requirements. HNSW has its own controlled test;
         retrieval quality and approximate recall on real embeddings belong in the benchmark.
         """
-        with contextlib.redirect_stdout(io.StringIO()):
-            await seed_photon.main()
+        with contextlib.redirect_stdout(io.StringIO()), patch.dict(os.environ, DATABASE_URL=database_url()):
+            await seed_photon.main()  # writes, so as the owner
         questions = {
             "Why can't I use dots in branch names?": "C08PHOTONDV/1789392360.000100",
             "Caps Lock turns on when I use it as a Hyper key": "10087",  # PHO-87
@@ -289,10 +353,11 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_stdio_server_lists_and_calls_its_tools(self):
         params = StdioServerParameters(command=sys.executable, args=["-m", "ember_mcp"], cwd=HERE, env={
-            "DATABASE_URL": database_url(), "EMBEDDING_URL": self.stub.url, "EMBEDDING_API_KEY": "test-key"})
+            "DATABASE_URL": database_url(READER, READER_PASSWORD), "EMBER_USER_EMAIL": ADA,
+            "EMBEDDING_URL": self.stub.url, "EMBEDDING_API_KEY": "test-key"})
         async with Client(params) as client:
             tools = await client.list_tools()
-            self.assertEqual(sorted(t.name for t in tools.tools), ["get_record", "search"])
+            self.assertEqual(sorted(t.name for t in tools.tools), ["get_record", "history", "search", "whoami"])
             result = await client.call_tool("search", {"question": QUESTION, "k": 1})
         self.assertFalse(result.is_error)
         [hit] = result.structured_content["result"]
@@ -315,6 +380,117 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
             os.environ["DATABASE_URL"] = url
         self.assertTrue(result.is_error)
         self.assertIn("DATABASE_URL is not set", result.content[0].text)
+
+    # --- the graph (EMBER-166) ---
+
+    async def load_graph(self) -> None:
+        """GRAPH_ROWS through extract and load with the Postgres graph writer, as the pipeline runs them."""
+        db = await asyncpg.connect(database_url())
+        await db.executemany(
+            "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record)"
+            " values ($2, $1, $3, $4, $5, $6, $7)",
+            [(*row[:5], datetime(2026, 10, row[5], tzinfo=timezone.utc), json.dumps(row[6])) for row in GRAPH_ROWS])
+        await db.close()
+        await ExtractWorker(database_url()).drain()
+        await LoadWorker(database_url(), PgWriter()).drain()
+
+    @contextlib.contextmanager
+    def as_user(self, email: str):
+        with patch.dict(os.environ, EMBER_USER_EMAIL=email):
+            yield
+
+    async def test_tenants_are_every_organization_and_the_personal_workspace(self):
+        await self.load_graph()
+        ada = await retrieval.whoami()
+        self.assertEqual(ada["tenants"], ["acme", "ada-personal", "photon"])
+        self.assertEqual({(g["tenant"], g["source"], g["scope"]) for g in ada["graphs"]},
+                         {("acme", "jira", "acme.atlassian.net/ACME"), ("acme", "slack", "TACME"),
+                          ("acme", "github", "acme/photon"), ("acme", "jira", "photon.atlassian.net/PHO"),  # ROWS
+                          ("ada-personal", "github", "ada/notes")})
+        with self.as_user(BO):
+            bo = await retrieval.whoami()
+        self.assertEqual((bo["tenants"], [g["scope"] for g in bo["graphs"]]), (["globex"], ["globex.atlassian.net/GLX"]))
+
+    async def test_a_reader_sees_only_its_tenants_graphs_records_and_facts(self):
+        await self.load_graph()
+        hits = await retrieval.search("Rotate the login signing key", k=50)
+        self.assertEqual({h["object_id"] for h in hits if h["source"] in ("jira", "github")} & {"202", "ada/notes#1", "201"},
+                         {"201", "ada/notes#1"})
+        self.assertIsNone(await retrieval.get_record("jira", "202"))
+        self.assertIsNone(await retrieval.history("jira", "202"))
+        with self.as_user(BO):
+            self.assertIsNone(await retrieval.get_record("jira", "201"))
+            self.assertEqual([h["object_id"] for h in await retrieval.search("Rotate the login signing key")], ["202"])
+            async with retrieval.reader() as scope:
+                seen = await scope.conn.fetchval(
+                    """select array_agg(distinct tenant order by tenant) from (
+                         select tenant from graph.nodes union all select tenant from graph.edges
+                         union all select tenant from source_records union all select tenant from episodes) t""")
+        self.assertEqual(seen, ["globex"])
+
+    async def test_search_fuses_vector_and_graph_hits_and_adds_current_facts(self):
+        await self.load_graph()
+        # Embedded but never loaded, so only vector search finds it. The graph's records have no embedding.
+        db = await asyncpg.connect(database_url())
+        await db.execute(
+            "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record, embed_text, embedding)"
+            " values ('slack', 'acme', 'message', 'C9/1', '1', now(), '{}', $1, $2::text::vector)",
+            "who owns the signing key rotation now", "[" + ",".join(map(str, stub_vector("who owns the signing key rotation now"))) + "]")
+        await db.close()
+        hits = {h["object_id"]: h for h in await retrieval.search("Who owns the signing key rotation now?", k=10)}
+        self.assertIn("C9/1", hits)
+        self.assertIn("201", hits)
+        facts = [f["fact"] for f in hits["201"]["related"]]
+        self.assertIn("Eli is assigned to Rotate the login signing key", facts)
+        self.assertNotIn("Dana is assigned to Rotate the login signing key", facts)
+        self.assertLessEqual(len(facts), 5)
+
+        with patch.dict(os.environ, EMBEDDING_URL=""):  # BM25 and graph traversal only
+            hits = await retrieval.search("signing key rotation", k=10, graphs=["acme.atlassian.net/ACME"])
+        self.assertEqual([h["object_id"] for h in hits], ["201"])
+        self.assertEqual(self.stub.requests[-1:], [["Instruct: " + retrieval.TASK + "\nQuery: Who owns the signing key rotation now?"]])
+
+    async def test_get_record_returns_the_node_its_current_facts_and_graph(self):
+        await self.load_graph()
+        record = await retrieval.get_record("jira", "201")
+        self.assertEqual(record["version"], "v2")
+        self.assertEqual(record["node"], {"label": "WorkItem", "key": "ACME-1", "name": "Rotate the login signing key",
+                                          "summary": ""})
+        self.assertEqual(record["graph"], {"name": "acme.atlassian.net/ACME", "scope": "acme.atlassian.net/ACME", "source": "jira"})
+        facts = {f["fact"] for f in record["facts"]}
+        self.assertIn("Eli is assigned to Rotate the login signing key", facts)
+        self.assertIn("Rotate the login signing key has status In Progress", facts)
+        self.assertNotIn("Dana is assigned to Rotate the login signing key", facts)
+        # The Slack message's link edge into the Jira graph
+        self.assertTrue(any(f["type"] == "REFERENCES" and f["fact"].endswith("references Rotate the login signing key")
+                            for f in record["facts"]), facts)
+
+    async def test_history_returns_ended_facts_with_the_episodes_that_set_and_ended_them(self):
+        await self.load_graph()
+        history = {f["fact"]: f for f in await retrieval.history("jira", "201")}
+        dana, eli = history["Dana is assigned to Rotate the login signing key"], history["Eli is assigned to Rotate the login signing key"]
+        self.assertEqual((dana["valid_at"], dana["invalid_at"]), ("2026-10-01T00:00:00+00:00", "2026-10-03T00:00:00+00:00"))
+        self.assertEqual((dana["set_by"]["version"], dana["ended_by"]["version"]), ("v1", "v2"))
+        self.assertEqual((dana["set_by"]["source"], dana["set_by"]["object_id"]), ("jira", "201"))
+        self.assertEqual((eli["invalid_at"], eli["set_by"]["version"], eli["ended_by"]), (None, "v2", None))
+        self.assertIsNotNone(history["Rotate the login signing key has status To Do"]["invalid_at"])
+
+    async def test_an_unknown_email_or_an_owner_connection_gets_no_access(self):
+        await self.load_graph()
+        with self.as_user("nobody@acme.test"):
+            self.assertEqual((await retrieval.whoami())["tenants"], [])
+            async with Client(server.mcp) as client:
+                for tool, args in (("search", {"question": "signing key"}), ("get_record", {"source": "jira", "object_id": "201"}),
+                                   ("history", {"source": "jira", "object_id": "201"})):
+                    result = await client.call_tool(tool, args)
+                    self.assertTrue(result.is_error, tool)
+                    self.assertIn("belongs to no Ember organization", result.content[0].text)
+            async with retrieval.reader(need_tenants=False) as scope:  # row-level security with no tenants
+                self.assertEqual(await scope.conn.fetchval(
+                    "select (select count(*) from graph.nodes) + (select count(*) from source_records)"), 0)
+        with patch.dict(os.environ, DATABASE_URL=database_url()):
+            with self.assertRaisesRegex(retrieval.AccessError, "not the tables' owner"):
+                await retrieval.whoami()
 
 
 if __name__ == "__main__":

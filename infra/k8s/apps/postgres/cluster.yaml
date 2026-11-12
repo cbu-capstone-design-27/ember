@@ -21,6 +21,15 @@ spec:
       - name: ember_graph_reader
         ensure: present
         login: false
+      # EMBER-166: the MCP server's login, in ember_graph_reader, so it reads under row-level security.
+      # Its password is in Secret postgres-mcp (type kubernetes.io/basic-auth, username ember_mcp).
+      - name: ember_mcp
+        ensure: present
+        login: true
+        inRoles:
+          - ember_graph_reader
+        passwordSecret:
+          name: postgres-mcp
   storage:
     storageClass: local-path-retain
     size: 10Gi
