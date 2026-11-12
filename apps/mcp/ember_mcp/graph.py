@@ -11,6 +11,8 @@ first; a Slack message's Container and Conversation come before its Message).
 
 from __future__ import annotations
 
+import re
+
 import asyncpg
 from graphiti_core import Graphiti
 from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
@@ -33,6 +35,11 @@ from graphiti_core.search.search_config import (
 from graphiti_core.search.search_config_recipes import COMBINED_HYBRID_SEARCH_RRF
 
 RELATED = 5   # facts per search hit
+
+# Identifiers a question can name: a Jira key, a GitHub owner/repo#n, or a bare #n
+JIRA_KEY = re.compile(r"\b([A-Z][A-Z0-9]+)-\d+\b")
+REPO_NUMBER = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
+BARE_NUMBER = re.compile(r"(?<![\w/.#-])#(\d+)\b")
 
 # Without EMBEDDING_URL: BM25 over nodes, facts and episodes, then a breadth-first walk from what it found
 TEXT_AND_TRAVERSAL = SearchConfig(
@@ -73,6 +80,22 @@ cross join lateral (
       where n.uuid = u.uuid and n.label in ('WorkItem', 'Change', 'Message') and array[n.label, n.key] = {MAIN_NODE}
       order by ep.occurred_at desc limit 1)
     limit 1) r
+"""
+
+# The nodes the identifiers name, in the order given. ponytail: lower(key) scans the graph's WorkItems and
+# Changes (GitHub keys keep the payload's case, scopes are lowercased); store a lowercased key if graphs grow large.
+NAMED = """
+select n.id, n.uuid::text as uuid from unnest($1::bigint[], $2::text[]) with ordinality q(graph_id, key, i)
+join graph.nodes n on n.graph_id = q.graph_id and n.label in ('WorkItem', 'Change') and lower(n.key) = lower(q.key)
+where not n.deleted order by q.i
+"""
+
+# Nodes whose current REFERENCES edges point at these nodes: Slack messages, comments, PRs naming them
+REFERENCING = """
+select s.uuid::text as uuid from graph.edges e join graph.nodes s on s.id = e.src
+where e.dst = any($1::bigint[]) and e.type = 'REFERENCES' and e.invalid_at is null and e.expired_at is null
+  and not s.deleted
+order by array_position($1::bigint[], e.dst), e.valid_at
 """
 
 # The episodes that set and ended each fact, with the source record version behind each
@@ -116,6 +139,34 @@ async def search(conn: asyncpg.Connection, question: str, vector: list[float] | 
     rows = await conn.fetch(RECORDS_OF, list({u for r in ranked for u in r}))
     record = {row["uuid"]: (row["source"], row["object_id"]) for row in rows}
     return [[record[u] for u in r if u in record] for r in ranked]
+
+
+def identifiers(question: str, graphs: list) -> list[tuple[int, str]]:
+    """(graph id, node key) for each identifier the question names that one of these graphs holds: Jira keys
+    of the graphs' projects, owner/repo#n of their GitHub repos, and a bare #n when there is one GitHub repo."""
+    jira = {}
+    for g in graphs:
+        if g["source"] == "jira":
+            jira.setdefault(g["scope"].rpartition("/")[2], []).append(g["id"])
+    github = {g["scope"]: g["id"] for g in graphs if g["source"] == "github"}
+    found = [(graph_id, m.group(0)) for m in JIRA_KEY.finditer(question) for graph_id in jira.get(m.group(1), [])]
+    found += [(github[m.group(1).lower()], f"{m.group(1)}#{m.group(2)}")
+              for m in REPO_NUMBER.finditer(question) if m.group(1).lower() in github]
+    if len(github) == 1:
+        [(repo, graph_id)] = github.items()
+        found += [(graph_id, f"{repo}#{m.group(1)}") for m in BARE_NUMBER.finditer(question)]
+    return list(dict.fromkeys(found))
+
+
+async def named(conn: asyncpg.Connection, names: list[tuple[int, str]]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """The records behind the named nodes, and the records whose nodes reference them, each in order."""
+    if not names:
+        return [], []
+    nodes = await conn.fetch(NAMED, [g for g, _ in names], [k for _, k in names])
+    referencing = [r["uuid"] for r in await conn.fetch(REFERENCING, [n["id"] for n in nodes])]
+    uuids = [n["uuid"] for n in nodes]
+    record = {r["uuid"]: (r["source"], r["object_id"]) for r in await conn.fetch(RECORDS_OF, uuids + referencing)}
+    return [record[u] for u in uuids if u in record], [record[u] for u in referencing if u in record]
 
 
 async def nodes_of(conn: asyncpg.Connection, records: list[tuple[str, str]]) -> dict[tuple[str, str], asyncpg.Record]:
