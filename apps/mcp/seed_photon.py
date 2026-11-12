@@ -33,6 +33,7 @@ import asyncpg
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = REPO / "services" / "pipeline" / "fixtures" / "photon"
 COMMENT_ISSUE = re.compile(r"/issue/(\d+)/comment/")
+CHANGELOG_ISSUE = re.compile(r"/issue/([^/]+)/changelog")   # the issue's key or id
 
 
 def bodies(path: Path | None) -> list[dict]:
@@ -43,15 +44,33 @@ def jira_time(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%f%z")
 
 
+def changelogs(jira: list[dict]) -> dict[str, list[dict]]:
+    """Issue key or id -> its changelog entries, from the pull's changelog pages (`values`, or `histories` in the
+    expand=changelog shape) in startAt order."""
+    pages: dict[str, list[dict]] = {}
+    for body in jira:
+        match = CHANGELOG_ISSUE.search(body.get("self", ""))
+        entries = body.get("values") if isinstance(body.get("values"), list) else body.get("histories")
+        if match and isinstance(entries, list):
+            pages.setdefault(match.group(1), []).append(body)
+    return {issue: [e for page in sorted(found, key=lambda p: p.get("startAt", 0))
+                    for e in (page["values"] if isinstance(page.get("values"), list) else page["histories"])]
+            for issue, found in pages.items()}
+
+
 def rows(jira_path: Path | None = FIXTURES / "jira-intake.jsonl", slack_path: Path | None = FIXTURES / "slack-intake.jsonl") -> list[tuple]:
-    """(source, kind, object_id, version, occurred_at, record) for every Jira issue, comment and Slack message."""
+    """(source, kind, object_id, version, occurred_at, record) for every Jira issue, comment and Slack message.
+    An issue carries its changelog as issue.changelog.histories, as expand=changelog and Jira reconcile (EMBER-167) store it."""
     out = []
     jira = bodies(jira_path)
+    history = changelogs(jira)
     issues = {b["id"]: b for b in jira if "fields" in b and "key" in b}
     for issue in issues.values():
         updated = issue["fields"]["updated"]
+        entries = history.get(issue["key"]) or history.get(issue["id"])
+        stored = {**issue, "changelog": {"histories": entries}} if entries else issue
         out.append(("jira", "issue", issue["id"], updated, jira_time(updated),
-                    {"webhookEvent": "jira:issue_updated", "issue": issue}))
+                    {"webhookEvent": "jira:issue_updated", "issue": stored}))
     for comment in (b for b in jira if "author" in b and "body" in b and "/comment/" in b.get("self", "")):
         issue = issues[COMMENT_ISSUE.search(comment["self"]).group(1)]
         out.append(("jira", "comment", f"{issue['id']}/comment/{comment['id']}", comment["updated"], jira_time(comment["updated"]),
