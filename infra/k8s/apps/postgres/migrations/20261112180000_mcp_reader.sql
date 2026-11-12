@@ -12,7 +12,7 @@
 
 -- migrate:up
 create function ember_user_tenants(user_email text) returns text[]
-  language plpgsql stable security definer set search_path = pg_catalog, pg_temp as $$
+  language plpgsql stable security definer set search_path = pg_catalog, public as $$
 begin
   if to_regclass('web.member') is null then
     return '{}';

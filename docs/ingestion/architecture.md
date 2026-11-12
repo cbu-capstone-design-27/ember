@@ -526,7 +526,7 @@ grant select on graph.graphs, graph.nodes, graph.edges, graph.mentions, episodes
 -- created by the web app at start, so plpgsql resolves them at call time), and the embed worker wakes on
 -- channel graph for graph rows to embed. A node whose embed_text changes loses its old embedding.
 create function ember_user_tenants(user_email text) returns text[]
-  language plpgsql stable security definer set search_path = pg_catalog, pg_temp as $$
+  language plpgsql stable security definer set search_path = pg_catalog, public as $$
 begin
   if to_regclass('web.member') is null then
     return '{}';
