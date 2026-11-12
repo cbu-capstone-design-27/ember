@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -73,14 +74,29 @@ class Hit(TypedDict):
 # The payload object each enrich worker stores in record.payload (GitHub, Jira, GitLab, Slack)
 P = "(record->'payload')"
 
-TITLE = f"""left(coalesce(
+TITLE_TEXT = f"""coalesce(
     {P}#>>'{{pull_request,title}}',
     nullif(concat_ws(' ', {P}#>>'{{issue,key}}', coalesce({P}#>>'{{issue,fields,summary}}', {P}#>>'{{issue,title}}')), ''),
     {P}#>>'{{object_attributes,title}}',
     split_part(coalesce({P}->>'message', {P}#>>'{{commit,message}}'), E'\\n', 1),
     coalesce({P}->>'text', {P}#>>'{{event,text}}', {P}#>>'{{message,text}}'),
     kind || ' ' || object_id
-), 120)"""
+)"""
+TITLE = f"left({TITLE_TEXT}, 120)"
+
+# Slack mrkdwn, the pattern loader/pg_writer.py (EMBER-164) cleans facts with. Copied, not imported: that
+# module needs services/pipeline (ontology, the Neo4j writer) on the path, which the MCP server doesn't ship.
+SLACK_MARKUP = re.compile(r"<([^<>|]*)(?:\|([^<>]*))?>")  # <url|label>, <url>, <@U123>, <#C123|name>, <!here>
+MENTION = re.compile(r"<@([A-Z0-9]+)")
+
+# The name of each Slack user id, from the newest user record (users.info, as enrich:slack stores it)
+SLACK_PEOPLE = """
+select distinct on (object_id) object_id,
+       coalesce(u->>'real_name', u#>>'{profile,real_name}', u#>>'{profile,display_name}', u->>'name') as name
+from (select object_id, occurred_at, id, coalesce(record->'payload', record) as u from source_records
+      where source = 'slack' and kind = 'user' and object_id = any($1)) x
+order by object_id, occurred_at desc, id desc
+"""
 
 # Link back to the original. Jira's issue `self` is the REST URL, so browse is built from its site and key.
 URL = f"""coalesce(
@@ -113,7 +129,8 @@ limit $2
 # The newest version of each (source, object_id), as a hit. Deleted objects come back with gone = true.
 HITS = f"""
 select distinct on (source, object_id) source, kind, object_id, version, occurred_at, {TITLE} as title,
-       left(embed_text, {SNIPPET_CHARS}) as snippet, {URL} as url, record ? 'tombstone' or record ? 'deleted' as gone
+       left(embed_text, {SNIPPET_CHARS}) as snippet, {URL} as url, record ? 'tombstone' or record ? 'deleted' as gone,
+       {TITLE_TEXT} as full_title, embed_text as full_text
 from source_records where (source, object_id) in (select * from unnest($1::text[], $2::text[]))
 order by source, object_id, occurred_at desc, id desc
 """
@@ -212,6 +229,21 @@ def embed_query(question: str) -> list[float]:
     return vector
 
 
+def slack_text(text: str, people: dict[str, str]) -> str:
+    """Slack mrkdwn as a person reads it: <url|label> is label, <url> is url, <@U123> is the person's name
+    (the id when unknown), <#C123|name> is #name. The same rules as loader/pg_writer.py's _slack_text."""
+    def plain(match) -> str:
+        target, label = match.group(1), match.group(2)
+        if target.startswith("@"):
+            return people.get(target[1:]) or label or target
+        if target.startswith("#"):
+            return "#" + (label or target[1:])
+        if target.startswith("!"):
+            return "@" + (label or target[1:])
+        return label or target
+    return SLACK_MARKUP.sub(plain, text)
+
+
 def rrf(lists: list[list[tuple[str, str]]]) -> dict[tuple[str, str], float]:
     """Reciprocal rank fusion of ranked lists of keys, best first. A key counts once per list."""
     scores: dict[tuple[str, str], float] = {}
@@ -252,13 +284,22 @@ async def search(question: str, k: int = 8, sources: list[str] | None = None,
         rows = {(r["source"], r["object_id"]): r for r in await conn.fetch(HITS, [s for s, _ in keys], [o for _, o in keys])}
         keys = [key for key in keys if key in rows and not rows[key]["gone"]][:k]
         nodes = await graph.nodes_of(conn, keys)
+        # Slack hits read as text: titles and snippets cleaned of mrkdwn before they are cut
+        slack = {key: (rows[key]["full_title"], rows[key]["full_text"] or (nodes.get(key) or {}).get("embed_text") or "")
+                 for key in keys if key[0] == "slack"}
+        mentioned = sorted({m for texts in slack.values() for text in texts for m in MENTION.findall(text)})
+        people = {r["object_id"]: r["name"] for r in await conn.fetch(SLACK_PEOPLE, mentioned) if r["name"]} if mentioned else {}
         hits = []
         for key in keys:
             row, node = rows[key], nodes.get(key)
             related = [graph.fact(e) for e in await graph.facts(node["uuid"], current=True)][:graph.RELATED] if node else []
+            title = row["title"]
             snippet = row["snippet"] or ((node and node["embed_text"]) or "")[:SNIPPET_CHARS]
+            if key in slack:
+                title, snippet = (slack_text(text, people) for text in slack[key])
+                title, snippet = title[:120], snippet[:SNIPPET_CHARS]
             hits.append(Hit(source=row["source"], kind=row["kind"], object_id=row["object_id"], version=row["version"],
-                            occurred_at=row["occurred_at"].isoformat(), title=row["title"], snippet=snippet,
+                            occurred_at=row["occurred_at"].isoformat(), title=title, snippet=snippet,
                             url=row["url"], score=fused[key], related=related))
     return hits
 

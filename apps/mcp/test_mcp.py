@@ -488,6 +488,24 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         [hit] = await retrieval.search("what is ada/notes#1 about?", k=1)
         self.assertEqual((hit["source"], hit["object_id"], hit["score"]), ("github", "ada/notes#1", 1.0))
 
+    async def test_slack_hits_read_as_text(self):
+        """Slack mrkdwn in a hit's title and snippet: links show their label or URL, people their name, channels #name."""
+        text = ("<@U9> moved <https://acme.atlassian.net/browse/ACME-1|ACME-1> to <#C7|deploys>, "
+                "see <https://example.com/runbook>")
+        db = await asyncpg.connect(database_url())
+        await db.execute(
+            "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record) values"
+            " ('slack', 'acme', 'user', 'U9', '1', now(), '{\"id\": \"U9\", \"real_name\": \"Eli Park\"}')")
+        await db.execute(
+            "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record, embed_text, embedding)"
+            " values ('slack', 'acme', 'message', 'C7/1', '1', now(), $1, $2, $3::text::vector)",
+            json.dumps({"payload": {"channel": "C7", "ts": "1", "user": "U9", "text": text}}), text,
+            "[" + ",".join(map(str, stub_vector(text))) + "]")
+        await db.close()
+        [hit] = await retrieval.search("who moved the runbook to deploys", k=1, sources=["slack"])
+        readable = "Eli Park moved ACME-1 to #deploys, see https://example.com/runbook"
+        self.assertEqual((hit["object_id"], hit["title"], hit["snippet"]), ("C7/1", readable, readable))
+
     async def test_get_record_takes_a_jira_key_and_is_compact_unless_raw(self):
         await self.load_graph()
         record = await retrieval.get_record("jira", "ACME-1")

@@ -140,6 +140,13 @@ Returns `{"result": [Hit, ...]}`, best first. Search covers only the newest vers
 | `source`, `kind`, `object_id`, `version`, `occurred_at` | The `source_records` row |
 | `title` | PR or issue title (Jira: `KEY summary`), first line of a commit, or the start of a message |
 | `snippet` | The first 300 characters of the record's `embed_text`, or of its graph node's when the record isn't embedded |
+
+A Slack hit's `title` and `snippet` read as text, cleaned before they're cut:
+- `<url|label>` becomes `label`, and `<url>` becomes the URL
+- `<@U…>` becomes the person's name, from their stored Slack user record
+- `<#C…|name>` becomes `#name`
+
+These are the same rules `loader/pg_writer.py` uses for facts. The function is a copy, because importing it would put `services/pipeline` on the server's path.
 | `url` | GitHub `html_url`, the Jira browse URL built from the site and key, the GitLab `url`, or a Slack permalink if stored. Otherwise null |
 | `score` | 1 for an identifier the question names, 0.5 for a record referencing it, else the fused score: the sum of `1 / (60 + rank)` over the lists that found it |
 | `related` | Up to five current facts around the hit's node: `type`, `fact` ("Eli is assigned to Rotate the signing key"), `valid_at` |
