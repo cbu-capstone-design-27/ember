@@ -583,6 +583,20 @@ def installation_token(
     installation_id = installation.get("id")
     if not isinstance(installation_id, int):
         raise PullError(f"installation lookup for {repo} did not return an id")
+    return mint_token(app_jwt, installation_id, exchange, gate, sleep=sleep, clock=clock, jitter=jitter)
+
+
+def mint_token(
+    app_jwt: str,
+    installation_id: int | str,
+    exchange,
+    gate: RateLimitGate | None = None,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    jitter: Jitter | None = None,
+) -> str:
+    """An installation access token (1 hour) for an installation id, as enrich and reconcile hold."""
     minted = exchange_with_retry(
         exchange,
         "POST",

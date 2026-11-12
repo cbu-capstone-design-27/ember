@@ -160,6 +160,8 @@ These are intentional. The pull stays on Metadata, Contents, Issues, and Pull re
 
 `enrich.py` is `enrich:github` (EMBER-65). It turns GitHub rows in `raw_events` into `source_records`, fetching only what the payload lacks (`docs/ingestion/github-webhooks.md`), and sets `enriched_at` in the same transaction. It wakes on any notification on `RAW_EVENTS_CHANNEL` (default `raw_events`) and ignores the payload, catches up at start, and polls every 30 s. `CONCURRENCY` (default 4) bounds rows in flight. Ctrl+C or SIGTERM finishes the rows in flight, then exits.
 
+It also backfills each newly connected installation's issues, pull requests and comments (EMBER-167, [`github-webhooks.md`, Reconcile on connect](../../docs/ingestion/github-webhooks.md#reconcile-on-connect-ember-167)). `RECONCILE_SINCE=2026-01-01` limits that to issues updated since the date. Unset means all history.
+
 Against the local Postgres, from the repo root:
 
 ```sh

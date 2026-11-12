@@ -1,4 +1,4 @@
-"""SQLAlchemy models for the ingestion tables enrich:jira and the keep-alive touch (EMBER-66, EMBER-131).
+"""SQLAlchemy models for the ingestion tables enrich:jira and the keep-alive touch (EMBER-66, EMBER-131, EMBER-167).
 
 They map docs/ingestion/architecture.md (Storage) and nothing more. The dbmate migrations in
 infra/k8s/apps/postgres/migrations own the schema, so never call create_all on these.
@@ -50,6 +50,8 @@ class RawEvent(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ)
     envelope: Mapped[dict[str, Any]] = mapped_column(JSONB)
     enriched_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ)
+    # EMBER-63. Reconcile writes it (EMBER-167); enrich still computes ordering_value() itself
+    occurred_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
 
 class SourceRecord(Base):
@@ -78,6 +80,18 @@ class RateLimit(Base):
     bucket: Mapped[str] = mapped_column(Text, primary_key=True)
     next_allowed_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ)
     remaining: Mapped[Optional[int]] = mapped_column(Integer)
+
+
+class Cursor(Base):
+    """Reconcile progress (EMBER-167): one row per (tenant, stream), e.g. "reconcile:<site>:<project id>"."""
+
+    __tablename__ = "cursors"
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    tenant: Mapped[str] = mapped_column(Text, primary_key=True)
+    stream: Mapped[str] = mapped_column(Text, primary_key=True)
+    position: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
 
 class Installation(Base):

@@ -1,4 +1,4 @@
-"""SQLAlchemy models for the tables enrich:github touches (EMBER-65).
+"""SQLAlchemy models for the tables enrich:github touches (EMBER-65, EMBER-167).
 
 They map docs/ingestion/architecture.md (Storage) and nothing more. The dbmate migrations in
 infra/k8s/apps/postgres/migrations own the schema, so never call create_all on these.
@@ -65,3 +65,28 @@ class RateLimit(Base):
     bucket: Mapped[str] = mapped_column(Text, primary_key=True)
     next_allowed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     remaining: Mapped[int | None] = mapped_column(Integer)
+
+
+class Cursor(Base):
+    """Reconcile progress (EMBER-167): one row per (tenant, stream), e.g. "reconcile:acme/widget:issues"."""
+
+    __tablename__ = "cursors"
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    tenant: Mapped[str] = mapped_column(Text, primary_key=True)
+    stream: Mapped[str] = mapped_column(Text, primary_key=True)
+    position: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Installation(Base):
+    __tablename__ = "installations"
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    account_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    tenant: Mapped[str] = mapped_column(Text)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    label: Mapped[str | None] = mapped_column(Text)
+    external_id: Mapped[str | None] = mapped_column(Text)
+    connected_by: Mapped[str | None] = mapped_column(Text)

@@ -195,6 +195,8 @@ To receive a real admin delivery later, point a tunnel at `JIRA_INGESTION_PORT` 
 
 `enrich.py` is `enrich:jira` (EMBER-66). It turns Jira rows in `raw_events` into `source_records` and sets `raw_events.enriched_at`, fetching from the REST API only what [`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md) says the payload lacks. It wakes on any notification on `RAW_EVENTS_CHANNEL` (default `raw_events`), ignoring the payload, catches up at start, polls every 30 s, and runs `CONCURRENCY` rows at once (default 4). Ctrl+C finishes the rows in flight, then exits.
 
+It also backfills each newly connected site's issues, with their changelogs and comments (EMBER-167, [`jira-webhooks.md`, Reconcile on connect](../../docs/ingestion/jira-webhooks.md#reconcile-on-connect-ember-167)). `RECONCILE_SINCE=2026-01-01` limits that to issues updated since the date. Unset means all history.
+
 Run it against the local Postgres (Python 3.10+):
 
 ```sh

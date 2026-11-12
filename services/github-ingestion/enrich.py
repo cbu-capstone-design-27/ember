@@ -13,8 +13,12 @@ fetches is docs/ingestion/github-webhooks.md. API calls reuse pull_test.py's hel
 shared `rate_limits` row for the installation. File lists and compares are fetched once per head
 and kept in a small LRU. SIGINT or SIGTERM stops claiming, lets in-flight batches finish, and exits 0.
 
-Needs GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH (or GITHUB_APP_PRIVATE_KEY) only for events
-that fetch: pull_request opened/reopened/synchronize, and pushes with a full commits array.
+Reconcile on connect (EMBER-167, github-webhooks.md "Reconcile on connect"): at start and on every
+wake, when none is running, it backfills each connected installation whose `reconcile:<installation>`
+cursor isn't `done`, one at a time. RECONCILE_SINCE (an ISO date) limits it to issues updated since.
+
+Needs GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH (or GITHUB_APP_PRIVATE_KEY) for reconcile and for
+events that fetch: pull_request opened/reopened/synchronize, and pushes with a full commits array.
 """
 
 from __future__ import annotations
@@ -27,12 +31,12 @@ import time
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from models import RateLimit, RawEvent, SourceRecord
+from models import Cursor, Installation, RateLimit, RawEvent, SourceRecord
 from pull_test import (
     API,
     MAX_PAGES,
@@ -42,7 +46,7 @@ from pull_test import (
     _read_json,
     build_app_jwt,
     exchange_with_retry,
-    installation_token,
+    mint_token,
     parse_next_link,
     is_rate_limited,
     rate_limit_wait,
@@ -58,6 +62,7 @@ PR_FILE_ACTIONS = ("opened", "reopened", "synchronize")
 TOKEN_TTL = 50 * 60  # installation tokens last an hour
 INSERT_CHUNK = 1000
 FETCH_CACHE = 500  # file lists and compares kept in memory, least recently used dropped
+DONE = "done"  # a reconcile cursor's position once its stream has been read to the end
 
 # event: (kind, payload key of the object, object_id pattern, version field)
 OBJECTS = {
@@ -157,6 +162,24 @@ def to_records(raw_event: RawEvent, fetched: dict) -> list[dict]:
     return [row(kind, object_id, version, body, tombstone=action == "deleted", extras=fetched)]
 
 
+def cursor_upsert(tenant: str, stream: str, position: str):
+    statement = insert(Cursor).values(source=SOURCE, tenant=tenant, stream=stream, position=position)
+    return statement.on_conflict_do_update(
+        index_elements=["source", "tenant", "stream"],
+        set_={"position": statement.excluded.position, "updated_at": func.now()},
+    )
+
+
+def reconcile_since(value: str) -> str | None:
+    """RECONCILE_SINCE, an ISO date or time, as GitHub's `since`. Empty = all history."""
+    if not value.strip():
+        return None
+    moment = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def env_app_jwt() -> str:
     path, cleanup = _private_key_file()
     try:
@@ -177,6 +200,7 @@ class Worker:
         concurrency: int = 4,
         batch: int = 25,
         poll_seconds: float = POLL_SECONDS,
+        reconcile_since: str | None = None,
     ) -> None:
         url = make_url(database_url).set(drivername="postgresql+asyncpg")
         if "sslmode" in url.query:  # libpq's name; asyncpg takes the same values as `ssl`
@@ -196,6 +220,9 @@ class Worker:
         self.fetched: OrderedDict[tuple, asyncio.Future] = OrderedDict()
         # ponytail: failed rows are skipped until the next poll, in memory. The job queue's retry and dead letter replace it.
         self.failed: set[int] = set()
+        self.reconcile_since = reconcile_since  # GitHub's `since`, e.g. 2026-01-01T00:00:00Z; None = all history
+        self.reconciling: asyncio.Task | None = None
+        self.failed_accounts: set[str] = set()  # installations whose reconcile failed, retried after the next poll
 
     def stop(self) -> None:
         self.stopping.set()
@@ -216,13 +243,16 @@ class Worker:
                 print(f"enrich:github listening on {CHANNEL}", flush=True)
                 while not self.stopping.is_set():
                     self.wake.clear()
+                    if self.reconciling is None or self.reconciling.done():
+                        self.reconciling = asyncio.create_task(self.reconcile_pending())
                     await self._claim_until_empty()
                     try:
                         await asyncio.wait_for(self.wake.wait(), self.poll_seconds)
                     except asyncio.TimeoutError:
                         self.failed.clear()
+                        self.failed_accounts.clear()
                 print(f"enrich:github stopping, finishing {len(self.tasks)} in flight", flush=True)
-                await asyncio.gather(*list(self.tasks))
+                await asyncio.gather(*self.tasks, *([self.reconciling] if self.reconciling else []))
         finally:
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.remove_signal_handler(sig)
@@ -319,7 +349,8 @@ class Worker:
             path = f"/compare/{body['before']}...{body['after']}"
             pages = await self.cached_pages(raw, (raw.tenant, repo, path), path)
             return {"compare": [commit for page in pages for commit in page.get("commits", [])]}
-        if event == "pull_request" and action in PR_FILE_ACTIONS:
+        # A reconcile copy is the pull request's current state, so it gets its files as an opened one does
+        if event == "pull_request" and (action in PR_FILE_ACTIONS or raw.origin == "reconcile"):
             pull = body["pull_request"]
             path = f"/pulls/{pull['number']}/files"
             pages = await self.cached_pages(raw, (raw.tenant, repo, path, pull["head"]["sha"]), path)
@@ -344,28 +375,155 @@ class Worker:
 
     async def get_pages(self, raw: RawEvent, path: str) -> list:
         body = raw.envelope["body"]
-        repo = body["repository"]["full_name"]
         bucket = raw.account_id or str(body["installation"]["id"])
-        exchange = self.limited_exchange(raw.tenant, bucket)
-        token = await self.token(bucket, repo, exchange)
-        url: str | None = f"{API}/repos/{repo}{path}?per_page=100"
+        return await self.all_pages(raw.tenant, bucket, f"{API}/repos/{body['repository']['full_name']}{path}?per_page=100")
+
+    async def all_pages(self, tenant: str, installation: str, url: str | None) -> list:
+        """Every page of a GitHub list, following Link, up to MAX_PAGES."""
         pages = []
         while url and len(pages) < MAX_PAGES:
-            response = await asyncio.to_thread(
-                exchange_with_retry, exchange, "GET", url, _headers(token), None
-            )
-            pages.append(_read_json(response, url))
-            url = parse_next_link(response.headers.get("Link") or response.headers.get("link"))
+            page, url = await self.get(tenant, installation, url)
+            pages.append(page)
         return pages
 
-    async def token(self, bucket: str, repo: str, exchange) -> str:
-        cached = self.tokens.get(bucket)
+    async def get(self, tenant: str, installation: str, url: str) -> tuple:
+        """One GET with the installation's token, through the shared limiter. Returns (JSON, next page URL)."""
+        exchange = self.limited_exchange(tenant, installation)
+        token = await self.token(installation, exchange)
+        response = await asyncio.to_thread(exchange_with_retry, exchange, "GET", url, _headers(token), None)
+        return _read_json(response, url), parse_next_link(response.headers.get("Link") or response.headers.get("link"))
+
+    async def token(self, installation: str, exchange) -> str:
+        cached = self.tokens.get(installation)
         if cached and cached[1] > time.monotonic():
             return cached[0]
         app_jwt = await asyncio.to_thread(self.app_jwt)
-        token = await asyncio.to_thread(installation_token, app_jwt, repo, exchange)
-        self.tokens[bucket] = (token, time.monotonic() + TOKEN_TTL)
+        token = await asyncio.to_thread(mint_token, app_jwt, installation, exchange)
+        self.tokens[installation] = (token, time.monotonic() + TOKEN_TTL)
         return token
+
+    async def reconcile_pending(self) -> None:
+        """Backfill every connected installation whose reconcile hasn't finished (ADR 0010), one at a time.
+        A failed one is logged and retried after the next poll."""
+        # ponytail: one installation and one request at a time. Run them concurrently if a backfill is too slow.
+        try:
+            async with self.sessions() as session:
+                accounts = (await session.execute(
+                    select(Installation.account_id, Installation.tenant)
+                    .where(Installation.source == SOURCE, Installation.disconnected_at.is_(None),
+                           ~exists().where(Cursor.source == SOURCE, Cursor.tenant == Installation.tenant,
+                                           Cursor.stream == "reconcile:" + Installation.account_id,
+                                           Cursor.position == DONE))
+                    .order_by(Installation.added_at)
+                )).all()
+        except Exception as exc:  # noqa: BLE001 a failed query must not stop the worker
+            print(f"reconcile: listing installations failed, retried on the next wake: {exc!r}", file=sys.stderr, flush=True)
+            return
+        for installation, tenant in accounts:
+            if self.stopping.is_set():
+                return
+            if installation in self.failed_accounts:
+                continue
+            try:
+                await self.reconcile_installation(tenant, installation)
+            except Exception as exc:  # noqa: BLE001 one installation's failure must not stop the others
+                self.failed_accounts.add(installation)
+                print(f"reconcile {installation} failed, retried after the next poll: {exc!r}", file=sys.stderr, flush=True)
+
+    async def reconcile_installation(self, tenant: str, installation: str) -> None:
+        """Every repository the installation can see, then `reconcile:<installation>` = done."""
+        print(f"reconcile {installation} ({tenant}): starting", flush=True)
+        pages = await self.all_pages(tenant, installation, f"{API}/installation/repositories?per_page=100")
+        repos = [repo for page in pages for repo in page["repositories"]]
+        for repo in repos:
+            if not await self.reconcile_repo(tenant, installation, repo):
+                return
+        async with self.sessions.begin() as session:
+            await session.execute(cursor_upsert(tenant, f"reconcile:{installation}", DONE))
+        print(f"reconcile {installation} ({tenant}): done, {len(repos)} repositories", flush=True)
+
+    async def reconcile_repo(self, tenant: str, installation: str, repo: dict) -> bool:
+        """Issues and pull requests by oldest update, each with its comments and reviews, from the stream's
+        cursor. The cursor moves with each one's rows. False when stopping or disconnected."""
+        name = repo["full_name"]
+        stream = f"reconcile:{name}:issues"
+        async with self.sessions() as session:
+            position = await session.scalar(select(Cursor.position).where(
+                Cursor.source == SOURCE, Cursor.tenant == tenant, Cursor.stream == stream))
+        if position == DONE:
+            return True
+        # One second back, in case `since` is exclusive: what was written again is a no-op on delivery_id
+        since = (_time(position) - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ") if position else self.reconcile_since
+        url: str | None = f"{API}/repos/{name}/issues?state=all&sort=updated&direction=asc&per_page=100"
+        if since:
+            url += f"&since={since}"
+        written = 0
+        while url:
+            items, url = await self.get(tenant, installation, url)
+            for item in items:
+                if self.stopping.is_set():
+                    return False
+                bodies = await self.issue_bodies(tenant, installation, repo, item)
+                if not await self.store(tenant, installation, bodies, stream, item["updated_at"]):
+                    print(f"reconcile {installation}: disconnected, stopped", flush=True)
+                    return False
+                written += len(bodies)
+            print(f"reconcile {name}: {written} objects so far", flush=True)
+        async with self.sessions.begin() as session:
+            await session.execute(cursor_upsert(tenant, stream, DONE))
+        return True
+
+    async def issue_bodies(self, tenant: str, installation: str, repo: dict, item: dict) -> list[tuple[str, dict]]:
+        """(event name, body) for an issue or pull request and its comments and reviews. Each body is shaped
+        as that object's webhook delivery, so to_records reads it unchanged (github-webhooks.md)."""
+        base = f"{API}/repos/{repo['full_name']}"
+        number = item["number"]
+        common = {"repository": repo, "installation": {"id": int(installation)}}
+
+        async def listed(path: str) -> list:
+            return [obj for page in await self.all_pages(tenant, installation, f"{base}{path}?per_page=100") for obj in page]
+
+        bodies: list[tuple[str, dict]] = []
+        if "pull_request" in item:  # the issues list includes pull requests; the pull resource has head, base and merged
+            pull, _ = await self.get(tenant, installation, f"{base}/pulls/{number}")
+            bodies.append(("pull_request", {"pull_request": pull, **common}))
+            # A pending review has no submitted_at, and only its author can see it
+            bodies += [("pull_request_review", {"review": review, "pull_request": pull, **common})
+                       for review in await listed(f"/pulls/{number}/reviews") if review.get("submitted_at")]
+            if pull.get("review_comments"):
+                bodies += [("pull_request_review_comment", {"comment": comment, "pull_request": pull, **common})
+                           for comment in await listed(f"/pulls/{number}/comments")]
+        else:
+            bodies.append(("issues", {"issue": item, **common}))
+        if item.get("comments"):
+            bodies += [("issue_comment", {"comment": comment, "issue": item, **common})
+                       for comment in await listed(f"/issues/{number}/comments")]
+        return bodies
+
+    async def store(self, tenant: str, installation: str, bodies: list[tuple[str, dict]], stream: str, position: str) -> bool:
+        """Insert the bodies as raw_events (origin reconcile) and move the cursor, in one transaction, only while
+        the installation is still connected. False when it isn't."""
+        received = datetime.now(timezone.utc)
+        rows = []
+        for event_name, body in bodies:
+            raw = RawEvent(event_name=event_name, envelope={"type": SOURCE, "body": body}, received_at=received)
+            (record,) = to_records(raw, {})
+            rows.append({"source": SOURCE, "delivery_id": f"{record['object_id']}@{record['version']}",
+                         "account_id": installation, "tenant": tenant, "event_name": event_name, "origin": "reconcile",
+                         "envelope": raw.envelope, "occurred_at": ordering_value(raw)})
+        async with self.sessions.begin() as session:
+            # Shared lock: a disconnect waits for this commit, and nothing is written after it
+            connected = await session.scalar(
+                select(Installation.account_id)
+                .where(Installation.source == SOURCE, Installation.account_id == installation,
+                       Installation.tenant == tenant, Installation.disconnected_at.is_(None))
+                .with_for_update(read=True))
+            if connected is None:
+                return False
+            if rows:
+                await session.execute(insert(RawEvent).values(rows).on_conflict_do_nothing(index_elements=["source", "delivery_id"]))
+            await session.execute(cursor_upsert(tenant, stream, position))
+        return True
 
     def limited_exchange(self, tenant: str, bucket: str):
         """A synchronous exchange, run in a thread, that waits on and updates the rate_limits row."""
@@ -423,7 +581,12 @@ def main() -> int:
         return 2
     concurrency = int(os.environ.get("CONCURRENCY", "4"))
     batch = int(os.environ.get("BATCH", "25"))
-    asyncio.run(Worker(database_url, concurrency=concurrency, batch=batch).run())
+    try:
+        since = reconcile_since(os.environ.get("RECONCILE_SINCE", ""))
+    except ValueError:
+        print("RECONCILE_SINCE must be an ISO date, e.g. 2026-01-01", file=sys.stderr)
+        return 2
+    asyncio.run(Worker(database_url, concurrency=concurrency, batch=batch, reconcile_since=since).run())
     return 0
 
 
