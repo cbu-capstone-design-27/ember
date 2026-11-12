@@ -40,7 +40,7 @@ spec:
       containers:
         - name: web
           # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
-          image: ghcr.io/cbu-capstone-design-27/ember/web:develop-321-3cff62b
+          image: ghcr.io/cbu-capstone-design-27/ember/web:develop-PENDING-pr130  # EMBER-148: set to the tag built from #130's merge commit
           env:
             # The pod stays in CreateContainerConfigError until every Secret not marked optional exists
             - name: DATABASE_URL
