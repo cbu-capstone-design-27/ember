@@ -123,7 +123,7 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.db = await asyncpg.connect(database_url())
-        await self.db.execute("truncate raw_events, source_records, episodes, rate_limits restart identity")
+        await self.db.execute("truncate raw_events, source_records, episodes, rate_limits restart identity cascade")
 
     async def asyncTearDown(self):
         await self.db.close()
@@ -190,7 +190,7 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         commits = [r for r in await self.records() if r["kind"] == "commit"]
         self.assertEqual(len(commits), 2)
 
-        await self.db.execute("truncate source_records, episodes")
+        await self.db.execute("truncate source_records, episodes cascade")
         full = FakeGitHub()
         await self.process(full, await self.insert("push", push(enrich.FULL_PUSH)))
         self.assertIn(f"/repos/acme/widget/compare/{'a' * 40}...{'b' * 40}", full.paths())
