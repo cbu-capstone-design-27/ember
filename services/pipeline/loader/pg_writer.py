@@ -30,7 +30,7 @@ from datetime import datetime
 from ontology import EDGE_TYPES, ENTITY_TYPES, ensure_graph, graph_scope
 
 from .neo4j_writer import TOMBSTONE_KEYS
-from .records import _NAMESPACE, node_uuid
+from .records import UUID_NAMESPACE, node_uuid
 
 LABELS = set(ENTITY_TYPES) | {"Status"}
 TYPES = set(EDGE_TYPES) | {"HAS_STATUS", "SAME_AS"}
@@ -264,7 +264,7 @@ class PgWriter:
                                     and e.invalid_at is null and e.expired_at is null)
                on conflict (src, type, dst, md5(coalesce(fact, ''))) where invalid_at is null and expired_at is null
                do nothing""",
-            uuid.uuid5(_NAMESPACE, key), graph_id, tenant, type_, FACTS[type_], src, dst, json.dumps(props),
+            uuid.uuid5(UUID_NAMESPACE, key), graph_id, tenant, type_, FACTS[type_], src, dst, json.dumps(props),
             valid_at, invalid_at, episode_id, invalidated_by)
 
     async def _invalidate_missing(self, conn, graph: Graph, episode, main: dict, edges: list[dict]) -> None:
