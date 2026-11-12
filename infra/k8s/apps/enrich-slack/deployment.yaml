@@ -32,7 +32,7 @@ spec:
       containers:
         - name: enrich
           # Public on GHCR, so no imagePullSecret (docs/container-images.md). Pin a <branch>-<run>-<sha> tag
-          image: ghcr.io/cbu-capstone-design-27/ember/slack-ingestion:develop-198-5545f76
+          image: ghcr.io/cbu-capstone-design-27/ember/slack-ingestion:develop-PENDING-pr130  # EMBER-148: set to the tag built from #130's merge commit
           # The image's default command is the stdout-only receiver.py; intake receives Slack's events
           command: ["python3", "enrich.py"]
           env:
@@ -49,13 +49,6 @@ spec:
                 secretKeyRef:
                   name: source-credentials-api
                   key: SOURCE_CREDENTIALS_API_KEYS
-            # Secret enrich-slack-bot (slack-bot.sops.yaml): the one Bot User OAuth Token the image pinned
-            # above reads. The Connect Slack build ignores it; it goes with that build's pin
-            - name: SLACK_BOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: enrich-slack-bot
-                  key: SLACK_BOT_TOKEN
             # The Slack app is one the workspace created itself, so Slack's normal tiers apply
             - name: SLACK_RATE_MODE
               value: internal
