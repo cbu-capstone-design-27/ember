@@ -5,10 +5,11 @@ import { SignOutButton } from "../../../components/nav.tsx";
 import { getAuth } from "../../../lib/auth.ts";
 import { listConnections, type Connection } from "../../../lib/connections.ts";
 import { githubAppConfig, GITHUB_WEB } from "../../../lib/github-connect.ts";
+import { gitlabConnectConfig } from "../../../lib/gitlab-connect.ts";
 import { jiraAppConfig } from "../../../lib/jira-connect.ts";
 import { isTeamId, slackAppConfig } from "../../../lib/slack-connect.ts";
 import { canConnectSources, canInvite, invitationsOf, isEmberAdmin } from "../../../lib/organizations.ts";
-import { apiKeyRing, ingestionPool } from "../../connect/server.ts";
+import { apiKeyRing, ingestionPool, keyRing } from "../../connect/server.ts";
 import { requireOrganization } from "../../../lib/session.ts";
 import { DisconnectForm } from "./connection-forms.tsx";
 import { PasswordForm, PreviewDataForm, ProfileForm } from "./forms.tsx";
@@ -172,6 +173,12 @@ function disconnectNotice(params: SettingsParams, connections: Connection[], git
       text: `Disconnected ${name}. Ember stopped ingesting it and deleted its bot token, but couldn't uninstall its Slack app. Until a workspace admin removes Ember under Settings & administration, Manage apps, Slack keeps sending events, which Ember stores without assigning them to an organization.`,
     };
   }
+  if (c.source === "gitlab") {
+    return {
+      error: false,
+      text: `Disconnected ${name}. Ember stopped ingesting it and deleted its access token and webhook signing tokens. Remove Ember's webhook from the group or its projects in GitLab: until then Ember refuses what it sends, and GitLab turns the webhook off after 40 refusals.`,
+    };
+  }
   if (c.source === "github") {
     return {
       error: false,
@@ -226,6 +233,7 @@ export default async function SettingsPage({
   const githubReady = pool !== null && githubApp !== null;
   const jiraReady = pool !== null && jiraAppConfig() !== null && apiKeyRing() !== null;
   const slackReady = pool !== null && slackAppConfig() !== null && apiKeyRing() !== null;
+  const gitlabReady = pool !== null && gitlabConnectConfig() !== null && keyRing("api") !== null && keyRing("webhook") !== null;
   const memberNames = new Map(members.map((m) => [m.user.id, m.user.name]));
   return (
     <div className={styles.page}>
@@ -300,6 +308,11 @@ export default async function SettingsPage({
                 </div>
                 <div className={styles.listActions}>
                   {c.disconnectedAt ? <span className="badge badge-danger">disconnected</span> : <span className="badge">connected</span>}
+                  {canConnect && !c.disconnectedAt && c.source === "gitlab" && gitlabReady && (
+                    <a className="btn btn-ghost btn-sm" href={`/connect/gitlab?account=${encodeURIComponent(c.accountId)}`}>
+                      Add a webhook
+                    </a>
+                  )}
                   {canConnect && !c.disconnectedAt && (
                     <DisconnectForm organizationId={org.id} source={c.source} accountId={c.accountId} name={connectionName(c)} />
                   )}
@@ -369,6 +382,28 @@ export default async function SettingsPage({
                 </span>
                 <a className="btn btn-primary" href="/connect/slack">
                   Connect Slack
+                </a>
+              </>
+            )}
+          </div>
+        )}
+        {canConnect && (
+          <div className={styles.connectActions}>
+            {!gitlabReady ? (
+              <span className="field-hint">
+                Connecting GitLab needs{" "}
+                {pool
+                  ? "intake's address and both key rings (GITLAB_WEBHOOK_URL, SOURCE_CREDENTIALS_API_KEYS, SOURCE_CREDENTIALS_WEBHOOK_KEYS)"
+                  : "the Postgres database ingestion uses"}
+                .
+              </span>
+            ) : (
+              <>
+                <span className="field-hint">
+                  Connects a top-level group on GitLab.com or a self-managed instance with a read_api token, then the webhooks you add to it.
+                </span>
+                <a className="btn btn-primary" href="/connect/gitlab">
+                  Connect GitLab
                 </a>
               </>
             )}

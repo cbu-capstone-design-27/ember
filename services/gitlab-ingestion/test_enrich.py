@@ -12,6 +12,7 @@ It builds the repo migrations in database ember_test_gitlab_enrich.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import signal
@@ -28,10 +29,12 @@ import asyncpg
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(REPO / "packages" / "source-credentials"))
 
 import enrich  # noqa: E402
-from models import RateLimit, RawEvent, SourceRecord  # noqa: E402
+from models import Installation, RateLimit, RawEvent, SourceCredential, SourceRecord  # noqa: E402
 from pull import Response  # noqa: E402
+from source_credentials import KeyRing  # noqa: E402
 
 MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
@@ -42,6 +45,8 @@ USER = FIXTURE["body"]["user"]
 ACCOUNT = "gitlab.com/acme"
 UPDATED = "2026-10-01T09:30:00.000Z"
 ZERO = "0" * 40
+# EMBER-149: the api key ring Connect GitLab seals each group's read_api token with
+API_RING = KeyRing.parse("api", "test:" + base64.b64encode(bytes(range(32))).decode())
 
 
 def database_url() -> str:
@@ -100,7 +105,9 @@ class FakeGitLab:
               "new_file": False, "renamed_file": False, "deleted_file": False}]
     COMPARE = [{"id": f"{n:040x}", "short_id": f"{n:08x}", "title": f"compared {n}"} for n in range(100, 125)]
 
-    def __init__(self, *, slow: float = 0.0, throttle: bool = False, low_quota: bool = False) -> None:
+    def __init__(self, *, slow: float = 0.0, throttle: bool = False, low_quota: bool = False,
+                 token: str = "read-api-token") -> None:
+        self.token = token
         self.slow = slow
         self.throttle = throttle
         self.low_quota = low_quota
@@ -111,7 +118,7 @@ class FakeGitLab:
         return [urlsplit(url).path for _at, url in self.calls]
 
     def __call__(self, method: str, url: str, headers: dict) -> Response:
-        assert headers["PRIVATE-TOKEN"] == "read-api-token"
+        assert headers["PRIVATE-TOKEN"] == self.token, headers["PRIVATE-TOKEN"]
         self.calls.append((time.time(), url))
         path = urlsplit(url).path
         if path.endswith("/diffs"):
@@ -142,21 +149,32 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.db = await asyncpg.connect(database_url())
-        await self.db.execute("truncate raw_events, source_records, episodes, rate_limits restart identity")
+        await self.db.execute("truncate raw_events, source_records, episodes, rate_limits, installations restart identity cascade")
 
     async def asyncTearDown(self):
         await self.db.close()
 
-    async def insert(self, event_name: str, body: dict, delivery_id: str | None = None, origin: str = "webhook") -> int:
+    async def insert(self, event_name: str, body: dict, delivery_id: str | None = None, origin: str = "webhook",
+                     account: str = ACCOUNT) -> int:
         return await self.db.fetchval(
             "insert into raw_events (source, delivery_id, account_id, tenant, event_name, origin, envelope)"
             " values ('gitlab', $1, $2, 'acme', $3, $4, $5::jsonb) returning id",
-            delivery_id or f"delivery-{time.monotonic_ns()}", ACCOUNT, event_name, origin,
+            delivery_id or f"delivery-{time.monotonic_ns()}", account, event_name, origin,
             json.dumps({"type": "gitlab", "body": body}),
         )
 
-    def start(self, gitlab: FakeGitLab, token: str = "read-api-token") -> tuple[enrich.Worker, asyncio.Task]:
-        worker = enrich.Worker(database_url(), api_token=token, exchange=gitlab)
+    async def connect(self, account: str = ACCOUNT, tenant: str = "acme", *, token: str = "stored-token",
+                      base_url: str = "https://gitlab.com", disconnected: bool = False) -> None:
+        """What Connect GitLab writes (apps/web/src/lib/gitlab-connect.ts): the group, and its sealed api row."""
+        await self.db.execute("insert into installations (source, account_id, tenant, disconnected_at)"
+                              " values ('gitlab', $1, $2, case when $3 then now() end)", account, tenant, disconnected)
+        sealed = API_RING.seal("gitlab", account, {"token": token, "base_url": base_url, "token_kind": "group"})
+        await self.db.execute("insert into source_credentials (source, account_id, kind, key_id, ciphertext)"
+                              " values ('gitlab', $1, 'api', $2, $3)", account, sealed.key_id, sealed.ciphertext)
+
+    def start(self, gitlab: FakeGitLab, token: str = "read-api-token",
+              api_keys: KeyRing | None = None) -> tuple[enrich.Worker, asyncio.Task]:
+        worker = enrich.Worker(database_url(), api_token=token, api_keys=api_keys, exchange=gitlab)
         return worker, asyncio.create_task(worker.run())
 
     async def wait_enriched(self, *ids: int, timeout: float = 10.0) -> float:
@@ -183,7 +201,7 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         return await self.db.fetchval("select received_at from raw_events where id = $1", raw_id)
 
     async def test_models_match_the_migrated_schema(self):
-        for model in (RawEvent, SourceRecord, RateLimit):
+        for model in (RawEvent, SourceRecord, RateLimit, Installation, SourceCredential):
             table = model.__table__
             rows = await self.db.fetch(
                 "select column_name, is_nullable = 'YES' as nullable from information_schema.columns"
@@ -368,6 +386,71 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
             worker.stop()
             await task
         self.assertEqual([r["kind"] for r in await self.records()], ["issue"])
+
+
+    async def fetch_with(self, gitlab: FakeGitLab, *, account: str = ACCOUNT, token: str = "read-api-token") -> int:
+        """Insert one merge request open (it fetches its diffs) and run a worker with the api ring until it's done."""
+        raw = await self.insert("merge_request:open", merge_request(), account=account)
+        worker, task = self.start(gitlab, token=token, api_keys=API_RING)
+        try:
+            await self.wait_enriched(raw, timeout=5)
+        finally:
+            worker.stop()
+            await task
+        return raw
+
+    async def test_a_connected_group_is_read_with_its_own_token(self):
+        await self.connect()
+        gitlab = FakeGitLab(token="stored-token")
+        await self.fetch_with(gitlab)
+        self.assertEqual([url.split("?")[0] for _at, url in gitlab.calls],
+                         ["https://gitlab.com/api/v4/projects/42/merge_requests/7/diffs"])
+        (record,) = await self.records("merge_request")
+        self.assertEqual(json.loads(record["record"])["fetched"]["diffs"], FakeGitLab.DIFFS)
+
+    async def test_a_self_managed_group_is_read_on_its_own_instance(self):
+        account = "gitlab.example.com/acme"
+        await self.connect(account, base_url="https://gitlab.example.com:8443/gitlab")
+        gitlab = FakeGitLab(token="stored-token")
+        await self.fetch_with(gitlab, account=account, token="")
+        self.assertEqual([url.split("?")[0] for _at, url in gitlab.calls],
+                         ["https://gitlab.example.com:8443/gitlab/api/v4/projects/42/merge_requests/7/diffs"])
+
+    async def test_without_its_tenants_token_a_group_falls_back_to_gitlab_api_token(self):
+        cases = [
+            ("not connected", None),
+            ("connected by another tenant", {"tenant": "globex"}),
+            ("disconnected", {"disconnected": True}),
+        ]
+        for name, connection in cases:
+            with self.subTest(name):
+                await self.db.execute("truncate raw_events, source_records, installations restart identity cascade")
+                if connection is not None:
+                    await self.connect(**connection)
+                gitlab = FakeGitLab()  # read-api-token, the fallback
+                await self.fetch_with(gitlab)
+                self.assertEqual(len(gitlab.calls), 1)
+                self.assertTrue(gitlab.calls[0][1].startswith("https://gitlab.com/api/v4/"))
+
+    async def test_a_token_is_never_sent_to_another_instance(self):
+        # account_id names gitlab.com, so a credential for another host is refused, not followed
+        await self.connect(base_url="https://evil.example")
+        needs_fetch = await self.insert("merge_request:open", merge_request())
+        no_fetch = await self.insert("issue:open", issue())
+        gitlab = FakeGitLab(token="stored-token")
+        worker, task = self.start(gitlab, api_keys=API_RING)
+        try:
+            await self.wait_enriched(no_fetch)
+            await asyncio.sleep(0.3)
+            self.assertIsNone(await self.db.fetchval("select enriched_at from raw_events where id = $1", needs_fetch))
+        finally:
+            worker.stop()
+            await task
+        self.assertEqual(gitlab.calls, [])
+
+    async def test_the_worker_needs_the_api_ring_not_the_webhook_one(self):
+        with self.assertRaisesRegex(enrich.PullError, "api key ring"):
+            enrich.Worker(database_url(), api_keys=KeyRing.parse("webhook", "test:" + base64.b64encode(bytes(32)).decode()))
 
 
 if __name__ == "__main__":

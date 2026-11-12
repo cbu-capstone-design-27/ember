@@ -36,7 +36,8 @@ SIGINT or SIGTERM stops accepting connections and lets requests in flight finish
 | `SLACK_SIGNING_SECRET` | The Slack app's signing secret (Basic Information, App Credentials). Optional: without it intake serves GitHub only and `/webhook/slack` is an unknown source (404), so intake runs where the Slack app isn't set up. When set, the same whitespace rule as GitHub's applies. The startup log names the sources served |
 | `JIRA_WEBHOOK_SECRET` | The secret saved on the Jira site's admin webhook. Optional, like Slack's. When set, the same whitespace rule applies |
 | `JIRA_OAUTH_CLIENT_SECRET` | The Atlassian 3LO app's client secret, which signs the dynamic webhooks Connect Jira registers (EMBER-131). Optional. With neither Jira secret, `/webhook/jira` is an unknown source (404). When set, the same whitespace rule applies |
-| `GITLAB_WEBHOOK_SIGNING_TOKEN`, `GITLAB_WEBHOOK_SECRET_TOKEN` | The GitLab webhook's signing token (`whsec_…`, recommended) and legacy secret token. Optional, like Slack's: with neither, `/webhook/gitlab` is an unknown source (404). Set either or both, as on the webhook; every one that is set is checked. A signing token that isn't `whsec_` and base64 stops intake at startup, and the same whitespace rule applies to both |
+| `SOURCE_CREDENTIALS_WEBHOOK_KEYS` | The webhook key ring (`packages/source-credentials`), which opens the signing tokens Connect GitLab stores for each group (EMBER-149). On the cluster, Secret `source-credentials-webhook`. Optional: with it, `/webhook/gitlab` is served. A ring that can't be read stops intake at startup |
+| `GITLAB_WEBHOOK_SIGNING_TOKEN`, `GITLAB_WEBHOOK_SECRET_TOKEN` | A shared signing token (`whsec_…`) and legacy secret token, for webhooks set up by hand before Connect GitLab. Optional: with neither and no webhook key ring, `/webhook/gitlab` is an unknown source (404). They verify only accounts with no stored signing token, and every one that is set is checked. Drop them once every group is connected from the web app. A signing token that isn't `whsec_` and base64 stops intake at startup, and the same whitespace rule applies to both |
 | `LISTEN_PORT` | Defaults to `8080`. Not `INTAKE_PORT`, which Kubernetes sets for a Service called `intake` |
 
 ## GitHub adapter
@@ -88,13 +89,13 @@ Jira counts any answer but 200 as a failure and retries; intake answers 200 for 
 
 [`docs/ingestion/gitlab-webhooks.md`](../../docs/ingestion/gitlab-webhooks.md) is the spec. `enrich:gitlab` (`services/gitlab-ingestion/enrich.py`) reads the rows. The checks are the ones `services/gitlab-ingestion/receiver.py` makes, which stays as a local stub.
 
-- **Verification:** with a signing token, `webhook-signature` must hold a `v1,` HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`, and `webhook-timestamp` must be within 5 minutes. With a secret token, `X-Gitlab-Token` must equal it. Each configured one is checked.
+- **Verification:** `webhook-signature` must hold a `v1,` HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`, and `webhook-timestamp` must be within 5 minutes. The keys are the signing tokens Connect GitLab stored for the delivery's `account_id` (a `webhook` row in `source_credentials`, `{"signing_tokens": [...]}`, EMBER-149, [ADR 0010](../../docs/adr/0010-connecting-sources.md#gitlab)): GitLab generates one per webhook, so a group on Free has one per project, and any of them verifies. The account is read from the body before it is trusted, only to pick the token: a body that names another group fails that group's signature. An account with no stored tokens is checked with the shared tokens, each that is set (with a secret token, `X-Gitlab-Token` must equal it), and gets a 401 when none is. Disconnect deletes the stored token, so a disconnected group's webhook gets 401s until the owner removes it; GitLab disables it after 40.
 - **`delivery_id`:** `webhook-id`, else `Idempotency-Key` (the same value), at most 255 characters. GitLab keeps it across retries and a manual Resend. Not `X-Gitlab-Event-UUID`, which a webhook triggered by another webhook shares.
-- **`account_id`:** `<instance host>/<top-level group>`, e.g. `gitlab.com/acme`: the host of `X-Gitlab-Instance` (a URL or a bare hostname) and the first segment of `project.path_with_namespace`, as GitLab writes it. One read token per tenant group, so this is what `make map-tenant SOURCE=gitlab` takes. Without either, the delivery is stored with no account.
+- **`account_id`:** `<instance host>/<top-level group>`, e.g. `gitlab.com/acme`: the host of `X-Gitlab-Instance` (a URL or a bare hostname) and the first segment of `project.path_with_namespace`, as GitLab writes it. One read token per tenant group, so this is what `make map-tenant SOURCE=gitlab` takes. Without either, there is no stored token to look up, so only a shared token can verify it, and it is stored with no account.
 - **`event_name`:** `object_kind`, plus `:<action>` when there is one, e.g. `merge_request:update`, `work_item:close`, `push`. The body decides because `Issue Hook` covers issues and work items. A body without `object_kind` is a 400.
 - **`occurred_at`:** the [ordering value](../../docs/ingestion/gitlab-webhooks.md#ordering-value-ember-63): `object_attributes.updated_at` for merge requests, issues, work items and notes, in either of GitLab's time formats. Pushes, branch deletes, the four approval actions, other kinds and an unreadable time get `received_at`.
 
-GitLab wants a 2xx within 10 seconds and disables a webhook after 4 failures in a row. Intake answers 200 for stored and duplicate deliveries. Register the project or group webhook with the URL `https://ember.tail470a31.ts.net/webhook/gitlab`, the same token as intake's, and the triggers in `RECOMMENDED_WEBHOOK_TRIGGERS` (`services/gitlab-ingestion/receiver.py`), once intake has the token.
+GitLab wants a 2xx within 10 seconds and disables a webhook after 4 failures in a row. Intake answers 200 for stored and duplicate deliveries. Connect GitLab in the web app's Settings shows the webhook URL; the owner adds the webhook to the group (Premium) or to each project (Free) with **Generate signing token** and the triggers in `RECOMMENDED_WEBHOOK_TRIGGERS` (`services/gitlab-ingestion/receiver.py`), then pastes each signing token back.
 
 ## Run
 
@@ -110,6 +111,7 @@ Or without the container:
 
 ```sh
 pip install -r services/intake/requirements.txt
+PYTHONPATH=packages/source-credentials \
 DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable' \
   GITHUB_WEBHOOK_SECRET=throwaway-local-secret SLACK_SIGNING_SECRET=throwaway-local-secret \
   python3 services/intake/intake.py

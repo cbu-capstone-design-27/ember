@@ -8,7 +8,7 @@ adapter here and to the list in intake.py's main, not a new listener.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -55,7 +55,8 @@ class SourceAdapter(Protocol):
     name: Source
 
     def handshake(self, delivery: Delivery) -> Response | None: ...  # Slack, Teams; None for a normal delivery
-    def verify(self, delivery: Delivery) -> None: ...  # raises Unauthorized
+    # Raises Unauthorized. May be async, for an adapter that looks up the account's own token (GitLab)
+    def verify(self, delivery: Delivery) -> None | Awaitable[None]: ...
     def delivery_id(self, delivery: Delivery) -> str: ...  # stable across the source's retries
     def account_id(self, delivery: Delivery) -> str | None: ...  # mapped to a tenant via installations
     def event_name(self, delivery: Delivery) -> str: ...

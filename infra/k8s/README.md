@@ -168,6 +168,8 @@ While intake is on the old secret, dynamic webhook deliveries are refused with 4
 
 #### The GitLab signing token
 
+**New groups don't use this.** An owner connects a group in the web app's Settings (Connect GitLab, EMBER-149) and pastes each webhook's signing token there, and intake verifies that group with its own tokens from `source_credentials`. The shared token below verifies only groups with no stored token: the hand-made webhook on `personal-embertest`, until that group is connected from the web app. Then drop it from the vault and `webhooks.sops.yaml`.
+
 A GitLab project webhook signs each delivery with its signing token (`webhook-signature`), and intake checks it before serving `/webhook/gitlab` (`services/intake/README.md`, GitLab adapter). GitLab generates the token and shows it **once**, when the webhook is created; the API never returns it. It lives in the webhook, the vault, and `apps/intake/webhooks.sops.yaml`. To set or rotate it:
 
 1. In the project (`personal-embertest/Personal-Ember` today), **Settings → Webhooks → Add new webhook**: URL `https://ember.tail470a31.ts.net/webhook/gitlab`, **Generate signing token**, and the triggers in `RECOMMENDED_WEBHOOK_TRIGGERS` (`services/gitlab-ingestion/receiver.py`): merge request events, issues events, comments, push events. Copy the `whsec_…` token before leaving the page. Group webhooks need Premium or Ultimate, so on Free it is per project.
@@ -250,7 +252,7 @@ kubectl --context homelab -n ember logs -f job/keep-alive-manual
 `enrich:gitlab` (EMBER-68, `services/gitlab-ingestion/enrich.py`): turns the GitLab rows intake stores in `raw_events` into `source_records`. One replica in namespace `ember` from `apps/enrich-gitlab/`, with no Service, because it serves nothing. It claims rows with `FOR UPDATE SKIP LOCKED`, as `enrich-github` does.
 
 - **Image.** `deployment.yaml` pins a `develop-<run>-<sha>` tag of `ghcr.io/cbu-capstone-design-27/ember/gitlab-ingestion` and runs `python3 enrich.py`. The image's default command is `receiver.py`, a stdout-only stub that is never deployed; intake receives GitLab's webhooks.
-- **Credentials.** `DATABASE_URL` comes from Secret `postgres-app`. `GITLAB_BASE_URL` is `https://gitlab.com`; calls never go to a host named in a payload. Secret `enrich-gitlab-api` holds `GITLAB_API_TOKEN`, a `read_api` token used for merge request diffs and pushes of more than 20 commits, the only things a webhook lacks. One token, so one tenant group for now: rows from a group it can't read fail. Intake never sees the token, and this worker never sees the signing token.
+- **Credentials.** `DATABASE_URL` comes from Secret `postgres-app`. Merge request diffs and pushes of more than 20 commits, the only things a webhook lacks, are read with the `read_api` token Connect GitLab (EMBER-149) stored for the row's group, for the rows of the tenant that connected it, on the instance the owner connected. `SOURCE_CREDENTIALS_API_KEYS` (Secret `source-credentials-api`) opens it. A group with none falls back to Secret `enrich-gitlab-api`'s `GITLAB_API_TOKEN`, whose calls go only to `GITLAB_BASE_URL` (`https://gitlab.com`). Calls never go to a host named in a payload. Intake never sees these tokens, and this worker never sees a signing token.
 - **Rate limits.** The gates live in Postgres table `rate_limits`, bucket = account, so every worker shares one token's quota.
 - **Tenants.** Intake stores a delivery with `tenant` null until its account is in `installations`. The account is `<instance host>/<top-level group>`, e.g. `gitlab.com/personal-embertest`. Map it with `make map-tenant SOURCE=gitlab ACCOUNT=gitlab.com/<group> TENANT=<tenant>` ([Mapping a tenant](#mapping-a-tenant)), using the `account_id` the first delivery was stored with.
 - **Stopping.** On SIGTERM it stops claiming and finishes the rows in flight, for up to 60 s.
@@ -312,8 +314,8 @@ Per-account source credentials (a Jira token pair, a Slack bot token, a GitLab t
 
 | Secret | Variable | Vault value | Pods |
 |---|---|---|---|
-| `source-credentials-api` | `SOURCE_CREDENTIALS_API_KEYS` | `vault_source_credentials_api_keys` | web, `enrich-jira` (EMBER-131); the other enrich workers once they read `source_credentials` |
-| `source-credentials-webhook` | `SOURCE_CREDENTIALS_WEBHOOK_KEYS` | `vault_source_credentials_webhook_keys` | web; intake once it verifies with a per-account token (GitLab, EMBER-149) |
+| `source-credentials-api` | `SOURCE_CREDENTIALS_API_KEYS` | `vault_source_credentials_api_keys` | web, `enrich-jira` (EMBER-131), `enrich-gitlab` (EMBER-149); the other enrich workers once they read `source_credentials` |
+| `source-credentials-webhook` | `SOURCE_CREDENTIALS_WEBHOOK_KEYS` | `vault_source_credentials_webhook_keys` | web, intake (GitLab's per-group signing tokens, EMBER-149) |
 
 Each value is a key ring: `<key id>:<base64 of 32 bytes>`, comma-separated, the sealing key first (`packages/source-credentials/README.md`). To set one up:
 

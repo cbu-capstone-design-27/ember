@@ -1,7 +1,7 @@
 """enrich:gitlab (EMBER-68): turns GitLab rows in raw_events into source_records.
 
     DATABASE_URL=postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable \
-        python3 enrich.py
+        SOURCE_CREDENTIALS_API_KEYS=... PYTHONPATH=../../packages/source-credentials python3 enrich.py
 
 It claims rows as docs/ingestion/architecture.md, "Interim: claiming without the job queue",
 describes: LISTEN on RAW_EVENTS_CHANNEL (default raw_events), and claim once at start, on any
@@ -11,9 +11,12 @@ event becomes and what it fetches is docs/ingestion/gitlab-webhooks.md. API call
 helpers and wait on the shared `rate_limits` row for the row's account. SIGINT or SIGTERM stops
 claiming, lets in-flight rows finish, and exits 0.
 
-Needs GITLAB_API_TOKEN (read_api) only for events that fetch: merge_request open, reopen and
-updates that add commits, and pushes with more commits than the 20 GitLab sends. Calls go to
-GITLAB_BASE_URL (default https://gitlab.com), never to a host named in a payload.
+Needs a read_api token only for events that fetch: merge_request open, reopen and updates that add
+commits, and pushes with more commits than the 20 GitLab sends. The token is the one Connect GitLab
+(EMBER-149) stored for the row's group, opened with SOURCE_CREDENTIALS_API_KEYS and used only for rows
+of the tenant that connected it; its calls go to the instance the owner connected. A group with none
+falls back to GITLAB_API_TOKEN, whose calls go to GITLAB_BASE_URL (default https://gitlab.com). Calls
+never go to a host named in a payload.
 """
 
 from __future__ import annotations
@@ -23,14 +26,14 @@ import os
 import signal
 import sys
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from models import RateLimit, RawEvent, SourceRecord
+from models import Installation, RateLimit, RawEvent, SourceCredential, SourceRecord
 from pull import (
     API_PREFIX,
     DEFAULT_BASE_URL,
@@ -48,6 +51,7 @@ from pull import (
     throttle_seconds,
     urllib_exchange,
 )
+from source_credentials import CredentialError, KeyRing
 
 SOURCE = "gitlab"
 CHANNEL = os.environ.get("RAW_EVENTS_CHANNEL", "raw_events")
@@ -188,6 +192,7 @@ class Worker:
         *,
         base_url: str = DEFAULT_BASE_URL,
         api_token: str = "",
+        api_keys: KeyRing | None = None,
         exchange=urllib_exchange,
         concurrency: int = 4,
         poll_seconds: float = POLL_SECONDS,
@@ -200,6 +205,9 @@ class Worker:
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         self.api = resolve_base_url(base_url) + API_PREFIX
         self.api_token = api_token
+        if api_keys is not None and api_keys.kind != "api":
+            raise PullError("Connect GitLab's tokens are sealed with the api key ring")
+        self.api_keys = api_keys
         self.exchange = exchange
         self.poll_seconds = poll_seconds
         self.slots = asyncio.Semaphore(concurrency)
@@ -328,10 +336,43 @@ class Worker:
             return {"compare": compare.get("commits") or []}  # diffs stay out; a push's can be huge
         return {}
 
-    def _headers(self) -> dict[str, str]:
+    async def _auth(self, raw: RawEvent) -> tuple[str, dict[str, str]]:
+        """The API root and headers for the row: its group's Connect GitLab token, else GITLAB_API_TOKEN."""
+        credential = await self._stored_credential(raw)
+        if credential is not None:
+            return credential
         if not self.api_token:
-            raise PullError("Set GITLAB_API_TOKEN (read_api) for events that fetch from GitLab")
-        return _headers(self.api_token)
+            raise PullError(f"No Connect GitLab token for {raw.account_id} and tenant {raw.tenant}, and"
+                            " GITLAB_API_TOKEN (read_api) is unset, for an event that fetches from GitLab")
+        return self.api, _headers(self.api_token)
+
+    async def _stored_credential(self, raw: RawEvent) -> tuple[str, dict[str, str]] | None:
+        """The `api` row Connect GitLab stored for the row's group, if the row's tenant connected it."""
+        if self.api_keys is None or not raw.account_id:
+            return None
+        async with self.sessions() as session:
+            row = (await session.execute(
+                select(SourceCredential.key_id, SourceCredential.ciphertext)
+                .join(Installation, (Installation.source == SourceCredential.source)
+                      & (Installation.account_id == SourceCredential.account_id))
+                .where(SourceCredential.source == SOURCE, SourceCredential.account_id == raw.account_id,
+                       SourceCredential.kind == "api", Installation.tenant == raw.tenant,
+                       Installation.disconnected_at.is_(None))
+            )).first()
+        if row is None:
+            return None
+        try:
+            credential = self.api_keys.open(SOURCE, raw.account_id, row.key_id, row.ciphertext)
+        except CredentialError as exc:
+            raise PullError(str(exc)) from None
+        token, base_url = credential.get("token"), credential.get("base_url")
+        if not isinstance(token, str) or not token or not isinstance(base_url, str):
+            raise PullError(f"the Connect GitLab credential for {raw.account_id} has no token or base_url")
+        base = resolve_base_url(base_url)
+        # account_id is <instance host>/<group>, so the token only ever goes to the instance it was connected on
+        if (urlsplit(base).hostname or "") != raw.account_id.split("/", 1)[0]:
+            raise PullError(f"the Connect GitLab credential for {raw.account_id} names another instance")
+        return base + API_PREFIX, _headers(token)
 
     def _bucket(self, raw: RawEvent) -> str:
         # One read token per tenant group, so the account is the token's bucket
@@ -339,23 +380,24 @@ class Worker:
         return raw.account_id or str(_project_id(describe(body)[0], body))
 
     async def get_object(self, raw: RawEvent, path: str) -> dict:
+        api, headers = await self._auth(raw)
         exchange = self.limited_exchange(raw.tenant, self._bucket(raw))
-        url = f"{self.api}{path}"
-        response = await asyncio.to_thread(exchange_with_retry, exchange, "GET", url, self._headers())
+        url = f"{api}{path}"
+        response = await asyncio.to_thread(exchange_with_retry, exchange, "GET", url, headers)
         return _read_json(response, f"GET {url}")
 
     async def get_pages(self, raw: RawEvent, path: str) -> list:
+        api, headers = await self._auth(raw)
         exchange = self.limited_exchange(raw.tenant, self._bucket(raw))
-        headers = self._headers()
-        url: str | None = f"{self.api}{path}?per_page={PAGE_SIZE}"
+        url: str | None = f"{api}{path}?per_page={PAGE_SIZE}"
         pages = []
         while url and len(pages) < MAX_PAGES:
             response = await asyncio.to_thread(exchange_with_retry, exchange, "GET", url, headers)
             pages.append(_read_json(response, f"GET {url}"))
             url = parse_next_link(response.headers.get("link"))
-            if url is not None and not url.startswith(self.api + "/"):
-                # The token only ever goes to GITLAB_BASE_URL
-                raise PullError(f"refusing pagination link outside {self.api}: {url}")
+            if url is not None and not url.startswith(api + "/"):
+                # The token only ever goes to its own instance
+                raise PullError(f"refusing pagination link outside {api}: {url}")
         return pages
 
     def limited_exchange(self, tenant: str, bucket: str):
@@ -419,11 +461,15 @@ def main() -> int:
             database_url,
             base_url=os.environ.get("GITLAB_BASE_URL", ""),
             api_token=os.environ.get("GITLAB_API_TOKEN", "").strip(),
+            api_keys=KeyRing.from_env("api"),
             concurrency=int(os.environ.get("CONCURRENCY", "4")),
         )
-    except PullError as exc:
+    except (PullError, CredentialError) as exc:  # a CredentialError never carries key material
         print(exc, file=sys.stderr)
         return 2
+    if worker.api_keys is None:
+        print("SOURCE_CREDENTIALS_API_KEYS is unset, so Connect GitLab's tokens aren't read;"
+              " only GITLAB_API_TOKEN is", file=sys.stderr, flush=True)
     asyncio.run(worker.run())
     return 0
 

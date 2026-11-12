@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Identity, Text, UniqueConstraint, func
+from sqlalchemy import (BigInteger, CheckConstraint, DateTime, ForeignKeyConstraint, Identity, LargeBinary, Text,
+                        UniqueConstraint, func)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -48,3 +49,24 @@ class Installation(Base):
     label: Mapped[str | None] = mapped_column(Text)
     external_id: Mapped[str | None] = mapped_column(Text)
     connected_by: Mapped[str | None] = mapped_column(Text)
+
+
+class SourceCredential(Base):
+    """EMBER-149: intake opens only `webhook` rows (GitLab's signing tokens), with the webhook key ring.
+
+    Sealed with packages/source-credentials; this model never sees plaintext.
+    """
+
+    __tablename__ = "source_credentials"
+    __table_args__ = (
+        CheckConstraint("kind in ('api', 'webhook')"),
+        ForeignKeyConstraint(["source", "account_id"], ["installations.source", "installations.account_id"],
+                             ondelete="CASCADE"),
+    )
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    account_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    key_id: Mapped[str] = mapped_column(Text)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
