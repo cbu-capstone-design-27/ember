@@ -39,6 +39,10 @@ async def search(question: str, k: int = 8, sources: list[str] | None = None,
         graphs: Only search these graphs, by name or scope (e.g. "org/repo", "site.atlassian.net/KEY",
             a Slack team id). whoami lists them. Omit for all.
 
+    An identifier in the question (a Jira key like "PHO-87", "owner/repo#12", or "#12" when there is one
+    GitHub repo) is looked up exactly: its record comes first (score 1), then the records that reference
+    it, such as Slack messages and comments (score 0.5).
+
     Each hit has source, kind, object_id, version, occurred_at, title, snippet, url (link to the
     original, when known), score (fused rank score, higher is better) and related: up to five facts
     that hold now around the hit's graph node ("X is assigned to Y", "message references PHO-4").
@@ -53,18 +57,20 @@ async def search(question: str, k: int = 8, sources: list[str] | None = None,
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_record(source: str, object_id: str) -> dict[str, Any]:
-    """Read one search hit in full: the newest stored version of the object, with its whole source
-    payload as `record`, its graph `node` (label, key, name, summary), the `facts` that hold around it
-    now (assignees, status, links to threads, PRs and people), and its `graph` (name, scope). Records
-    over 50,000 characters come back as truncated JSON text with `truncated: true`.
+async def get_record(source: str, object_id: str, raw: bool = False) -> dict[str, Any]:
+    """Read one record: the newest stored version of the object, as title, key, url, kind, status,
+    assignee, reporter, created, updated, labels, description (plain text) and comment_count, with its
+    graph `node` (label, key, name, summary), the `facts` that hold around it now (assignees, status,
+    links to threads, PRs and people), and its `graph` (name, scope).
 
     Args:
         source: The hit's source, e.g. "jira".
-        object_id: The hit's object_id, e.g. "10004" or "org/repo#42".
+        object_id: The hit's object_id, e.g. "10004" or "org/repo#42". For Jira, the key ("PHO-87") works too.
+        raw: Return the whole stored source payload as `record` instead of the compact fields. Records over
+            50,000 characters come back as truncated JSON text with `truncated: true`.
     """
     try:
-        found = await retrieval.get_record(source, object_id)
+        found = await retrieval.get_record(source, object_id, raw)
     except ERRORS as e:
         raise ToolError(str(e)) from e
     if found is None:
@@ -82,7 +88,7 @@ async def history(source: str, object_id: str) -> list[dict[str, Any]]:
 
     Args:
         source: The hit's source, e.g. "jira".
-        object_id: The hit's object_id, e.g. "10004".
+        object_id: The hit's object_id, e.g. "10004". For Jira, the key ("PHO-87") works too.
     """
     try:
         found = await retrieval.history(source, object_id)

@@ -18,6 +18,13 @@ The server reads for one Ember user, `EMBER_USER_EMAIL`, and sees every graph an
 1. **Records by meaning**, only when `EMBEDDING_URL` is set (EMBER-78). The question is embedded with the query template `Instruct: {task}\nQuery: {question}` ([ADR 0001](../../docs/adr/0001-embedding-model.md), [`services/embedding`](../../services/embedding/README.md)) and matched against `source_records.embedding` on its HNSW index. Only rows the embed worker has processed are searchable.
 2. **The graph**, through the Graphiti fork (`graphiti-core @ ember-v0.31.2`, `PostgresDriver`): `search_` with `COMBINED_HYBRID_SEARCH_RRF` (BM25 and cosine over nodes and facts, BM25 over episodes) and the same query vector. Without `EMBEDDING_URL` it uses BM25 plus a breadth-first walk from what BM25 found, and `whoami` says so. Graphiti's nodes, facts and episodes map back to the source records behind them. A record's node is the first `WorkItem`, `Change` or `Message` in its episode's `attrs.nodes`.
 
+**Identifiers first.** Before ranking, `search` looks for identifiers in the question:
+- a Jira key (`PHO-87`) whose project is one of the user's Jira graphs
+- a GitHub `owner/repo#n` for one of their repos
+- a bare `#n` when they have exactly one GitHub repo
+
+Each one is resolved straight to its node and record, which comes first with score 1. The records whose nodes `REFERENCES` it come right after, with score 0.5: Slack messages, comments, and pull requests naming it. BM25 alone matched `pho` on every ticket and `87` on PR #87.
+
 Each hit gets `related`: up to five facts that hold now around its node, newest first. With no `sources` or `graphs` filter, Graphiti searches with `group_ids` unset, so row-level security limits it to the user's graphs and the link edges between them (`SAME_AS`, `REFERENCES` across graphs, whose `graph_id` is null) are included. With a filter it passes those graphs' `group_id`s, which leaves out link edges.
 
 The embed worker ([`services/embed`](../../services/embed/README.md)) also embeds `graph.nodes.embed_text` and `graph.edges.fact` with the same model, so graph cosine search works once it has run.
@@ -134,7 +141,7 @@ Returns `{"result": [Hit, ...]}`, best first. Search covers only the newest vers
 | `title` | PR or issue title (Jira: `KEY summary`), first line of a commit, or the start of a message |
 | `snippet` | The first 300 characters of the record's `embed_text`, or of its graph node's when the record isn't embedded |
 | `url` | GitHub `html_url`, the Jira browse URL built from the site and key, the GitLab `url`, or a Slack permalink if stored. Otherwise null |
-| `score` | The fused score, the sum of `1 / (60 + rank)` over the lists that found it |
+| `score` | 1 for an identifier the question names, 0.5 for a record referencing it, else the fused score: the sum of `1 / (60 + rank)` over the lists that found it |
 | `related` | Up to five current facts around the hit's node: `type`, `fact` ("Eli is assigned to Rotate the signing key"), `valid_at` |
 
 ### `get_record`
@@ -142,13 +149,28 @@ Returns `{"result": [Hit, ...]}`, best first. Search covers only the newest vers
 | Argument | Type | |
 |---|---|---|
 | `source` | string | A hit's `source` |
-| `object_id` | string | A hit's `object_id` |
+| `object_id` | string | A hit's `object_id`. For Jira, the key (`PHO-87`) works too and maps to the issue id |
+| `raw` | boolean | Default false. True returns the whole stored payload as `record` |
 
-Returns the newest version of that object: `source`, `tenant`, `kind`, `object_id`, `version`, `occurred_at` and the full `record` JSON, plus `node` (`label`, `key`, `name`, `summary`, read through Graphiti's `EntityNode`), `facts` (the current 1-hop facts, through `EntityEdge.get_by_node_uuid`) and `graph` (`name`, `scope`, `source`). `node` and `graph` are null for a record that isn't loaded yet. A record over 50,000 characters comes back as truncated JSON text with `"truncated": true`. An object the user can't see is a tool error.
+Returns the newest version of that object: `source`, `tenant`, `kind`, `object_id`, `version`, `occurred_at`, `title` and `url`.
+
+By default it adds a compact record, one per source, with fields left out when they're missing:
+- `key`, `status`, `assignee`, `reporter`, `created`, `updated` and `labels`
+- `description` as plain text: Jira's rich text (ADF) is flattened, and it's cut at 4,000 characters
+- `comment_count`: a Jira issue's stored comments, GitHub's `comments`, or a Slack message's replies
+
+With `raw: true` it returns the full `record` JSON instead. A record over 50,000 characters comes back as truncated JSON text with `"truncated": true`.
+
+Both forms also have:
+- `node` (`label`, `key`, `name`, `summary`), read through Graphiti's `EntityNode`
+- `facts`, the current 1-hop facts, through `EntityEdge.get_by_node_uuid`
+- `graph` (`name`, `scope`, `source`)
+
+`node` and `graph` are null for a record that isn't loaded yet. An object the user can't see is a tool error.
 
 ### `history`
 
-Same arguments as `get_record`. Returns every fact about the object's node, ended ones included, oldest first: `type`, `fact`, `valid_at`, `invalid_at` (null while it holds), `set_by` and `ended_by`. Each of those is the episode (`episode` key) and source record version (`source`, `object_id`, `version`) behind it, or null. Graphiti's `EntityEdge` has no field for the episode that ended a fact, so `ended_by` is read from `graph.edges.invalidated_by` in the same reader transaction.
+Takes `source` and `object_id` (a Jira key works too). Returns every fact about the object's node, ended ones included, oldest first: `type`, `fact`, `valid_at`, `invalid_at` (null while it holds), `set_by` and `ended_by`. Each of those is the episode (`episode` key) and source record version (`source`, `object_id`, `version`) behind it, or null. Graphiti's `EntityEdge` has no field for the episode that ended a fact, so `ended_by` is read from `graph.edges.invalidated_by` in the same reader transaction.
 
 ### `whoami`
 

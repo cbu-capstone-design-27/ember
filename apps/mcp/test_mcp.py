@@ -297,7 +297,7 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         [pull] = await retrieval.search("Do icons stay in memory?", k=1, sources=["github"])
         self.assertEqual(pull["url"], "https://github.com/acme/photon/pull/43")
 
-        record = await retrieval.get_record("jira", "10004")
+        record = await retrieval.get_record("jira", "10004", raw=True)
         self.assertEqual(record["version"], "v2")
         self.assertEqual(record["record"]["payload"]["issue"]["fields"]["summary"], "Global hotkey conflicts with Spotlight")
 
@@ -346,7 +346,7 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         """The photon changelog pages ride on each issue as issue.changelog.histories, the expand=changelog shape."""
         with patch.dict(os.environ, DATABASE_URL=database_url()):
             await seed_photon.main(embed_rows=False)
-        record = await retrieval.get_record("jira", "10015")  # PHO-15, read back as Ada through the MCP
+        record = await retrieval.get_record("jira", "10015", raw=True)  # PHO-15, read back as Ada through the MCP
         issue = record["record"]["payload"]["issue"]
         moves = [(item["fromString"], item["toString"]) for entry in issue["changelog"]["histories"]
                  for item in entry["items"] if item["field"] == "status"]
@@ -474,6 +474,25 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         # The Slack message's link edge into the Jira graph
         self.assertTrue(any(f["type"] == "REFERENCES" and f["fact"].endswith("references Rotate the login signing key")
                             for f in record["facts"]), facts)
+
+    async def test_an_exact_key_comes_first_then_what_references_it(self):
+        await self.load_graph()
+        hits = await retrieval.search("ACME-1", k=5)
+        self.assertEqual([(h["source"], h["object_id"], h["score"]) for h in hits[:2]],
+                         [("jira", "201", 1.0), ("slack", "C1/1790000000.000100", 0.5)])
+        [hit] = await retrieval.search("what is ada/notes#1 about?", k=1)
+        self.assertEqual((hit["source"], hit["object_id"], hit["score"]), ("github", "ada/notes#1", 1.0))
+
+    async def test_get_record_takes_a_jira_key_and_is_compact_unless_raw(self):
+        await self.load_graph()
+        record = await retrieval.get_record("jira", "ACME-1")
+        self.assertEqual({k: record[k] for k in ("object_id", "key", "status", "assignee", "url")},
+                         {"object_id": "201", "key": "ACME-1", "status": "In Progress", "assignee": "Eli",
+                          "url": "https://acme.atlassian.net/browse/ACME-1"})
+        self.assertNotIn("record", record)
+        self.assertEqual(len(await retrieval.history("jira", "ACME-1")), len(await retrieval.history("jira", "201")))
+        raw = await retrieval.get_record("jira", "ACME-1", raw=True)
+        self.assertEqual(raw["record"]["payload"]["issue"]["fields"]["assignee"]["accountId"], "eli")
 
     async def test_history_returns_ended_facts_with_the_episodes_that_set_and_ended_them(self):
         await self.load_graph()

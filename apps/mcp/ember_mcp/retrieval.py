@@ -25,7 +25,8 @@ import asyncpg
 
 from . import graph
 
-MAX_RECORD_CHARS = 50_000   # get_record trims a record larger than this
+MAX_RECORD_CHARS = 50_000   # get_record(raw=True) trims a record larger than this
+MAX_DESCRIPTION_CHARS = 4_000   # the compact record's description is cut here
 SNIPPET_CHARS = 300         # a hit's snippet is the start of its embed_text
 
 # services/embedding/README.md, Model identity. Queries get the template, documents never do.
@@ -228,13 +229,15 @@ async def search(question: str, k: int = 8, sources: list[str] | None = None,
     async with reader() as scope:
         conn = scope.conn
         group_ids = graph_ids = None   # None: every graph and record the reader sees, link edges included
+        chosen = await scope.graphs(sources, graphs)
         if sources is not None or graphs is not None:
-            chosen = await scope.graphs(sources, graphs)
             group_ids = [g["group_id"] for g in chosen]
             if graphs is not None:
                 if not chosen:
                     return []
                 graph_ids = [g["id"] for g in chosen]
+        # Identifiers the question names (PHO-87, org/repo#12) come first, then what references them
+        exact, referencing = await graph.named(conn, graph.identifiers(question, chosen))
         lists = []
         if vector is not None:
             # Keep scanning the index past rows the filters drop, so k hits come back when k exist
@@ -243,7 +246,8 @@ async def search(question: str, k: int = 8, sources: list[str] | None = None,
             lists.append([(r["source"], r["object_id"]) for r in rows])
         if group_ids != []:  # Graphiti reads [] as every graph
             lists += await graph.search(conn, question, vector, group_ids, max(k, 10))
-        fused = rrf(lists)
+        fused = {**{key: 1.0 for key in exact}, **{key: 0.5 for key in referencing if key not in exact}}
+        fused |= {key: score for key, score in rrf(lists).items() if key not in fused}
         keys = [key for key in fused if sources is None or key[0] in sources]
         rows = {(r["source"], r["object_id"]): r for r in await conn.fetch(HITS, [s for s, _ in keys], [o for _, o in keys])}
         keys = [key for key in keys if key in rows and not rows[key]["gone"]][:k]
@@ -259,31 +263,122 @@ async def search(question: str, k: int = 8, sources: list[str] | None = None,
     return hits
 
 
+async def _object_id(conn: asyncpg.Connection, source: str, object_id: str) -> str:
+    """A Jira key (PHO-87) as its issue's object_id, the issue id. Anything else is returned as it is.
+    ponytail: reads the jira rows' payload key without an index; add one on it if Jira tenants grow large."""
+    if source != "jira" or not graph.JIRA_KEY.fullmatch(object_id):
+        return object_id
+    found = await conn.fetchval(
+        """select object_id from source_records where source = 'jira' and kind = 'issue'
+           and record#>>'{payload,issue,key}' = $1 order by occurred_at desc, id desc limit 1""", object_id)
+    return found or object_id
+
+
 async def _newest(conn: asyncpg.Connection, source: str, object_id: str) -> asyncpg.Record | None:
     return await conn.fetchrow(
-        """select source, tenant, kind, object_id, version, occurred_at, record::text as record
-           from source_records where source = $1 and object_id = $2
-           order by occurred_at desc, id desc limit 1""",
+        f"""select source, tenant, kind, object_id, version, occurred_at, {TITLE} as title, {URL} as url,
+                   record::text as record
+            from source_records where source = $1 and object_id = $2
+            order by occurred_at desc, id desc limit 1""",
         source, object_id,
     )
 
 
-async def get_record(source: str, object_id: str) -> dict | None:
-    """The newest version of one object, record included, with its graph node, the facts that hold
-    around it now and its graph. None if the reader can't see it."""
+def adf_text(node) -> str:
+    """Jira rich text (Atlassian Document Format) as plain text, one line per block; a plain string as it is."""
+    if isinstance(node, str):
+        return node
+    if not isinstance(node, dict):
+        return ""
+    if node.get("type") == "text":
+        return node.get("text", "")
+    if node.get("type") == "hardBreak":
+        return "\n"
+    if node.get("type") in ("mention", "emoji"):
+        return (node.get("attrs") or {}).get("text", "")
+    children = [adf_text(child) for child in node.get("content") or []]
+    return ("" if node.get("type") in ("paragraph", "heading") else "\n").join(c for c in children if c)
+
+
+def _name(person) -> str | None:
+    if isinstance(person, dict):
+        return person.get("displayName") or person.get("login") or person.get("username") or person.get("name")
+    return person
+
+
+def _names(people) -> str | None:
+    return ", ".join(n for n in map(_name, people or []) if n) or None
+
+
+def compact(source: str, kind: str, record: dict) -> dict:
+    """The fields an agent reads from one record, per source: key, status, assignee, reporter, created,
+    updated, labels, description as plain text and comment_count. Missing ones are left out."""
+    p = record.get("payload") if isinstance(record.get("payload"), dict) else record
+    out: dict = {}
+    if source == "jira":
+        issue = p.get("issue") or {}
+        f = issue.get("fields") or {}
+        if kind == "comment":
+            c = p.get("comment") or {}
+            out = dict(key=issue.get("key"), reporter=_name(c.get("author")), created=c.get("created"),
+                       updated=c.get("updated"), description=adf_text(c.get("body")))
+        else:
+            out = dict(key=issue.get("key"), status=(f.get("status") or {}).get("name"), assignee=_name(f.get("assignee")),
+                       reporter=_name(f.get("reporter") or f.get("creator")), created=f.get("created"),
+                       updated=f.get("updated"), labels=f.get("labels"), description=adf_text(f.get("description")))
+    elif source == "github":
+        obj = p.get("pull_request") or p.get("issue") or p.get("comment") or p.get("review") or p
+        repo = (p.get("repository") or {}).get("full_name")
+        out = dict(key=f"{repo}#{obj['number']}" if repo and obj.get("number") else None, status=obj.get("state"),
+                   assignee=_names(obj.get("assignees")) or _name(obj.get("assignee")),
+                   reporter=_name(obj.get("user") or obj.get("author")), created=obj.get("created_at"),
+                   updated=obj.get("updated_at") or obj.get("timestamp"),
+                   labels=[label.get("name") for label in obj.get("labels") or []],
+                   description=obj.get("body") or obj.get("message") or (obj.get("commit") or {}).get("message"),
+                   comment_count=obj.get("comments"))
+    elif source == "gitlab":
+        a = p.get("object_attributes") or p
+        project = (p.get("project") or {}).get("path_with_namespace")
+        out = dict(key=f"{project}!{a['iid']}" if project and a.get("iid") else None, status=a.get("state"),
+                   assignee=_names(p.get("assignees") or a.get("assignees")),
+                   reporter=_name(p.get("user") or a.get("author")), created=a.get("created_at"),
+                   updated=a.get("updated_at"), labels=[label.get("title") for label in a.get("labels") or []],
+                   description=a.get("description") or a.get("note") or p.get("message"))
+    elif source == "slack":
+        m = p.get("event") or p.get("message") or p
+        out = dict(reporter=m.get("user"), created=m.get("ts"), description=m.get("text"), comment_count=m.get("reply_count"))
+    if out.get("description"):
+        out["description"] = out["description"].strip()[:MAX_DESCRIPTION_CHARS]
+    return {k: v for k, v in out.items() if v not in (None, "", [])}
+
+
+async def get_record(source: str, object_id: str, raw: bool = False) -> dict | None:
+    """The newest version of one object (object_id may be a Jira key), compact by default, with its graph
+    node, the facts that hold around it now and its graph. raw: the whole stored record instead of the
+    compact fields. None if the reader can't see it."""
     async with reader() as scope:
+        object_id = await _object_id(scope.conn, source, object_id)
         row = await _newest(scope.conn, source, object_id)
         if row is None:
             return None
         node = (await graph.nodes_of(scope.conn, [(source, object_id)])).get((source, object_id))
         found = await graph.graphiti().nodes.entity.get_by_uuid(node["uuid"]) if node else None
         current = await graph.facts(node["uuid"], current=True) if node else []
-    result = dict(row, occurred_at=row["occurred_at"].isoformat())
-    if len(row["record"]) > MAX_RECORD_CHARS:
-        result["record"] = row["record"][:MAX_RECORD_CHARS]
-        result["truncated"] = True
+        comments = await scope.conn.fetchval(
+            "select count(distinct object_id) from source_records where source = 'jira' and object_id like $1 || '/comment/%'",
+            object_id) if (source, row["kind"]) == ("jira", "issue") else None
+    result = {k: row[k] for k in ("source", "tenant", "kind", "object_id", "version", "title", "url")}
+    result["occurred_at"] = row["occurred_at"].isoformat()
+    if raw:
+        if len(row["record"]) > MAX_RECORD_CHARS:
+            result["record"] = row["record"][:MAX_RECORD_CHARS]
+            result["truncated"] = True
+        else:
+            result["record"] = json.loads(row["record"])
     else:
-        result["record"] = json.loads(row["record"])
+        result |= compact(source, row["kind"], json.loads(row["record"]))
+        if comments is not None:
+            result["comment_count"] = comments
     result["node"] = found and {"label": found.labels[-1], "key": node["key"], "name": found.name, "summary": found.summary}
     result["facts"] = [graph.fact(e) for e in current]
     result["graph"] = node and {"name": node["graph"], "scope": node["scope"], "source": node["graph_source"]}
@@ -298,9 +393,10 @@ def _episode(row: asyncpg.Record, prefix: str) -> dict | None:
 
 
 async def history(source: str, object_id: str) -> list[dict] | None:
-    """Every fact about one object's node, ended ones included, oldest first, each with the episode
+    """Every fact about one object's node (object_id may be a Jira key), ended ones included, oldest first, each with the episode
     (and source record version) that set it and the one that ended it. None if the reader can't see it."""
     async with reader() as scope:
+        object_id = await _object_id(scope.conn, source, object_id)
         node = (await graph.nodes_of(scope.conn, [(source, object_id)])).get((source, object_id))
         if node is None:
             return None
