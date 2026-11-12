@@ -175,7 +175,8 @@ export default async function SettingsPage({
   const org = user.organization;
   const auth = getAuth();
   const requestHeaders = await headers();
-  const inviter = canInvite(org.role);
+  // A personal workspace has one member and keeps its own tenant (EMBER-165)
+  const inviter = canInvite(org.role) && !org.personal;
   const pool = ingestionPool();
   const [{ members }, invitations, connections] = await Promise.all([
     auth.api.listMembers({ query: { organizationId: org.id }, headers: requestHeaders }),
@@ -374,7 +375,7 @@ export default async function SettingsPage({
         </section>
       )}
 
-      {isEmberAdmin(user.email) && (
+      {isEmberAdmin(user.email) && !org.personal && (
         <section className={styles.section} aria-labelledby="tenant">
           <div className={styles.aside}>
             <h2 id="tenant">Linked tenant</h2>

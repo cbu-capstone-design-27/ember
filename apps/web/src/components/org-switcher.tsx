@@ -2,6 +2,7 @@
 
 // The sidebar's organization menu (EMBER-124): which organization the app is
 // showing, the others the user belongs to, and the way to create or join one.
+// The user's personal workspace (EMBER-165) is listed first, without a slug.
 // Switching sets the session's active organization, so it persists.
 
 import Link from "next/link";
@@ -15,6 +16,7 @@ export interface SwitcherOrg {
   id: string;
   name: string;
   slug: string;
+  personal: boolean;
 }
 
 export function OrgSwitcher({ organizations, activeId }: { organizations: SwitcherOrg[]; activeId: string }) {
@@ -36,7 +38,7 @@ export function OrgSwitcher({ organizations, activeId }: { organizations: Switch
     <details ref={menu} className={styles.switcher}>
       <summary className={styles.summary} aria-label={`Organization: ${active?.name}. Switch organization`}>
         <span className={styles.name}>{active?.name}</span>
-        <code>{active?.slug}</code>
+        {!active?.personal && <code>{active?.slug}</code>}
         <ChevronRightIcon />
       </summary>
       <div className={styles.menu}>

@@ -5,7 +5,13 @@
 // `organization`, `member`, `invitation`); this module adds the tenant checks
 // (the id rules themselves are in tenant.ts), the active organization, and
 // linking an organization to a tenant that already holds data.
+//
+// Every user also has a personal workspace (EMBER-165): an organization with
+// `personal` set, the user as its only member and owner, and a tenant of its
+// own. It is created at sign-up, or on the next session load for older users,
+// and it can't invite, take members, lose its member, be deleted or be linked.
 
+import { createHash } from "node:crypto";
 import type { Auth } from "./auth.ts";
 import { isPostgresDatabase } from "./db.ts";
 import { tenantProblem } from "./tenant.ts";
@@ -25,6 +31,12 @@ export function isEmberAdmin(email: string, setting = process.env.EMBER_ADMIN_EM
 
 export function canInvite(role: string): boolean {
   return role.split(",").some((r) => r === "owner" || r === "admin");
+}
+
+/** Whether the organization `organizationId` is a personal workspace (false when it doesn't exist). */
+export async function isPersonalOrganization(adapter: OrgAdapter, organizationId: string): Promise<boolean> {
+  const org = await adapter.findOne<OrganizationRow>({ model: "organization", where: [{ field: "id", value: organizationId }] });
+  return !!org?.personal;
 }
 
 /** Owners and admins connect and disconnect sources (ADR 0010); members see what is connected. */
@@ -53,12 +65,30 @@ export async function tenantHasData(db: unknown, tenant: string): Promise<boolea
   return false;
 }
 
+/** Tenant ids starting with this belong to personal workspaces, so organizations can't take them. */
+export const PERSONAL_TENANT_PREFIX = "u-";
+
+/** The name a personal workspace is created with and shown under. */
+export const PERSONAL_NAME = "Personal";
+
+/**
+ * The tenant of `userId`'s personal workspace, also its organization id, slug
+ * and owner's member id: `u-` plus the first 32 hex characters (128 bits) of
+ * the SHA-256 of the user id. Deterministic, so a second create hits the same
+ * primary keys; lowercase and 34 characters, so it passes tenantProblem.
+ */
+export function personalTenant(userId: string): string {
+  return PERSONAL_TENANT_PREFIX + createHash("sha256").update(userId).digest("hex").slice(0, 32);
+}
+
 export interface Membership {
   id: string;
   name: string;
   slug: string;
   tenant: string;
   role: string;
+  /** The user's personal workspace rather than a shared organization. */
+  personal: boolean;
 }
 
 interface OrganizationRow {
@@ -66,6 +96,7 @@ interface OrganizationRow {
   name: string;
   slug: string;
   tenant: string;
+  personal?: boolean | null;
 }
 
 interface MemberRow {
@@ -83,10 +114,51 @@ export interface OrgAdapter {
   }): Promise<T[]>;
   findOne<T>(data: { model: string; where: { field: string; value: string }[] }): Promise<T | null>;
   update<T>(data: { model: string; where: { field: string; value: string }[]; update: Record<string, unknown> }): Promise<T | null>;
+  create<T>(data: { model: string; data: Record<string, unknown>; forceAllowId?: boolean }): Promise<T>;
 }
 
-/** Every organization `userId` belongs to, oldest membership first. */
+/**
+ * Create `userId`'s personal workspace unless it exists. Safe to call
+ * concurrently: both rows have deterministic ids (personalTenant), so a
+ * racing second insert fails on the primary key and the check below finds the
+ * first one's rows.
+ */
+export async function ensurePersonalWorkspace(adapter: OrgAdapter, userId: string): Promise<void> {
+  const id = personalTenant(userId);
+  const createdAt = new Date();
+  const failures: unknown[] = [];
+  await adapter
+    .create({
+      model: "organization",
+      data: { id, name: PERSONAL_NAME, slug: id, tenant: id, personal: true, createdAt },
+      forceAllowId: true,
+    })
+    .catch((error: unknown) => failures.push(error));
+  await adapter
+    .create({ model: "member", data: { id, organizationId: id, userId, role: "owner", createdAt }, forceAllowId: true })
+    .catch((error: unknown) => failures.push(error));
+  const [org, member] = await Promise.all([
+    adapter.findOne<OrganizationRow>({ model: "organization", where: [{ field: "id", value: id }] }),
+    adapter.findOne<MemberRow>({ model: "member", where: [{ field: "id", value: id }] }),
+  ]);
+  if (!org?.personal || !member) throw failures[0] ?? new Error(`personal workspace ${id} is incomplete`);
+}
+
+/**
+ * Every organization `userId` belongs to: their personal workspace first,
+ * then the others, oldest membership first. Creates the personal workspace
+ * when it's missing (users from before EMBER-165).
+ */
 export async function listMemberships(adapter: OrgAdapter, userId: string): Promise<Membership[]> {
+  let memberships = await readMemberships(adapter, userId);
+  if (!memberships.some((m) => m.personal)) {
+    await ensurePersonalWorkspace(adapter, userId);
+    memberships = await readMemberships(adapter, userId);
+  }
+  return memberships.sort((a, b) => Number(b.personal) - Number(a.personal));
+}
+
+async function readMemberships(adapter: OrgAdapter, userId: string): Promise<Membership[]> {
   const members = await adapter.findMany<MemberRow>({
     model: "member",
     where: [{ field: "userId", value: userId }],
@@ -100,16 +172,17 @@ export async function listMemberships(adapter: OrgAdapter, userId: string): Prom
   const byId = new Map(organizations.map((o) => [o.id, o]));
   return members.flatMap((m) => {
     const org = byId.get(m.organizationId);
-    return org ? [{ id: org.id, name: org.name, slug: org.slug, tenant: org.tenant, role: m.role }] : [];
+    return org ? [{ id: org.id, name: org.name, slug: org.slug, tenant: org.tenant, role: m.role, personal: !!org.personal }] : [];
   });
 }
 
 /**
  * The organization a session works in: the one it last switched to, while the
- * user still belongs to it, else their first. Null for a user in none.
+ * user still belongs to it, else their oldest shared organization, else their
+ * personal workspace. Null only for a list without one (never from listMemberships).
  */
 export function activeMembership(memberships: Membership[], activeOrganizationId: string | null | undefined) {
-  return memberships.find((m) => m.id === activeOrganizationId) ?? memberships[0] ?? null;
+  return memberships.find((m) => m.id === activeOrganizationId) ?? memberships.find((m) => !m.personal) ?? memberships[0] ?? null;
 }
 
 export type LinkResult = { ok: true } | { ok: false; error: string };
@@ -126,8 +199,10 @@ export async function linkTenant(
   if (!isEmberAdmin(actorEmail)) return { ok: false, error: "Only Ember admins can link a tenant." };
   const problem = tenantProblem(tenant);
   if (problem) return { ok: false, error: problem };
+  if (tenant.startsWith(PERSONAL_TENANT_PREFIX)) return { ok: false, error: `Tenants starting with ${PERSONAL_TENANT_PREFIX} belong to personal workspaces.` };
   const org = await adapter.findOne<OrganizationRow>({ model: "organization", where: [{ field: "id", value: organizationId }] });
   if (!org) return { ok: false, error: "That organization no longer exists." };
+  if (org.personal) return { ok: false, error: "A personal workspace keeps its own tenant." };
   if (org.tenant === tenant) return { ok: true };
   const holder = await adapter.findOne<OrganizationRow>({ model: "organization", where: [{ field: "tenant", value: tenant }] });
   if (holder) return { ok: false, error: `${tenant} is already linked to ${holder.name}.` };

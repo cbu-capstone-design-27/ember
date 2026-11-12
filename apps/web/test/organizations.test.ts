@@ -1,5 +1,7 @@
 // EMBER-124 acceptance: organizations are created, joined by invite, switched
-// between, and linked to a tenant only by an Ember admin. On SQLite, and on
+// between, and linked to a tenant only by an Ember admin. EMBER-165: every user
+// has one personal workspace with its own tenant, which can't invite, be left
+// or be linked, and connects sources under its tenant. On SQLite, and on
 // Postgres when TEST_POSTGRES_URL is set (with the ingestion migrations
 // applied, the tenant-data check runs against them too).
 // Run: npm test            (SQLite only)
@@ -11,14 +13,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { authOptions, createAuth, migrate, whoami, type Auth } from "../src/lib/auth.ts";
+import { connectAccount } from "../src/lib/connections.ts";
 import { closeDatabase, databaseKind, isPostgresDatabase } from "../src/lib/db.ts";
 import {
   activeMembership,
+  canConnectSources,
+  ensurePersonalWorkspace,
   invitationsFor,
   invitationsOf,
   isEmberAdmin,
   linkTenant,
   listMemberships,
+  personalTenant,
   slugFromName,
   tenantProblem,
   type OrgAdapter,
@@ -88,11 +94,98 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       await cleanup();
     });
 
-    test("a new user belongs to no organization", async () => {
-      assert.deepEqual(await listMemberships(adapter, users.owner.id), []);
+    test("a new user gets a personal workspace at sign-up, and works in it", async () => {
+      const tenant = personalTenant(users.owner.id);
+      // Read straight from the table: listMemberships would create it if sign-up hadn't
+      const org = await adapter.findOne<{ name: string; tenant: string; personal: boolean }>({
+        model: "organization",
+        where: [{ field: "id", value: tenant }],
+      });
+      assert.deepEqual({ name: org?.name, tenant: org?.tenant, personal: org?.personal }, { name: "Personal", tenant, personal: true });
+      assert.deepEqual(await listMemberships(adapter, users.owner.id), [
+        { id: tenant, name: "Personal", slug: tenant, tenant, role: "owner", personal: true },
+      ]);
       const who = await whoami(auth, cookieHeaders(users.owner.cookie));
-      assert.deepEqual(who?.organizations, []);
-      assert.equal(who?.active, null);
+      assert.equal(who?.active, tenant);
+    });
+
+    test("a user from before personal workspaces gets exactly one, even from concurrent loads", async () => {
+      // Created on the adapter, so no sign-up hook ran
+      const user = await adapter.create<{ id: string }>({
+        model: "user",
+        data: { name: "Old", email: `old-${run}@example.com`, emailVerified: false, createdAt: new Date(), updatedAt: new Date() },
+      });
+      assert.equal(await adapter.findOne({ model: "member", where: [{ field: "userId", value: user.id }] }), null);
+      const loads = await Promise.all([
+        ...Array.from({ length: 4 }, () => listMemberships(adapter, user.id)),
+        ensurePersonalWorkspace(adapter, user.id).then(() => listMemberships(adapter, user.id)),
+      ]);
+      for (const memberships of loads) assert.deepEqual(memberships.map((m) => [m.tenant, m.personal]), [[personalTenant(user.id), true]]);
+      const members = await adapter.findMany({ model: "member", where: [{ field: "userId", value: user.id }] });
+      assert.equal(members.length, 1);
+    });
+
+    test("nobody can be invited to, added to, removed from, or leave a personal workspace", async () => {
+      const personal = personalTenant(users.carol.id);
+      const invite = await call(auth, "/organization/invite-member", {
+        body: { email: users.bob.email, role: "member", organizationId: personal },
+        cookie: users.carol.cookie,
+      });
+      assert.equal(invite.status, 403, JSON.stringify(invite.json));
+      await assert.rejects(auth.api.addMember({ body: { userId: users.bob.id, role: "member", organizationId: personal } }));
+      for (const path of ["/organization/leave", "/organization/delete"]) {
+        const res = await call(auth, path, { body: { organizationId: personal }, cookie: users.carol.cookie });
+        assert.equal(res.status, 403, `${path}: ${JSON.stringify(res.json)}`);
+      }
+      const removed = await call(auth, "/organization/remove-member", {
+        body: { memberIdOrEmail: users.carol.email, organizationId: personal },
+        cookie: users.carol.cookie,
+      });
+      // The plugin's only-owner check refuses this before Ember's hook does
+      assert.equal(removed.status, 400, JSON.stringify(removed.json));
+      assert.deepEqual(
+        (await listMemberships(adapter, users.carol.id)).map((m) => m.id),
+        [personal],
+      );
+    });
+
+    test("a personal workspace can't be linked, and organizations can't take a personal tenant", async () => {
+      const personal = personalTenant(users.carol.id);
+      const linked = await linkTenant(adapter, { actorEmail: users.admin.email, organizationId: personal, tenant: `ember-dev-other-${run}` });
+      assert.deepEqual(linked, { ok: false, error: "A personal workspace keeps its own tenant." });
+      const create = await call(auth, "/organization/create", { body: { name: "Squatter", slug: personalTenant(users.bob.id) }, cookie: users.carol.cookie });
+      assert.equal(create.status, 400);
+      const reserved = await call(auth, "/organization/create", { body: { name: "Squatter", slug: `u-${run}` }, cookie: users.carol.cookie });
+      assert.equal(reserved.status, 400);
+    });
+
+    test("connecting a source in the personal workspace files it under the personal tenant", async (t) => {
+      const db = migrationOptions?.database;
+      if (!isPostgresDatabase(db)) return t.skip("SQLite has no installations table");
+      const { rows } = await db.pool.query<{ exists: boolean }>("select to_regclass('public.installations') is not null as exists");
+      if (!rows[0]?.exists) return t.skip("ingestion migrations not applied (dbmate up)");
+      // What connector() (app/connect/server.ts) does to pick the membership every connect flow files under
+      const membership = (await listMemberships(adapter, users.carol.id)).find((m) => m.id === personalTenant(users.carol.id));
+      assert.ok(membership && canConnectSources(membership.role), "the owner may connect");
+      const accountId = `personal-${run}`;
+      try {
+        const result = await connectAccount(db.pool, {
+          source: "github",
+          accountId,
+          tenant: membership.tenant,
+          label: "carol",
+          externalId: null,
+          userId: users.carol.id,
+        });
+        assert.equal(result.ok, true, JSON.stringify(result));
+        const { rows: installed } = await db.pool.query<{ tenant: string }>(
+          "select tenant from public.installations where source = 'github' and account_id = $1",
+          [accountId],
+        );
+        assert.deepEqual(installed, [{ tenant: personalTenant(users.carol.id) }]);
+      } finally {
+        await db.pool.query("delete from public.installations where source = 'github' and account_id = $1", [accountId]);
+      }
     });
 
     test("creating an organization makes the creator its owner, with the slug as tenant", async () => {
@@ -101,9 +194,8 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       assert.equal(res.status, 200, JSON.stringify(res.json));
       assert.equal(res.json.tenant, slug);
       orgId = res.json.id;
-      assert.deepEqual(await listMemberships(adapter, users.owner.id), [
-        { id: orgId, name: "Kestrel", slug, tenant: slug, role: "owner" },
-      ]);
+      const memberships = await listMemberships(adapter, users.owner.id);
+      assert.deepEqual(memberships.slice(1), [{ id: orgId, name: "Kestrel", slug, tenant: slug, role: "owner", personal: false }]);
       const who = await whoami(auth, cookieHeaders(users.owner.cookie));
       assert.equal(who?.active, slug);
     });
@@ -170,7 +262,10 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       assert.equal(accepted.status, 200, JSON.stringify(accepted.json));
       assert.deepEqual(
         (await listMemberships(adapter, users.bob.id)).map((m) => [m.id, m.role]),
-        [[orgId, "member"]],
+        [
+          [personalTenant(users.bob.id), "owner"],
+          [orgId, "member"],
+        ],
       );
       assert.deepEqual(await invitationsFor(auth, users.bob.email), []);
     });
@@ -243,7 +338,7 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       });
       assert.equal(second.status, 200, JSON.stringify(second.json));
       const memberships = await listMemberships(adapter, users.bob.id);
-      assert.deepEqual(memberships.map((m) => m.slug), [`kestrel-${run}`, `photon-${run}`]);
+      assert.deepEqual(memberships.map((m) => m.slug), [personalTenant(users.bob.id), `kestrel-${run}`, `photon-${run}`]);
 
       const switched = await call(auth, "/organization/set-active", {
         body: { organizationId: second.json.id },
@@ -256,14 +351,18 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       assert.equal((await whoami(auth, cookieHeaders(users.bob.cookie)))?.active, `photon-${run}`);
     });
 
-    test("an organization the user left is no longer active; the first one they're in is", () => {
+    test("an organization the user left is no longer active; their first shared one is, else their personal one", () => {
+      const personal = { id: "u-1", name: "Personal", slug: "u-1", tenant: "u-1", role: "owner", personal: true };
       const memberships = [
-        { id: "a", name: "A", slug: "a", tenant: "a", role: "member" },
-        { id: "b", name: "B", slug: "b", tenant: "b", role: "owner" },
+        personal,
+        { id: "a", name: "A", slug: "a", tenant: "a", role: "member", personal: false },
+        { id: "b", name: "B", slug: "b", tenant: "b", role: "owner", personal: false },
       ];
       assert.equal(activeMembership(memberships, "b")?.id, "b");
+      assert.equal(activeMembership(memberships, "u-1")?.id, "u-1");
       assert.equal(activeMembership(memberships, "gone")?.id, "a");
       assert.equal(activeMembership(memberships, null)?.id, "a");
+      assert.equal(activeMembership([personal], null)?.id, "u-1");
       assert.equal(activeMembership([], "a"), null);
     });
 
@@ -279,7 +378,7 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
 
       const byAdmin = await linkTenant(adapter, { actorEmail: users.admin.email, organizationId: orgId, tenant });
       assert.deepEqual(byAdmin, { ok: true });
-      const [membership] = await listMemberships(adapter, users.owner.id);
+      const membership = (await listMemberships(adapter, users.owner.id)).find((m) => m.id === orgId);
       assert.equal(membership?.tenant, tenant);
       assert.equal(membership?.slug, `kestrel-${run}`, "linking keeps the slug");
     });
@@ -344,6 +443,17 @@ describe("organization helpers", () => {
     assert.notEqual(tenantProblem("ember_dev"), null);
     assert.notEqual(tenantProblem(""), null);
     assert.notEqual(tenantProblem("a".repeat(64)), null);
+  });
+
+  test("personal tenants are valid, deterministic and distinct", () => {
+    const ids = ["AbC123", "abc123", "x", "user-with-a-very-long-id".repeat(10)];
+    const tenants = ids.map(personalTenant);
+    for (const tenant of tenants) {
+      assert.equal(tenantProblem(tenant), null, tenant);
+      assert.match(tenant, /^u-[0-9a-f]{32}$/);
+    }
+    assert.equal(new Set(tenants).size, ids.length, "ids differing only in case get different tenants");
+    assert.equal(personalTenant("AbC123"), tenants[0]);
   });
 
   test("a slug is suggested from the name", () => {

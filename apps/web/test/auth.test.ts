@@ -20,6 +20,7 @@ import {
   POSTGRES_SCHEMA,
 } from "../src/lib/db.ts";
 import { decideDeviceRequest, findDeviceRequest, formatUserCode } from "../src/lib/device.ts";
+import { personalTenant } from "../src/lib/organizations.ts";
 
 const BASE = "http://localhost:3000";
 const SECRET = "test-secret-at-least-32-characters-long!!";
@@ -230,6 +231,12 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
     });
 
     describe("CLI sign-in through the browser", () => {
+      /** whoami's organizations for a user in none but their personal workspace (EMBER-165). */
+      async function personalOnly(headers: Headers) {
+        const tenant = personalTenant((await auth.api.getSession({ headers }))!.user.id);
+        return { organizations: [{ name: "Personal", slug: tenant, tenant, role: "owner" }], active: tenant };
+      }
+
       const requestCode = (clientId = CLI_CLIENT_ID) => cli(auth, "/device/code", { client_id: clientId });
       const poll = (deviceCode: string) =>
         cli(auth, "/device/token", { grant_type: DEVICE_GRANT, device_code: deviceCode, client_id: CLI_CLIENT_ID });
@@ -282,8 +289,7 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
         assert.deepEqual(await whoami(auth, bearer(token.json.access_token)), {
           name: "Ada",
           email,
-          organizations: [],
-          active: null,
+          ...(await personalOnly(bearer(token.json.access_token))),
         });
       });
 
@@ -327,8 +333,7 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
         assert.deepEqual(await whoami(auth, bearer(token.json.access_token)), {
           name: "Eve",
           email: eve.email,
-          organizations: [],
-          active: null,
+          ...(await personalOnly(bearer(token.json.access_token))),
         });
       });
 

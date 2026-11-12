@@ -101,7 +101,7 @@ export interface Connector {
 export async function connector(
   requestHeaders: Headers,
   organizationId?: string,
-): Promise<{ ok: true; value: Connector } | { ok: false; reason: "signed-out" | "no-organization" | "forbidden" }> {
+): Promise<{ ok: true; value: Connector } | { ok: false; reason: "signed-out" | "forbidden" }> {
   const auth = getAuth();
   const session = await auth.api.getSession({ headers: requestHeaders });
   if (!session) return { ok: false, reason: "signed-out" };
@@ -110,19 +110,18 @@ export async function connector(
   const membership = organizationId
     ? memberships.find((m) => m.id === organizationId)
     : activeMembership(memberships, activeOrganizationId(session.session));
-  if (!membership) return { ok: false, reason: organizationId ? "forbidden" : "no-organization" };
+  if (!membership) return { ok: false, reason: "forbidden" };
   if (!canConnectSources(membership.role)) return { ok: false, reason: "forbidden" };
   return { ok: true, value: { userId: session.user.id, membership } };
 }
 
 /**
- * Where to send someone who may not start a connect round trip: log-in,
- * picking an organization, or Settings with `forbidden`. Log-in goes back to
+ * Where to send someone who may not start a connect round trip: log-in, or
+ * Settings with `forbidden`. Log-in goes back to
  * Settings, not here: it follows `next` with a client-side navigation, which
  * can't follow a route's redirect to another site.
  */
-export function refuseConnector(request: NextRequest, reason: "signed-out" | "no-organization" | "forbidden", forbidden: URL): NextResponse {
+export function refuseConnector(request: NextRequest, reason: "signed-out" | "forbidden", forbidden: URL): NextResponse {
   if (reason === "signed-out") return NextResponse.redirect(new URL("/login?next=%2Fsettings", appOrigin(request)));
-  if (reason === "no-organization") return NextResponse.redirect(new URL("/organizations", appOrigin(request)));
   return NextResponse.redirect(forbidden);
 }
