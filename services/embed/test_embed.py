@@ -261,7 +261,7 @@ class EmbedTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_graph_nodes_and_facts_are_embedded_and_a_changed_node_again(self):
         """EMBER-166: nodes with embed_text and edges with a fact get vectors of exactly that text, the
-        triggers NOTIFY channel graph, and a node whose embed_text changes is embedded again."""
+        triggers NOTIFY channel graph, and a node or fact whose text changes without a new vector is embedded again."""
         notified = asyncio.Queue()
         await self.db.add_listener("graph", lambda *args: notified.put_nowait(args[-1]))
         graph = await self.db.fetchval("insert into graph.graphs (tenant, source, scope, group_id)"
@@ -288,6 +288,14 @@ class EmbedTest(unittest.IsolatedAsyncioTestCase):
         await self.drain(self.worker())
         self.assertEqual(json.loads(await self.db.fetchval("select embedding::text from graph.nodes where id = $1", ticket)),
                          stub_vector("login keeps the query string"))
+
+        # The same for a fact, and an update that brings its own vector keeps it
+        await self.db.execute("update graph.edges set fact = 'eli is assigned to ACME-1' where id = $1", edge)
+        self.assertIsNone(await self.db.fetchval("select fact_embedding from graph.edges where id = $1", edge))
+        own = pg_vector(stub_vector("own vector"))
+        await self.db.execute("update graph.nodes set embed_text = 'new text', embedding = $2::text::vector where id = $1", ticket, own)
+        self.assertEqual(json.loads(await self.db.fetchval("select embedding::text from graph.nodes where id = $1", ticket)),
+                         stub_vector("own vector"))
 
     async def test_cosine_nearest_neighbours_use_the_hnsw_index(self):
         ids = {text: await self.insert("slack", "message", {"payload": {"text": text}}) for text in (
