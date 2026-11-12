@@ -7,7 +7,7 @@
 -- because role ember, which runs the migrations, cannot create roles. Elsewhere (CI, a laptop) this
 -- creates it. Roles are cluster-wide, so the down migration revokes its grants but keeps the role.
 -- uuid-ossp is a trusted extension, so role ember may create it. It gives uuid_generate_v5 for the
--- episodes.uuid backfill, in loader/records.py's namespace.
+-- episodes.uuid backfill, in loader/records.py's UUID_NAMESPACE (the literal below is a copy of it).
 
 -- migrate:up
 create extension if not exists "uuid-ossp";

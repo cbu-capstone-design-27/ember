@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 import asyncpg
 
 from loader.pg_writer import PgWriter
+from loader.records import UUID_NAMESPACE, episode_uuid
 from loader.test_pg_load import DBMATE, MIGRATIONS, PGTEST_URL, database_url, photon_rows
 from loader.workers import ExtractWorker, LoadWorker
 
@@ -127,6 +129,22 @@ class PgWriterTest(unittest.IsolatedAsyncioTestCase):
                join graph.nodes s on s.id = e.src join graph.nodes d on d.id = e.dst
                where e.type = $1 and $2 in (s.key, d.key) and e.invalid_at is null order by 1""", type_, dst_or_src_key)
         return [r["key"] for r in rows]
+
+    # --- episodes.uuid ---
+
+    async def test_the_migration_backfill_and_extract_give_an_episode_the_same_uuid(self):
+        migration = (MIGRATIONS / "20261112120000_graph_tables.sql").read_text()
+        [literal] = re.findall(r"uuid_generate_v5\('([0-9a-f-]+)', key\)", migration)
+        self.assertEqual(literal, str(UUID_NAMESPACE), "the migration's namespace is not loader/records.py's")
+        key = "photon:jira:issue:10001@2026-09-25T10:00:00.000+0000"
+        self.assertEqual(str(await self.db.fetchval("select uuid_generate_v5($1::uuid, $2)", literal, key)),
+                         episode_uuid(key))
+        await self.insert("acme", "slack", "message", "C1/1789353000.000100", "1", T0,
+                          slack_message("1789353000.000100", "hello"))
+        await ExtractWorker(database_url(DB)).drain()
+        row = await self.db.fetchrow(f"select uuid, name, key, uuid_generate_v5('{literal}', key) as backfill from episodes")
+        self.assertEqual((str(row["uuid"]), row["name"]), (episode_uuid(row["key"]), row["key"]))
+        self.assertEqual(row["uuid"], row["backfill"])
 
     # --- photon ---
 
