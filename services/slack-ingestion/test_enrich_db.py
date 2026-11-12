@@ -33,16 +33,25 @@ from sqlalchemy import create_engine, func, select, text  # noqa: E402
 from sqlalchemy.dialects.postgresql import insert as pg_insert  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+sys.path.insert(0, str(REPO / "packages" / "source-credentials"))
+
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: E402
+
 import enrich  # noqa: E402
 from enrich import Worker, run_async  # noqa: E402
-from models import Base, RateLimit, RawEvent, SourceRecord  # noqa: E402
+from models import Base, Installation, RateLimit, RawEvent, SourceCredential, SourceRecord  # noqa: E402
 from pg_gates import PgRateGate  # noqa: E402
-from test_enrich import CHANNEL, CHANNELS, PARENT, TOKEN, USERS, FakeSlackApi, callback, message  # noqa: E402
+from source_credentials import KeyRing  # noqa: E402
+from test_enrich import BOT, CHANNEL, CHANNELS, PARENT, TEAM, TOKEN, USERS, FakeSlackApi, callback, message  # noqa: E402
+from workspaces import WorkspaceTokens  # noqa: E402
 
 PGTEST_URL = os.environ.get("PGTEST_URL", "")
 DBMATE = os.environ.get("DBMATE", "dbmate")
 TEST_DB = "ember_test_enrich"
 TENANT = "acme"
+# Test-only keys. RING is the worker's; OLD_RING sealed with a key the worker no longer has
+RING = KeyRing("api", [("test", bytes(range(32)))])
+OLD_RING = KeyRing("api", [("retired", bytes(range(32, 64)))])
 
 
 def database_url(name: str) -> str:
@@ -80,18 +89,60 @@ class EnrichDatabaseTest(unittest.TestCase):
 
     def setUp(self):
         with self.engine.begin() as conn:
-            conn.execute(text("truncate raw_events, source_records, rate_limits restart identity cascade"))
+            conn.execute(text("truncate raw_events, source_records, rate_limits, installations restart identity cascade"))
+        self.connect()  # the workspace every test's deliveries come from, connected to TENANT
 
     # ---- helpers ----
 
     def worker(self, fake: FakeSlackApi, **overrides) -> Worker:
-        options = dict(token=TOKEN, exchange=fake, rates={}, concurrency=1, poll_seconds=30.0, max_attempts=3)
+        options = dict(ring=RING, exchange=fake, rates={}, concurrency=1, poll_seconds=30.0, max_attempts=3)
         options.update(overrides)
         return Worker(self.url, **options)
 
-    def insert(self, body: dict, *, tenant: str | None = TENANT, event_id: str | None = None) -> int:
+    def connect(self, team: str = TEAM, tenant: str = TENANT, token: str = TOKEN, *, bot_user: str = BOT,
+                ring: KeyRing = RING, notify: bool = False) -> None:
+        """What Connect Slack writes in one transaction (apps/web/src/lib/slack-connect.ts): the
+        installations row, cleared of disconnected_at, and the sealed bot token. notify is the hand-off's."""
+        sealed = ring.seal("slack", team, {"bot_token": token, "bot_user_id": bot_user, "scope": "channels:history",
+                                           "app_id": "A0APP", "installed_by": "U0ADA", "enterprise_id": None})
+        with self.engine.begin() as conn:
+            conn.execute(text("insert into installations (source, account_id, tenant, label, connected_by)"
+                              " values ('slack', :a, :t, 'Widget Co', 'user-1')"
+                              " on conflict (source, account_id) do update set disconnected_at = null"
+                              " where installations.tenant = excluded.tenant"), {"a": team, "t": tenant})
+            conn.execute(text("insert into source_credentials (source, account_id, kind, key_id, ciphertext)"
+                              " values ('slack', :a, 'api', :k, :c)"
+                              " on conflict (source, account_id, kind) do update"
+                              " set key_id = excluded.key_id, ciphertext = excluded.ciphertext, updated_at = now()"),
+                         {"a": team, "k": sealed.key_id, "c": sealed.ciphertext})
+            if notify:
+                conn.execute(text("select pg_notify('raw_events', 'slack')"))
+
+    def map_without_token(self, team: str, tenant: str = TENANT) -> None:
+        """What make map-tenant writes: a mapping and no credential."""
+        with self.engine.begin() as conn:
+            conn.execute(text("insert into installations (source, account_id, tenant) values ('slack', :a, :t)"),
+                         {"a": team, "t": tenant})
+
+    def disconnect(self, team: str = TEAM) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(text("update installations set disconnected_at = now() where source = 'slack' and account_id = :a"),
+                         {"a": team})
+
+    def installation(self, team: str = TEAM) -> Installation | None:
+        with Session(self.engine) as session:
+            return session.get(Installation, ("slack", team))
+
+    def credential(self, team: str = TEAM) -> dict | None:
+        with Session(self.engine) as session:
+            row = session.get(SourceCredential, ("slack", team, "api"))
+            return None if row is None else RING.open("slack", team, row.key_id, row.ciphertext)
+
+    def insert(self, body: dict, *, tenant: str | None = TENANT, event_id: str | None = None, team: str | None = None) -> int:
         if event_id:
             body = dict(body, event_id=event_id)
+        if team:
+            body = dict(body, team_id=team)
         row = enrich.raw_event_row({"type": "slack", "body": body}, tenant)
         with self.engine.begin() as conn:
             return conn.execute(pg_insert(RawEvent).values(**row).returning(RawEvent.id)).scalar_one()
@@ -338,8 +389,9 @@ class EnrichDatabaseTest(unittest.TestCase):
         run_async(scenario())
         with Session(self.engine) as session:
             buckets = {r.bucket: r for r in session.scalars(select(RateLimit).where(RateLimit.tenant == TENANT))}
-        self.assertIn("users.info", buckets)
-        self.assertIn("conversations.info", buckets)
+        # One bucket per workspace and method (EMBER-148)
+        self.assertIn(f"{TEAM}/users.info", buckets)
+        self.assertIn(f"{TEAM}/conversations.info", buckets)
         self.assertEqual(fake.count("users.info"), 2)  # the throttled call, then the retry
 
         # Pacing: a second caller waits one interval after the first, across gates sharing a row
@@ -389,7 +441,7 @@ class EnrichDatabaseTest(unittest.TestCase):
         self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)  # serve put it back
 
     def test_an_error_no_retry_fixes_is_not_retried(self):
-        fake = FakeSlackApi(errors={"users.info": "invalid_auth"})
+        fake = FakeSlackApi(errors={"users.info": "missing_scope"})
         row_id = self.insert(callback(message("1700000200.000100")))
 
         async def scenario():
@@ -401,7 +453,8 @@ class EnrichDatabaseTest(unittest.TestCase):
 
         with self.assertLogs("slack-enrich", "ERROR") as logs:
             run_async(scenario())
-        self.assertTrue(any("invalid_auth" in line for line in logs.output), logs.output)
+        self.assertTrue(any("missing scope" in line for line in logs.output), logs.output)
+        self.assertIsNone(self.installation().disconnected_at)  # a scope problem is the app's, not the workspace's
         self.assertIsNone(self.raw(row_id).enriched_at)  # still pending, so a restart tries it again
         self.assertEqual(fake.count("users.info"), 1)
         self.assertEqual(self.records(), [])
@@ -423,7 +476,7 @@ class EnrichDatabaseTest(unittest.TestCase):
         self.assertEqual(self.records(), [])  # each failed try rolled back what it wrote
 
     def test_failures_are_kept_in_memory_so_a_restart_tries_again(self):
-        fake = FakeSlackApi(errors={"users.info": "invalid_auth"})
+        fake = FakeSlackApi(errors={"users.info": "missing_scope"})
         row_id = self.insert(callback(message("1700000200.000100")))
 
         async def run_until_given_up():
@@ -434,7 +487,7 @@ class EnrichDatabaseTest(unittest.TestCase):
 
         with self.assertLogs("slack-enrich", "ERROR"):
             run_async(run_until_given_up())
-        fake.errors.clear()  # the token is fixed, then the worker restarts
+        fake.errors.clear()  # the app's scopes are fixed, then the worker restarts
 
         async def restarted():
             worker = self.worker(fake, poll_seconds=0.2)
@@ -557,7 +610,7 @@ class EnrichDatabaseTest(unittest.TestCase):
             task = await self.started(worker)
             await self.until(lambda: self.raw(first).enriched_at is not None)
             # The first call set the next slot a minute out; the second job took the one after it and waits
-            await self.until(lambda: self.rate_limit_wait("users.info") > 90)
+            await self.until(lambda: self.rate_limit_wait(f"{TEAM}/users.info") > 90)
             started = time.monotonic()
             await self.stopped(worker, task)
             self.assertLess(time.monotonic() - started, 5.0)
@@ -576,6 +629,219 @@ class EnrichDatabaseTest(unittest.TestCase):
                 {"bucket": bucket},
             ).scalar_one_or_none()
         return float(wait or 0)
+
+    # ---- Connect Slack's tokens (EMBER-148) ----
+
+    async def enrich_until(self, worker: Worker, check, timeout: float = 10.0) -> None:
+        task = await self.started(worker)
+        await self.until(check, timeout=timeout)
+        await self.stopped(worker, task)
+
+    def test_rows_wait_until_their_workspace_is_connected_then_a_connect_wakes_them(self):
+        self.map_without_token("T0MAPPED")  # mapped by hand before Connect Slack: no token, no fallback
+        mapped = self.insert(callback(message("1700000200.000100")), team="T0MAPPED", event_id="Ev1")
+        nowhere = self.insert(callback(message("1700000201.000100")), team="T0NOWHERE", event_id="Ev2")
+        fake = FakeSlackApi(tokens=[TOKEN, "xoxb-mapped"])
+
+        async def scenario():
+            worker = self.worker(fake, poll_seconds=60.0, waiting_report_seconds=0.1)
+            task = await self.started(worker)
+            await asyncio.sleep(0.5)
+            self.assertEqual(fake.calls, [])  # nothing claimed, so nothing fetched
+            # Connect Slack writes the token and hands off: the NOTIFY alone wakes the worker
+            await asyncio.to_thread(self.connect, "T0MAPPED", token="xoxb-mapped", notify=True)
+            await self.until(lambda: self.raw(mapped).enriched_at is not None, timeout=5.0)
+            await self.stopped(worker, task)
+
+        with self.assertLogs("slack-enrich", "WARNING") as logs:
+            run_async(scenario())
+        self.assertIsNone(self.raw(nowhere).enriched_at)
+        self.assertEqual(set(fake.tokens_used), {"xoxb-mapped"})
+        waiting = [line for line in logs.output if "wait for it to be connected" in line]
+        self.assertTrue(any("workspace T0MAPPED" in line for line in waiting), logs.output)
+        self.assertTrue(any("workspace T0NOWHERE" in line for line in waiting), logs.output)
+        self.assertEqual(sum("T0NOWHERE" in line for line in waiting), 1)  # logged again only when its count changes
+        self.assertTrue(all(TOKEN not in line and "xoxb-mapped" not in line for line in logs.output))
+
+    def test_a_token_is_used_only_for_the_tenant_that_connected_the_workspace(self):
+        theirs = self.insert(callback(message("1700000200.000100")), tenant="other-co", event_id="Ev1")
+        ours = self.insert(callback(message("1700000300.000100")), event_id="Ev2")
+        fake = FakeSlackApi()
+        run_async(self.enrich_until(self.worker(fake, poll_seconds=0.2), lambda: self.raw(ours).enriched_at is not None))
+        self.assertIsNone(self.raw(theirs).enriched_at)
+        self.assertEqual({r.tenant for r in self.records()}, {TENANT})
+
+    def test_each_workspace_of_a_tenant_reads_with_its_own_token_and_quota(self):
+        self.connect("T0TWO", token="xoxb-two")
+        users = {**USERS, "U0TWO": {"id": "U0TWO", "updated": 1700000002}}
+        fake = FakeSlackApi(users=users, tokens=[TOKEN, "xoxb-two"])
+        self.insert(callback(message("1700000200.000100")), event_id="Ev1")
+        self.insert(callback(message("1700000300.000100", user="U0TWO")), team="T0TWO", event_id="Ev2")
+        run_async(self.enrich_until(self.worker(fake), lambda: self.pending() == 0))
+        # Every call for a workspace carried its own token: users.info for U0TWO only with xoxb-two
+        by_user = {params.get("user"): token for (method, params), token in zip(fake.calls, fake.tokens_used)
+                   if method == "users.info"}
+        self.assertEqual(by_user, {"U0ADA": TOKEN, "U0TWO": "xoxb-two"})
+        with Session(self.engine) as session:
+            buckets = set(session.scalars(select(RateLimit.bucket).where(RateLimit.tenant == TENANT)))
+        self.assertTrue({f"{TEAM}/users.info", "T0TWO/users.info"} <= buckets, buckets)
+        self.assertEqual(len(self.records("message")), 2)
+
+    def test_a_disconnected_workspace_rows_wait(self):
+        self.disconnect()
+        row_id = self.insert(callback(message("1700000200.000100")))
+        fake = FakeSlackApi()
+
+        async def scenario():
+            worker = self.worker(fake, poll_seconds=0.2)
+            task = await self.started(worker)
+            await asyncio.sleep(0.6)
+            await self.stopped(worker, task)
+
+        run_async(scenario())
+        self.assertIsNone(self.raw(row_id).enriched_at)
+        self.assertEqual(fake.calls, [])
+
+    def test_a_refused_token_disconnects_the_workspace_and_its_rows_wait_for_a_reconnect(self):
+        fake = FakeSlackApi(tokens=["xoxb-new"])  # the app was uninstalled: Slack refuses the stored token
+        first = self.insert(callback(message("1700000200.000100")), event_id="Ev1")
+        second = self.insert(callback(message("1700000300.000100")), event_id="Ev2")
+
+        async def scenario():
+            worker = self.worker(fake, poll_seconds=0.2)
+            task = await self.started(worker)
+            await self.until(lambda: self.installation().disconnected_at is not None)
+            await asyncio.sleep(0.6)  # several polls: the rows are not claimed again
+            self.assertEqual(len(fake.calls), 1)
+            self.assertEqual((worker._given_up, worker._attempts), (set(), {}))  # waiting, not failed
+            # An owner connects the workspace again in Settings
+            await asyncio.to_thread(self.connect, token="xoxb-new", notify=True)
+            await self.until(lambda: self.pending() == 0)
+            await self.stopped(worker, task)
+
+        with self.assertLogs("slack-enrich", "INFO") as logs:
+            run_async(scenario())
+        self.assertTrue(any("disconnected workspace T0TEAM" in line and "invalid_auth" in line for line in logs.output), logs.output)
+        self.assertTrue(all(TOKEN not in line and "xoxb-new" not in line for line in logs.output))
+        self.assertEqual(fake.tokens_used[0], TOKEN)
+        self.assertEqual(set(fake.tokens_used[1:]), {"xoxb-new"})  # the rejected client was dropped
+        self.assertTrue(all(self.raw(i).enriched_at is not None for i in (first, second)))
+        self.assertIsNone(self.installation().disconnected_at)
+        self.assertEqual(self.credential()["bot_token"], "xoxb-new")
+
+    def test_a_refusal_disconnects_only_the_token_that_was_refused(self):
+        tokens = WorkspaceTokens(RING)
+
+        async def scenario():
+            engine = create_async_engine(enrich.database_urls(self.url)[0])
+            try:
+                async with AsyncSession(engine) as session, session.begin():
+                    stale = await tokens.read(session, TEAM, TENANT)
+                self.assertEqual((stale.bot_token, stale.bot_user_id), (TOKEN, BOT))
+                await asyncio.to_thread(self.connect, token="xoxb-new")  # reconnected while a call was refused
+                async with AsyncSession(engine) as session, session.begin():
+                    self.assertFalse(await tokens.disconnect_rejected(session, stale))
+                    fresh = await tokens.read(session, TEAM, TENANT)
+                self.assertIsNone(self.installation().disconnected_at)
+                self.assertEqual(self.credential()["bot_token"], "xoxb-new")
+                async with AsyncSession(engine) as session, session.begin():
+                    self.assertTrue(await tokens.disconnect_rejected(session, fresh))
+                self.assertIsNotNone(self.installation().disconnected_at)
+                self.assertIsNone(self.credential())
+                async with AsyncSession(engine) as session, session.begin():
+                    self.assertIsNone(await tokens.read(session, TEAM, TENANT))
+                    self.assertFalse(await tokens.disconnect_rejected(session, fresh))  # already disconnected
+            finally:
+                await engine.dispose()
+
+        run_async(scenario())
+
+    def lifecycle_row(self, event: dict, *, seconds_from_now: int, event_id: str) -> int:
+        return self.insert(callback(event, event_time=int(time.time()) + seconds_from_now), event_id=event_id)
+
+    def test_app_uninstalled_disconnects_the_workspace(self):
+        uninstalled = self.lifecycle_row({"type": "app_uninstalled"}, seconds_from_now=5, event_id="Ev-un")
+        fake = FakeSlackApi()
+        with self.assertLogs("slack-enrich", "WARNING") as logs:
+            run_async(self.enrich_until(self.worker(fake), lambda: self.raw(uninstalled).enriched_at is not None))
+        self.assertIsNotNone(self.installation().disconnected_at)
+        self.assertEqual(self.installation().tenant, TENANT)  # the mapping and its records stay
+        self.assertIsNone(self.credential())
+        self.assertEqual(fake.calls, [])
+        self.assertTrue(any("app_uninstalled: disconnected workspace T0TEAM" in line for line in logs.output), logs.output)
+
+        # Later deliveries of the workspace wait, until an owner connects it again
+        later = self.insert(callback(message("1700000300.000100")), event_id="Ev-later")
+
+        async def scenario():
+            worker = self.worker(fake, poll_seconds=0.2)
+            task = await self.started(worker)
+            await asyncio.sleep(0.6)
+            self.assertIsNone(self.raw(later).enriched_at)
+            await asyncio.to_thread(self.connect, notify=True)
+            await self.until(lambda: self.raw(later).enriched_at is not None)
+            await self.stopped(worker, task)
+
+        run_async(scenario())
+        self.assertIsNone(self.installation().disconnected_at)
+
+    def test_a_late_app_uninstalled_leaves_a_reconnected_workspace_alone(self):
+        # Uninstalled an hour ago, connected again since; the event is delivered (or retried) only now
+        late = self.lifecycle_row({"type": "app_uninstalled"}, seconds_from_now=-3600, event_id="Ev-late")
+        run_async(self.enrich_until(self.worker(FakeSlackApi()), lambda: self.raw(late).enriched_at is not None))
+        self.assertIsNone(self.installation().disconnected_at)
+        self.assertEqual(self.credential()["bot_token"], TOKEN)
+
+    def test_tokens_revoked_disconnects_only_when_it_names_our_bot(self):
+        users_only = self.lifecycle_row({"type": "tokens_revoked", "tokens": {"oauth": ["U0ADA"]}},
+                                        seconds_from_now=5, event_id="Ev-users")
+        another_bot = self.lifecycle_row({"type": "tokens_revoked", "tokens": {"bot": ["U0OTHERBOT"]}},
+                                         seconds_from_now=6, event_id="Ev-other")
+        run_async(self.enrich_until(self.worker(FakeSlackApi()), lambda: self.pending() == 0))
+        self.assertTrue(all(self.raw(i).enriched_at is not None for i in (users_only, another_bot)))
+        self.assertIsNone(self.installation().disconnected_at)
+
+        ours = self.lifecycle_row({"type": "tokens_revoked", "tokens": {"bot": [BOT]}}, seconds_from_now=7, event_id="Ev-ours")
+        run_async(self.enrich_until(self.worker(FakeSlackApi()), lambda: self.raw(ours).enriched_at is not None))
+        self.assertIsNotNone(self.installation().disconnected_at)
+        self.assertIsNone(self.credential())
+
+    def test_tokens_revoked_for_a_workspace_mapped_without_a_token_uses_the_delivery_s_bot(self):
+        self.map_without_token("T0MAPPED")
+        body = {**callback({"type": "tokens_revoked", "tokens": {"bot": [BOT]}}, event_time=int(time.time()) + 5),
+                "team_id": "T0MAPPED", "authorizations": [{"team_id": "T0MAPPED", "user_id": BOT, "is_bot": True}]}
+        row_id = self.insert(body, event_id="Ev-revoked")
+        run_async(self.enrich_until(self.worker(FakeSlackApi()), lambda: self.raw(row_id).enriched_at is not None))
+        self.assertIsNotNone(self.installation("T0MAPPED").disconnected_at)
+        self.assertIsNone(self.installation().disconnected_at)  # the other workspace is untouched
+
+    def test_a_lifecycle_event_of_a_gone_connection_does_not_stay_pending(self):
+        self.disconnect()
+        uninstalled = self.lifecycle_row({"type": "app_uninstalled"}, seconds_from_now=5, event_id="Ev-un")
+        elsewhere = self.insert(callback({"type": "app_uninstalled"}, event_time=int(time.time()) + 5),
+                                tenant="other-co", event_id="Ev-elsewhere")
+        run_async(self.enrich_until(self.worker(FakeSlackApi()), lambda: self.pending() == 0))
+        self.assertTrue(all(self.raw(i).enriched_at is not None for i in (uninstalled, elsewhere)))
+        self.assertEqual(self.installation().tenant, TENANT)
+
+    def test_a_token_the_key_ring_cannot_open_waits_without_giving_up(self):
+        self.connect(ring=OLD_RING)  # sealed with a key since dropped from the ring
+        row_id = self.insert(callback(message("1700000200.000100")))
+        fake = FakeSlackApi()
+
+        async def scenario():
+            worker = self.worker(fake, poll_seconds=0.2)
+            task = await self.started(worker)
+            await asyncio.sleep(1.0)
+            self.assertEqual((worker._given_up, worker._attempts), (set(), {}))
+            await asyncio.to_thread(self.connect, notify=True)  # an operator restores the key; here, a reseal
+            await self.until(lambda: self.raw(row_id).enriched_at is not None)
+            await self.stopped(worker, task)
+
+        with self.assertLogs("slack-enrich", "ERROR") as logs:
+            run_async(scenario())
+        self.assertTrue(any("can't be opened" in line for line in logs.output), logs.output)
+        self.assertIsNone(self.installation().disconnected_at)  # the operator's problem, not the workspace's
 
     def test_seed_stores_a_fixture_as_intake_would(self):
         added, duplicate, ignored = enrich.seed(

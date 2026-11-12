@@ -119,7 +119,8 @@ services:
     stop_grace_period: 60s
     environment:
       DATABASE_URL: "postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable"
-      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN:-}"
+      # Opens the bot token Connect Slack stored for each workspace (EMBER-148); the web app seals with the same ring
+      SOURCE_CREDENTIALS_API_KEYS: "${SOURCE_CREDENTIALS_API_KEYS:-}"
       SLACK_RATE_MODE: "${SLACK_RATE_MODE:-}"
       CONCURRENCY: "${ENRICH_CONCURRENCY:-}"  # the worker reads CONCURRENCY, as enrich:github and enrich:jira do
       ENRICH_POLL_SECONDS: "${ENRICH_POLL_SECONDS:-}"

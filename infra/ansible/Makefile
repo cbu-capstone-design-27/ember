@@ -152,7 +152,7 @@ enrich-jira-secret: ## Write k8s/apps/enrich-jira/jira-api.sops.yaml, encrypted,
 enrich-gitlab-secret: ## Write k8s/apps/enrich-gitlab/gitlab-api.sops.yaml, encrypted, from vault_gitlab_api_token. Commit it
 	ansible-playbook playbooks/enrich.yml --tags secret-gitlab
 
-web-secret: ## Write k8s/apps/web/auth.sops.yaml, encrypted, from vault_web_better_auth_secret and, if set, vault_web_github_client_id/_secret and vault_jira_oauth_client_id/_secret. Commit it
+web-secret: ## Write k8s/apps/web/auth.sops.yaml, encrypted, from vault_web_better_auth_secret and, if set, vault_web_github_client_id/_secret, vault_jira_oauth_client_id/_secret and vault_slack_client_id/_secret. Commit it
 	ansible-playbook playbooks/web.yml --tags secret
 
 source-credentials-secret: ## Write k8s/apps/source-credentials/{api,webhook}.sops.yaml, encrypted, from vault_source_credentials_api_keys and _webhook_keys. Commit them

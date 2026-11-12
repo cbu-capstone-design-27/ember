@@ -36,13 +36,21 @@ spec:
           # The image's default command is the stdout-only receiver.py; intake receives Slack's events
           command: ["python3", "enrich.py"]
           env:
-            # The pod stays in CreateContainerConfigError until both Secrets exist
+            # The pod stays in CreateContainerConfigError until every Secret below exists
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: postgres-app
                   key: uri
-            # Secret enrich-slack-bot (slack-bot.sops.yaml): the Bot User OAuth Token, for lookups
+            # Connect Slack's bot tokens (EMBER-148): the api key ring opens the token stored for each
+            # workspace, which reads only the rows of the tenant that connected it. No fallback
+            - name: SOURCE_CREDENTIALS_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: source-credentials-api
+                  key: SOURCE_CREDENTIALS_API_KEYS
+            # Secret enrich-slack-bot (slack-bot.sops.yaml): the one Bot User OAuth Token the image pinned
+            # above reads. The Connect Slack build ignores it; it goes with that build's pin
             - name: SLACK_BOT_TOKEN
               valueFrom:
                 secretKeyRef:

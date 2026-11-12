@@ -4,23 +4,25 @@ metadata:
     name: web-auth
     namespace: ember
 stringData:
-    BETTER_AUTH_SECRET: ENC[AES256_GCM,data:bG9B2qhxGPpjk2VjsYMtA0S+PB1eXIrdXaWgKTXz/gJS+tkqRuLKlth5uleU9IFITGPQu3m2F/vRcr6YxYodAA==,iv:SeaRfdAAybkmT91RPZ7Fq67OLFik/jpW7QrOvlhWJEo=,tag:X3wdbcp3YHdjtXD8TjESPw==,type:str]
-    GITHUB_APP_CLIENT_ID: ENC[AES256_GCM,data:OtHi+qLc3lYs40TI6U661kHqlfI=,iv:UrNijv+kc8WI6shM66iilUvwv+eAb7FKgdrDvLB3vH4=,tag:HnssZp0eOcGOey5KJNg70w==,type:str]
-    GITHUB_APP_CLIENT_SECRET: ENC[AES256_GCM,data:I5FAf5FMidwNtNEOFTLh55VtOCah8JDgsQeciY1cOApqKEbcB/S4tQ==,iv:Fsj6SFY/eJa0cl8zg1mjg3DVtzFnsxI1TiOkmBzh0mI=,tag:pxOppmqvJjk8knUn5gcI/A==,type:str]
-    JIRA_OAUTH_CLIENT_ID: ENC[AES256_GCM,data:b0xQjqZqvBNiStGijsL35gSesuTy0MA3UTIgmnc+hg4=,iv:f3Lh+rbq/57vJE10l/FW13u6+s7gqFWWcxC4rw5hw0s=,tag:uWOEurBVs8eR+X1tlvFeEg==,type:str]
-    JIRA_OAUTH_CLIENT_SECRET: ENC[AES256_GCM,data:4JEs8yaA+mYhkC5t4+qnUaPxHqLm4vIf7AsZhABPpTvOSIZwkZdBl9m+LbrnDQnYTWX4hwxoPSFwb1B2pa5Qqi56qUeGe9BsPam2jQ==,iv:mV3z/CHktHSdiQ1soDLTLvncsvEc9J+JyvZlSX9r/w4=,tag:r2EdtsTRH3LAQxr2pRl/Yg==,type:str]
+    BETTER_AUTH_SECRET: ENC[AES256_GCM,data:BAjKkIvIjGXURrDnqdsfE5t97sLnwyvvUUeN9l3mALZDHQYwQvpOz6P62yBUDwKGw3NnU3z8YiURM+xkGwcKvA==,iv:1qJyqIuCicx0TrHYW3KqudS2+utTOMBA5cxM1LWsoiE=,tag:kCMvcubC2F8ypb796ADQgw==,type:str]
+    GITHUB_APP_CLIENT_ID: ENC[AES256_GCM,data:Y3c5hREiAOjNZu9pQXazm8epZpc=,iv:wI/a37iIhazzXPsvmhszX996rMt+5QX5IEHPXIu6EUY=,tag:G3pInpa9munfFTNAry3suw==,type:str]
+    GITHUB_APP_CLIENT_SECRET: ENC[AES256_GCM,data:EX3teIAntq1CQaysNornEY/2jr6RzbbDt4fRp9+YnTH+S//wmBIfHA==,iv:+Qcf+WxWVAIUb5T+KgSHhEmfMMfWYJGYtL/Df4c9wtM=,tag:TG/7845uOtrZUduEceI6IA==,type:str]
+    JIRA_OAUTH_CLIENT_ID: ENC[AES256_GCM,data:x5zZADLZBnXYIgN75Vec8PL8Y0i0crG1DVFREtlqbrY=,iv:r7uZ/jf/MdpOhowENFO3RuXBJY5+fuO0tRIQEDQMTrs=,tag:eZCgI4HoW6VPsMTr/DCSGg==,type:str]
+    JIRA_OAUTH_CLIENT_SECRET: ENC[AES256_GCM,data:hQQpfJNk782QPSY13XtKxIQxDZ2J2YE0CTwaRwq1HNfxth/zW3SYbsPEP3+BV70+NmYSyLtCSlonjDWnp9El6kgcb7JqPSTwHTWElg==,iv:J9LXUzVyqHWo3K6b4zOyX8Fyvm3liZNfy5bhywuHEBQ=,tag:TqS46Ch/NK4aStUe2ocr6g==,type:str]
+    SLACK_CLIENT_ID: ENC[AES256_GCM,data:hAn9FEKwtnKnXzza42AqCBHQ1cqQnIhE9fsgO3k=,iv:+JlUtdUQ4t6qpEV9ZWNWEiyUBmYyeieAwB1BQN0XrHA=,tag:/xVOMQPkDSgGK58Boneudg==,type:str]
+    SLACK_CLIENT_SECRET: ENC[AES256_GCM,data:Zj6/Ap2CbsRSriI2Wa4yx7BkrPeksMhlFq2RHSvmKIA=,iv:jAx3CIYaUsnowj4XG+FiFhNJ/iguuZVdArHgtUIVgik=,tag:7o0IjvXHGD3WEwQ/vLZGZw==,type:str]
 sops:
     age:
         - enc: |
             -----BEGIN AGE ENCRYPTED FILE-----
-            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB6UWZFQnVRZ3hVTExlZzdK
-            T052VHZERHVtSGphYUhSVkhleUdqVVNmV21BCklvU0h1SlJKa3Y1RHNVbmVSZkJD
-            azQ0S1lXQll5YTQvejQ2R0JkWWhVb0UKLS0tIHo5RE51eCtMSzF6QysreXZoUldy
-            RFFjZU9uL0dRRC9rYXVmMWxZVkczUEkKupKD0IfMLiZnjmr2OX/FjP8DB4uSCtLU
-            tFoS/uFsMIYpOYuhk3AqO+GWzR3WdmvHF0kTbkwNO1EUe+YLPAJ2dQ==
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB5ZlRVOFpENForYnozWXlI
+            akNKZXc3K3FWSTBnN25WbWwwSlVBQmJpTlRJCmh1T0ZDb2F3WTU3a0I1bVRQUm1H
+            emZxdnErN1lqQlZRaGpvNUNGVjQ0enMKLS0tIGZEdHQ1bjRhQ2hLMjZTOXRLVnBI
+            Y1ZqMS9XN2k4TWlxN0pzUnBoc1dxcTgKP/nxZRe4C8KtTpzETShsQzR1mSbKtVhj
+            sAtsj/+Yz+bPzizb7jGmJpUW4BqtSSzZYVy+TF5L3zxBMQQ1mVYxGQ==
             -----END AGE ENCRYPTED FILE-----
           recipient: age1ktk6ux7nrh5uls2d5cpvn4jk0qkfl45uxgfr4cp0zw075rg3jshsghs5ne
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-11-04T23:36:14Z"
-    mac: ENC[AES256_GCM,data:9AlFKSRtLMwHyJGGGtqVTeaC1+5+AZlD3ntN3NcgxNHsT9KKhn5ekJg/06vTkACwBXq30kATIfgQkJEAyRbtWi/JS1CwbUQnYjh/CvrcyX4qWP0gz1Cwuqq7lMYDdbQJnM38YoHIshz/mIHwPEm9GW7ho6/hb5nNnvHbh/TIpz8=,iv:0Q5JV/OblJoBJRCbYkluIEIqBPaX1ENPD7/03bINcQo=,tag:t+OjHsw/zZhkWtoMBkDoog==,type:str]
+    lastmodified: "2026-11-12T01:34:03Z"
+    mac: ENC[AES256_GCM,data:nd9zhS0C0KlAJ4mczHf7FzE5CH4rTq/Vo9IzYqXa9DOd4stHlPES4Fil0hBxWg4bTMiAVrxsc5Kc2O347cWVYqE/6HKO7QkkAshnljpEc3IdS7dbJyr7OEiWWpiNX6L1s4ANmYORD+bdS6phuPnAsSzG6ynoAVy7HgDdBzLFAtA=,iv:M9HoTR1R1DbMR/WNYYliLcT2FC5LIu2ZL9PS2rfFCuw=,tag:qqrUwXgYUkIHu1nM93QQHQ==,type:str]
     version: 3.13.3

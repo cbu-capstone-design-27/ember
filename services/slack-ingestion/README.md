@@ -26,6 +26,8 @@ One Slack app per Ember deployment. A self-hosted team creates its own app in it
 4. Once a public URL reaches this service, open **Event Subscriptions**, turn it on, set the Request URL to `https://<public-host>/webhook/slack`, and add the bot events from the manifest (or re-apply the manifest with the real URL). Slack sends a `url_verification` request, which the receiver answers.
 5. `/invite @Ember` in each channel Ember should read.
 
+That installs the app into the workspace that created it, which is what the backfill and the receiver need. For Ember to read a workspace, an organization owner connects it from the web app's Settings (Connect Slack, EMBER-148), which stores that workspace's own bot token. That needs the app's redirect URL and, for workspaces other than its own, Manage Distribution ([`apps/web/README.md`, Slack app settings](../../apps/web/README.md#slack-app-settings)).
+
 The manifest's scopes and events are also `REQUIRED_BOT_SCOPES` and `RECOMMENDED_BOT_EVENTS` in `receiver.py`. `test_webhook.py` fails if the two drift.
 
 ## Contract
@@ -71,7 +73,7 @@ Edits arrive as `message` with `subtype: message_changed` (new text in `event.me
 | `SLACK_PULL_CONCURRENCY` | Channels read in parallel by `pull_test.py`. Default `4`. Range 1–16. |
 | `SLACK_RATE_MODE` | `internal` (default: Slack's normal tiers, for an app the workspace created itself) or `non_marketplace` (history and replies at 1 call/min and 15 per page, for a commercially distributed app not approved for the Slack Marketplace). `pull_test.py` only. |
 
-`bot_token()` in `pull_test.py` is the one place a token is read. When the Application Database holds per-workspace integration settings (CLI/web onboarding, EMBER-12), that function is what changes.
+`bot_token()` in `pull_test.py` is where the backfill reads its token. The enrich worker doesn't: it reads each workspace's token from what Connect Slack stored ([Enrich worker](#enrich-worker-ember-67)).
 
 ## Run
 
@@ -200,9 +202,10 @@ To receive real events later, point a tunnel at port `8082` and set the app's Re
 | File | What it is |
 | --- | --- |
 | `enrich.py` | The worker, plus `seed`, which stores deliveries the way intake does, without running intake |
-| `models.py` | SQLAlchemy models for `raw_events`, `source_records` and `rate_limits`, matching the doc's schema |
+| `models.py` | SQLAlchemy models for `raw_events`, `source_records`, `rate_limits`, `installations` and `source_credentials`, matching the doc's schema |
 | `pg_gates.py` | Rate-limit gates kept in table `rate_limits`, used by `pull_test.SlackClient` |
-| `requirements.txt` | SQLAlchemy and psycopg 3, for these three files only. The receiver and backfill stay stdlib-only |
+| `workspaces.py` | Each workspace's bot token, as Connect Slack stored it, and disconnecting a workspace whose token is gone (EMBER-148) |
+| `requirements.txt` | SQLAlchemy, psycopg 3 and cryptography, for these files and `source_credentials.py` only. The receiver and backfill stay stdlib-only |
 
 ### What it does with each row
 
@@ -213,26 +216,30 @@ To receive real events later, point a tunnel at port `8082` and set the app's Re
   - `channel_created`, `channel_rename` / `group_rename`, `*_archive`, `*_unarchive` and `channel_deleted` write a `channel` record, version `<event_time>:<event_id>` (`event_time` is whole seconds, so the `event_id` keeps two events in one second apart). `channel_created` calls `conversations.info` for privacy, topic and purpose. The others carry only the change: `name`, `is_archived`, or `is_deleted: true` for a delete. Topic, purpose and name system messages also change the channel (`topic` / `purpose` as `{value, creator, last_set}`, or `name`), version `ts`.
   - A change applies in Slack's order onto the channel as stored at or before its time (fetched once if none is stored), one change per channel at a time. A late or retried change gets the newer changes replayed on top, and if that differs from the newest record, one more record carries it forward (version `<newest version>+<this version>`). A newer change to the same field still wins.
   - `member_joined_channel` and `member_left_channel` write a `membership` record, `<channel>/<user>`, version `<event_time>:<event_id>`, with `member` true or false. A join fetches the person if not stored. When the person is our bot, the worker logs the `pull_test.py --channel` backfill to run; starting it automatically is reconcile's job.
-- **Everything else is skipped.** Reactions, `app_uninstalled`, `tokens_revoked` and `app_rate_limited` are marked enriched and logged as skipped. Reactions wait for the ontology to have a place for them; the uninstall events need `installations` and reconcile.
+- **The app leaving a workspace disconnects it** (EMBER-148). `app_uninstalled`, or `tokens_revoked` naming our bot, sets the workspace's `disconnected_at` and deletes its bot token, as Disconnect in Settings does. A late or retried one leaves a workspace connected again since alone: it acts only if the stored token is older than the event. These events write no record, and are claimed even once the workspace is disconnected, so they never sit pending.
+- **Everything else is skipped.** Reactions and `app_rate_limited` are marked enriched and logged as skipped. Reactions wait for the ontology to have a place for them.
 - **No duplicates.** A record whose `(source, tenant, object_id, version)` is already stored is left alone, so running a row twice adds nothing. The one exception: a message's own delivery replaces the copy of that version a reply fetched as its `thread_parent` (no `payload`, `user` or `channel`), so a parent enriched after its reply still gets its full record. A fetched parent is stamped at its `edited.ts` when it was edited, else its `ts`.
 
 ### How it runs
 
 - **Wake.** Idle, it waits on `LISTEN raw_events`. The database sends `NOTIFY raw_events, 'slack'` on each insert (EMBER-75's trigger, which EMBER-62 may replace). It logs `enrich:slack listening on raw_events` each time that connection is up, which `make apps-health` waits for. A poll every `ENRICH_POLL_SECONDS` covers anything missed.
-- **Claim.** `CONCURRENCY` asyncio runners each claim one pending row (`enriched_at is null`, `FOR UPDATE SKIP LOCKED`), oldest by Slack's time first: `order by occurred_at, id` ([Source ordering value](../../docs/ingestion/architecture.md#source-ordering-value-ember-63)). Each one enriches the row, writes its records and sets `enriched_at` in that row's transaction. A crash releases the row, and it runs again.
+- **Tokens** (EMBER-148, `workspaces.py`). Every Slack call for a row uses the bot token Connect Slack stored for its workspace (`account_id`, the `team_id`), opened with the `api` key ring. A token is used only for rows of the tenant that connected the workspace, and only while it is connected. There is no `SLACK_BOT_TOKEN` fallback. A row whose workspace has no such token isn't claimed: it waits, and the worker logs how many rows wait per workspace (again whenever that changes, every 5 minutes at most). Connecting the workspace wakes them.
+- **Claim.** `CONCURRENCY` asyncio runners each claim one pending row (`enriched_at is null`, `FOR UPDATE SKIP LOCKED`) whose workspace is connected, oldest by Slack's time first: `order by occurred_at, id` ([Source ordering value](../../docs/ingestion/architecture.md#source-ordering-value-ember-63)). Each one enriches the row, writes its records and sets `enriched_at` in that row's transaction. A crash releases the row, and it runs again.
 - **Catch up.** At start it claims straight away, so rows inserted while it was stopped are picked up.
-- **Failures.** Kept in memory, as `enrich:github` does, until the job queue's retry and dead letter replace it (`architecture.md`, Job queue). A failure rolls back the row's records and the row is retried after 2, 4, 8 … seconds (at most one poll interval); an idle runner wakes for it. A call Slack still throttles after `SlackClient`'s hour of waiting is not a failure: the row is retried after a poll interval and no attempt is counted. After 8 failures, or at once for `invalid_auth`, `token_revoked` and `missing_scope`, the worker logs an error and stops claiming the row until it restarts. The row stays pending in `raw_events`, so a restart tries it again.
-- **Rate limits.** Every Slack call goes through `SlackClient`, with the pacing, throttle and backoff above ([Rate limits](#rate-limits-ember-52)). Its gates are kept in `rate_limits`, keyed by workspace tenant and method, so every worker process shares one workspace's quota.
+- **Failures.** Kept in memory, as `enrich:github` does, until the job queue's retry and dead letter replace it (`architecture.md`, Job queue). A failure rolls back the row's records and the row is retried after 2, 4, 8 … seconds (at most one poll interval); an idle runner wakes for it. A call Slack still throttles after `SlackClient`'s hour of waiting is not a failure: the row is retried after a poll interval and no attempt is counted. After 8 failures, or at once for `missing_scope`, the worker logs an error and stops claiming the row until it restarts. The row stays pending in `raw_events`, so a restart tries it again.
+- **A refused token** (`invalid_auth`, `token_revoked`, `account_inactive`, `not_authed`, `token_expired`) means the app is gone from the workspace. The row rolls back, and the worker disconnects the workspace, unless the token stored now is a newer one (reconnected meanwhile), which is then used. The workspace's rows wait for a reconnect; none is given up on.
+- **A token that can't be opened** (its key is no longer in `SOURCE_CREDENTIALS_API_KEYS`) is an operator's problem: the worker logs an error and retries the row every poll interval, counting no attempt, until the key is back.
+- **Rate limits.** Every Slack call goes through `SlackClient`, with the pacing, throttle and backoff above ([Rate limits](#rate-limits-ember-52)). Its gates are kept in `rate_limits`, keyed by tenant and bucket `<team_id>/<method>`, so every worker process shares one workspace's quota, and two workspaces of one tenant each have their own.
 - **Stopping.** `Ctrl+C` (or `SIGTERM`) stops claiming and lets the jobs in flight finish. A job that would wait on a Slack rate limit for more than 10 s more rolls back instead, so stopping fits in compose's 60 s grace period; its row stays pending for the next start. A second `Ctrl+C` exits at once, and an unfinished row stays pending.
 - **Threads.** Slack calls are synchronous, so they run on a thread pool of their own, one thread per runner.
-- **Tenants.** Rows with `tenant` null (an account not yet mapped) wait.
+- **Tenants.** Rows with `tenant` null (an account not yet mapped) wait, as do rows whose workspace isn't connected to their tenant (above).
 
 ### Settings
 
 | Variable | Role |
 | --- | --- |
 | `DATABASE_URL` | The ingestion Postgres. `postgres://`, `postgresql://` and `postgresql+<driver>://` all work, and `sslmode` passes through |
-| `SLACK_BOT_TOKEN` | Bot token for the lookups (one workspace for now; per-workspace tokens come with EMBER-12) |
+| `SOURCE_CREDENTIALS_API_KEYS` | Required. The `api` key ring that opens the bot tokens Connect Slack stored: the web app's value ([`packages/source-credentials`](../../packages/source-credentials/README.md)). `SLACK_BOT_TOKEN` is not read |
 | `SLACK_RATE_MODE` | `internal` (default) or `non_marketplace`, as for the backfill |
 | `CONCURRENCY` | Rows at once, 1–16. Default `4`. Same name as the GitHub and Jira workers |
 | `ENRICH_POLL_SECONDS` | Fallback poll. Default `30` |
@@ -251,11 +258,13 @@ Run the worker on the host:
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r services/slack-ingestion/requirements.txt
 export DATABASE_URL='postgresql://ember:change-me-locally@127.0.0.1:5432/ember?sslmode=disable'
-export SLACK_BOT_TOKEN='xoxb-...'
-.venv/bin/python services/slack-ingestion/enrich.py
+export SOURCE_CREDENTIALS_API_KEYS='...'   # the web app's api key ring
+PYTHONPATH=packages/source-credentials .venv/bin/python services/slack-ingestion/enrich.py
 ```
 
 Or run it in compose, where it also waits for the migrations: `docker compose -f infra/docker-compose.yml --env-file .env --profile postgres --profile slack-enrich up --build slack-enrich`.
+
+It reads only workspaces connected with Connect Slack, so first connect yours from a local web app on the same Postgres and key ring, to an organization whose tenant is the one you seed with.
 
 Without running intake, store deliveries with `seed`. It inserts `raw_events` rows the way intake's Slack adapter does (`delivery_id` = `event_id`, `event_name` = `type[:subtype]`, `occurred_at` by the [ordering rule](../../docs/ingestion/slack-webhooks.md#ordering-value-ember-63)) and the insert trigger wakes the worker:
 
@@ -289,5 +298,11 @@ PGTEST_URL='postgresql://ember:change-me-locally@127.0.0.1:5432/postgres?sslmode
 - Ctrl+C finishing the job in flight, and rolling back one stuck behind a long rate limit
 - retries (after their backoff) and permanent errors
 - channel changes in Slack's order, late or at once
+- Connect Slack's tokens (EMBER-148):
+  - rows wait until their workspace is connected, and a connect wakes them
+  - a token serves only its tenant, and each workspace of a tenant uses its own token and buckets
+  - a refused token disconnects the workspace and its rows wait for a reconnect, but a token replaced meanwhile is kept
+  - `app_uninstalled` and `tokens_revoked` disconnect, except when late after a reconnect or naming another bot
+  - a token the ring can't open waits without being given up on
 
 CI runs all four, plus the smoke.
