@@ -57,6 +57,19 @@ def jira_issue(key: str, *, assignee: str | None = None, status: str = "To Do", 
     return {"payload": payload}
 
 
+def reconciled_issue(key: str, histories: list[dict], **kwargs) -> dict:
+    """The issue as Jira reconcile (EMBER-167) stores it: the webhook shape with its whole changelog nested."""
+    record = jira_issue(key, **kwargs)
+    record["payload"]["issue"]["changelog"] = {"histories": histories}
+    return record
+
+
+def history(id_: str, at: datetime, *items: tuple) -> dict:
+    """One changelog entry; items are (field, from, from name, to, to name)."""
+    return {"id": id_, "created": at.strftime("%Y-%m-%dT%H:%M:%S.000+0000"),
+            "items": [{"field": f, "from": a, "fromString": an, "to": b, "toString": bn} for f, a, an, b, bn in items]}
+
+
 def github_issue(repo: str, number: int, login: str, body: str = "") -> dict:
     issue = {"number": number, "title": f"Issue {number}", "body": body, "state": "open", "user": {"login": login},
              "assignees": [], "html_url": f"https://github.com/{repo}/issues/{number}",
@@ -274,6 +287,49 @@ class PgWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(r["type"], r["late"]) for r in ended],
                          [("ASSIGNED_TO", False), ("ASSIGNED_TO", True), ("CONTAINS", False), ("CONTAINS", True),
                           ("HAS_STATUS", False), ("HAS_STATUS", True)])
+
+    async def facts(self, type_: str) -> list[tuple]:
+        """(other end's key, valid_at, invalid_at, invalidated_by) of one type's edges around ACME-1, oldest first."""
+        return [tuple(r) for r in await self.db.fetch(
+            """select case when s.key = 'ACME-1' then d.key else s.key end, e.valid_at, e.invalid_at, e.invalidated_by
+               from graph.edges e join graph.nodes s on s.id = e.src join graph.nodes d on d.id = e.dst
+               where e.type = $1 and 'ACME-1' in (s.key, d.key) order by e.valid_at""", type_)]
+
+    async def test_a_reconciled_changelog_loads_one_fact_per_status_and_assignee_held(self):
+        created, t1, t2 = datetime(2026, 9, 1, 9, tzinfo=timezone.utc), T0, T0 + timedelta(days=5)
+        record = reconciled_issue("ACME-1", [
+            history("2", t2, ("status", "3", "In Progress", "4", "Done")),
+            history("1", t1, ("status", "1", "To Do", "3", "In Progress"), ("assignee", "ana", "Ana", "ben", "Ben")),
+        ], status="Done", assignee="ben")
+        await self.insert("acme", "jira", "issue", "201", "1", t2, record)
+        await self.run_pipeline()
+        episode = await self.db.fetchval("select id from episodes")
+
+        self.assertEqual(await self.facts("HAS_STATUS"), [("ACME:To Do", created, t1, episode),
+                                                          ("ACME:In Progress", t1, t2, episode),
+                                                          ("ACME:Done", t2, None, None)])
+        self.assertEqual(await self.facts("ASSIGNED_TO"), [("jira:ana", created, t1, episode),
+                                                           ("jira:ben", t1, None, None)])
+        ana = await self.node("acme", "Person", "jira:ana")
+        self.assertEqual((ana["name"], ana["placeholder"]), ("Ana", False))
+
+        before = await self.db.fetchrow(STATE)
+        await self.db.execute("update episodes set loaded_at = null")
+        await self.run_pipeline()
+        self.assertEqual(await self.db.fetchrow(STATE), before, "re-running load changed the graph")
+
+    async def test_a_webhook_change_and_its_reconciled_history_make_one_fact(self):
+        t1, t2 = T0, T0 + timedelta(days=5)
+        await self.insert("acme", "jira", "issue", "201", "webhook", t2,
+                          jira_issue("ACME-1", status="Done", moved=True))
+        await self.run_pipeline()
+        await self.insert("acme", "jira", "issue", "201", "reconcile", t2, reconciled_issue("ACME-1", [
+            history("1", t1, ("status", "1", "To Do", "3", "In Progress")),
+            history("2", t2, ("status", "3", "In Progress", "4", "Done"))], status="Done"))
+        await self.run_pipeline()
+        self.assertEqual([(k, v, i) for k, v, i, _ in await self.facts("HAS_STATUS")],
+                         [("ACME:To Do", datetime(2026, 9, 1, 9, tzinfo=timezone.utc), t1),
+                          ("ACME:In Progress", t1, t2), ("ACME:Done", t2, None)])
 
     async def test_an_edge_to_a_node_not_loaded_yet_makes_a_placeholder_its_episode_fills(self):
         comment = {"payload": {"webhookEvent": "comment_created", "issue": {"id": "201", "key": "ACME-1",
