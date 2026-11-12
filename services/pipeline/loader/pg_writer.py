@@ -249,17 +249,21 @@ class PgWriter:
 
     async def _insert_edge(self, conn, key: str, graph_id, tenant, type_, src, dst, props, valid_at, invalid_at,
                            episode_id, invalidated_by) -> None:
-        """Insert unless the same fact (src, type, dst) is already current. uuid5 of key, so a replay is a no-op."""
+        """Insert unless this uuid exists or (src, type, dst) is already current, whatever its fact: a fact names
+        its nodes, so a renamed node changes it. uuid5 of key, so a replay is a no-op. The conflict target is the
+        pinned edges_current."""
         await conn.execute(
             """insert into graph.edges (uuid, graph_id, tenant, type, fact, src, dst, props, valid_at, invalid_at,
                                         episode_id, invalidated_by)
                select $1, $2, $3, $4, replace(replace($5, '{src}', coalesce(s.name, s.key)), '{dst}', coalesce(d.name, d.key)),
                       s.id, d.id, $8::jsonb, $9, $10, $11, $12
                  from graph.nodes s, graph.nodes d
-                where s.id = $6 and d.id = $7 and not exists (
-                  select from graph.edges e where (e.src, e.type, e.dst) = ($6, $4, $7)
-                    and e.invalid_at is null and e.expired_at is null)
-               on conflict do nothing""",
+                where s.id = $6 and d.id = $7
+                  and not exists (select from graph.edges e where e.uuid = $1)
+                  and not exists (select from graph.edges e where (e.src, e.type, e.dst) = ($6, $4, $7)
+                                    and e.invalid_at is null and e.expired_at is null)
+               on conflict (src, type, dst, md5(coalesce(fact, ''))) where invalid_at is null and expired_at is null
+               do nothing""",
             uuid.uuid5(_NAMESPACE, key), graph_id, tenant, type_, FACTS[type_], src, dst, json.dumps(props),
             valid_at, invalid_at, episode_id, invalidated_by)
 
