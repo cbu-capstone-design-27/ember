@@ -22,7 +22,7 @@ DBMATE_IMAGE := $(shell sed -n 's|^ *image: *||p' ../k8s/apps/postgres/migrate-j
 .PHONY: help deps vault-init ping prep up nodes smoke kubeconfig upgrade reboot reset \
 	flux-up flux-health flux-preview flux-preview-end flux-components sync apps-diff apps-health \
 	ts-operator-health neo4j-health postgres-health postgres-url postgres-migrate \
-	intake-secret enrich-github-secret enrich-slack-secret enrich-jira-secret enrich-gitlab-secret llm-tunnel-secret map-tenant unmap-tenant grafana-secret grafana-health \
+	intake-secret enrich-github-secret enrich-jira-secret enrich-gitlab-secret llm-tunnel-secret map-tenant unmap-tenant grafana-secret grafana-health \
 	source-credentials-secret web-secret web-test-accounts web-serve
 
 help:
@@ -142,9 +142,6 @@ intake-secret: ## Write k8s/apps/intake/webhooks.sops.yaml, encrypted, from vaul
 
 enrich-github-secret: ## Write k8s/apps/enrich-github/github-app.sops.yaml, encrypted, from vault_github_app_private_key. Commit it
 	ansible-playbook playbooks/enrich.yml --tags secret-github
-
-enrich-slack-secret: ## Write k8s/apps/enrich-slack/slack-bot.sops.yaml, encrypted, from vault_slack_bot_token. Commit it
-	ansible-playbook playbooks/enrich.yml --tags secret-slack
 
 enrich-jira-secret: ## Write k8s/apps/enrich-jira/jira-api.sops.yaml, encrypted, from the Atlassian 3LO app's client in the vault. Commit it
 	ansible-playbook playbooks/enrich.yml --tags secret-jira
