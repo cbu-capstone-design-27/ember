@@ -12,7 +12,8 @@ fixtures are that output. Until reconcile exists (ADR 0010), this is how history
     DATABASE_URL=... python3 apps/mcp/seed_photon.py --no-embed --tenant my-org \
         --jira jira.jsonl --slack slack.jsonl
 
-Rows take the shapes the enrich workers store (`{"payload": ...}`), under tenant "photon" (or --tenant). Then the
+Rows take the shapes the enrich workers store, under tenant "photon" (or --tenant): `{"payload": ...}` for Jira
+records and Slack messages, and the users.info and conversations.info object itself for Slack users and channels. Then the
 embed worker (services/embed, EMBER-77) embeds every row that isn't yet, so it needs that service's
 requirements too. Reruns insert nothing: rows conflict on (source, tenant, object_id, version).
 """
@@ -82,13 +83,31 @@ def rows(jira_path: Path | None = FIXTURES / "jira-intake.jsonl", slack_path: Pa
     return out
 
 
+def slack_directory(slack_path: Path | None = FIXTURES / "slack-intake.jsonl") -> list[tuple]:
+    """(source, kind, object_id, version, occurred_at, record) for every Slack user and channel in the pull, as
+    enrich:slack stores what users.info and conversations.info return: the object itself as the record, a user
+    versioned by its updated (seconds), a channel by its updated (milliseconds), else its created."""
+    out = []
+    for body in bodies(slack_path):
+        if "profile" in body or "real_name" in body:
+            updated = body.get("updated") or 0
+            out.append(("slack", "user", body["id"], str(updated), datetime.fromtimestamp(updated, timezone.utc), body))
+        elif "is_channel" in body or "is_group" in body:
+            updated, created = body.get("updated"), body.get("created")
+            at = datetime.fromtimestamp(updated / 1000 if updated else created or 0, timezone.utc)
+            out.append(("slack", "channel", body["id"], str(updated or created or 0), at, body))
+    return out
+
+
 async def main(embed_rows: bool = True, tenant: str = "photon", jira: Path | None = None, slack: Path | None = None) -> None:
     db = await asyncpg.connect(os.environ["DATABASE_URL"])
     found = rows(jira, slack) if jira or slack else rows()
+    directory = slack_directory(slack) if jira or slack else slack_directory()
     await db.executemany(
         "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record)"
         " values ($1, $7, $2, $3, $4, $5, $6) on conflict do nothing",
-        [(*row[:5], json.dumps({"payload": row[5]}), tenant) for row in found])
+        [(*row[:5], json.dumps({"payload": row[5]}), tenant) for row in found]
+        + [(*row[:5], json.dumps(row[5]), tenant) for row in directory])  # users and channels unwrapped, as enrich:slack
     await db.close()
     if not embed_rows:  # --no-embed: rows only, e.g. for the extract and load workers (EMBER-85)
         return
