@@ -343,7 +343,8 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(object_id, [h["object_id"] for h in hits])
 
     async def test_seeded_jira_issues_carry_their_changelog_histories(self):
-        """The photon changelog pages ride on each issue as issue.changelog.histories, the expand=changelog shape."""
+        """The photon changelog pages ride on each issue as issue.changelog.histories, the expand=changelog shape,
+        and the Slack users and channels are stored too."""
         with patch.dict(os.environ, DATABASE_URL=database_url()):
             await seed_photon.main(embed_rows=False)
         record = await retrieval.get_record("jira", "10015", raw=True)  # PHO-15, read back as Ada through the MCP
@@ -351,6 +352,10 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
         moves = [(item["fromString"], item["toString"]) for entry in issue["changelog"]["histories"]
                  for item in entry["items"] if item["field"] == "status"]
         self.assertEqual((issue["key"], moves), ("PHO-15", [("To Do", "In Progress"), ("In Progress", "Done")]))
+        # Slack users and channels, as enrich:slack stores users.info and conversations.info: the object itself
+        user = (await retrieval.get_record("slack", "U08DREYES01", raw=True))["record"]
+        channel = (await retrieval.get_record("slack", "C08PHOTONBG", raw=True))["record"]
+        self.assertEqual((user["real_name"], channel["name"]), ("Daniel Reyes", "photon-bugs"))
 
     async def test_without_an_api_key_no_authorization_header_is_sent(self):
         key = os.environ.pop("EMBEDDING_API_KEY")
