@@ -162,7 +162,7 @@ class EmbedTest(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.db = await asyncpg.connect(database_url())
-        await self.db.execute("truncate source_records restart identity cascade")
+        await self.db.execute("truncate source_records, graph.graphs restart identity cascade")
         self.stub = StubEmbeddings()
 
     async def asyncTearDown(self):
@@ -243,7 +243,7 @@ class EmbedTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.embedded(good))["embed_text"], "fine")
         self.assertEqual((await self.embedded(also_good))["embed_text"], "also fine")
         self.assertIsNone((await self.embedded(bad))["embedded_at"])
-        self.assertEqual(worker.failed, {bad})
+        self.assertEqual(worker.failed, {("source_records", bad)})
 
     async def test_without_an_api_key_no_authorization_header_is_sent(self):
         row = await self.insert("slack", "message", {"payload": {"text": "no auth"}})
@@ -258,6 +258,36 @@ class EmbedTest(unittest.IsolatedAsyncioTestCase):
             await self.worker().run()
         self.assertEqual(self.stub.requests, [["ember embedding identity check"]])
         self.assertIsNone((await self.embedded(row))["embedded_at"])
+
+    async def test_graph_nodes_and_facts_are_embedded_and_a_changed_node_again(self):
+        """EMBER-166: nodes with embed_text and edges with a fact get vectors of exactly that text, the
+        triggers NOTIFY channel graph, and a node whose embed_text changes is embedded again."""
+        notified = asyncio.Queue()
+        await self.db.add_listener("graph", lambda *args: notified.put_nowait(args[-1]))
+        graph = await self.db.fetchval("insert into graph.graphs (tenant, source, scope, group_id)"
+                                       " values ('acme', 'jira', 'acme.atlassian.net/ACME', 'acme_jira_1') returning id")
+        node = ("insert into graph.nodes (uuid, graph_id, tenant, label, key, name, embed_text)"
+                " values (gen_random_uuid(), $1, 'acme', $2, $3, $3, $4) returning id")
+        ticket = await self.db.fetchval(node, graph, "WorkItem", "ACME-1", "login redirect drops the query string")
+        person = await self.db.fetchval(node, graph, "Person", "ada", None)
+        edge = await self.db.fetchval(
+            "insert into graph.edges (uuid, graph_id, tenant, type, fact, src, dst, valid_at)"
+            " values (gen_random_uuid(), $1, 'acme', 'ASSIGNED_TO', 'ada is assigned to ACME-1', $2, $3, now()) returning id",
+            graph, ticket, person)
+        self.assertEqual({await asyncio.wait_for(notified.get(), 1) for _ in range(2)}, {"nodes", "edges"})
+
+        await self.drain(self.worker())
+        vectors = {row["id"]: row["v"] for row in await self.db.fetch(
+            "select id, embedding::text as v from graph.nodes union all select -id, fact_embedding::text from graph.edges")}
+        self.assertEqual(json.loads(vectors[ticket]), stub_vector("login redirect drops the query string"))
+        self.assertIsNone(vectors[person], "a node without embed_text has nothing to embed")
+        self.assertEqual(json.loads(vectors[-edge]), stub_vector("ada is assigned to ACME-1"))
+
+        await self.db.execute("update graph.nodes set embed_text = 'login keeps the query string' where id = $1", ticket)
+        self.assertIsNone(await self.db.fetchval("select embedding from graph.nodes where id = $1", ticket))
+        await self.drain(self.worker())
+        self.assertEqual(json.loads(await self.db.fetchval("select embedding::text from graph.nodes where id = $1", ticket)),
+                         stub_vector("login keeps the query string"))
 
     async def test_cosine_nearest_neighbours_use_the_hnsw_index(self):
         ids = {text: await self.insert("slack", "message", {"payload": {"text": text}}) for text in (
