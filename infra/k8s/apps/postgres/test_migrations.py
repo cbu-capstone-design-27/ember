@@ -30,25 +30,34 @@ MIGRATIONS_DB = "ember_test_migrations"
 REQUIRED_TABLES = {"raw_events", "source_records", "episodes", "cursors", "installations", "rate_limits"}
 DELIVERY_KEY = "UNIQUE (source, delivery_id)"
 
-# What has to match between the two databases. dbmate's own table is left out.
+# What has to match between the two databases, in schemas public and graph (EMBER-164), with row-level
+# security and its policies. dbmate's own table is left out.
 CATALOG = """
-select 'column', c.relname, a.attnum, a.attname, format_type(a.atttypid, a.atttypmod),
+select 'column', c.relnamespace::regnamespace, c.relname, a.attnum, a.attname, format_type(a.atttypid, a.atttypmod),
        a.attnotnull, a.attidentity, pg_get_expr(d.adbin, d.adrelid)
   from pg_attribute a
   join pg_class c on c.oid = a.attrelid
   left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
- where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
+ where c.relnamespace::regnamespace::text in ('public', 'graph') and c.relkind = 'r'
    and c.relname <> 'schema_migrations' and a.attnum > 0 and not a.attisdropped
- order by 2, 3;
+ order by 2, 3, 4;
 select 'constraint', conrelid::regclass::text, conname, pg_get_constraintdef(oid)  -- by name: a regclass sorts by oid, i.e. creation order
   from pg_constraint
- where connamespace = 'public'::regnamespace and conrelid::regclass::text <> 'schema_migrations'
+ where connamespace::regnamespace::text in ('public', 'graph') and conrelid::regclass::text <> 'schema_migrations'
  order by 2, 3;
 select 'extension', extname from pg_extension where extname <> 'plpgsql' order by 2;
 select 'index', tablename, indexname, indexdef
   from pg_indexes
- where schemaname = 'public' and tablename <> 'schema_migrations'
+ where schemaname in ('public', 'graph') and tablename <> 'schema_migrations'
  order by 2, 3;
+select 'policy', schemaname, tablename, policyname, roles, cmd, qual, with_check
+  from pg_policies
+ where schemaname in ('public', 'graph')
+ order by 2, 3, 4;
+select 'row security', c.oid::regclass, c.relrowsecurity from pg_class c
+ where c.relnamespace::regnamespace::text in ('public', 'graph') and c.relkind = 'r'
+   and c.relname <> 'schema_migrations'
+ order by c.oid::regclass::text;
 """
 
 

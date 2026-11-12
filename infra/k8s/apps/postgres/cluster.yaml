@@ -14,6 +14,22 @@ spec:
     initdb:
       database: ember
       owner: ember
+  # EMBER-164: the graph's read role. Role ember runs the migrations and cannot create roles, so the
+  # operator does; migration 20261112120000_graph_tables grants it and finds it already there.
+  managed:
+    roles:
+      - name: ember_graph_reader
+        ensure: present
+        login: false
+      # EMBER-166: the MCP server's login, in ember_graph_reader, so it reads under row-level security.
+      # Its password is in Secret postgres-mcp (type kubernetes.io/basic-auth, username ember_mcp).
+      - name: ember_mcp
+        ensure: present
+        login: true
+        inRoles:
+          - ember_graph_reader
+        passwordSecret:
+          name: postgres-mcp
   storage:
     storageClass: local-path-retain
     size: 10Gi

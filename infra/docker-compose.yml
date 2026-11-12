@@ -33,6 +33,9 @@
 #     --profile postgres up -d postgres
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile postgres run --rm postgres-migrate
+# and the MCP server's reader role (EMBER-166), after the migrations:
+#   docker compose -f infra/docker-compose.yml --env-file .env \
+#     --profile postgres run --rm postgres-mcp-role
 # The pipeline loader (EMBER-45) is a one-off run that reads ./data/raw/<tenant>/
 # (set PIPELINE_INPUT=/data/raw/<other-folder> to load a different folder under ./data):
 #   docker compose -f infra/docker-compose.yml --env-file .env \
@@ -299,6 +302,27 @@ services:
       DATABASE_URL: "postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable"
     volumes:
       - ./k8s/apps/postgres/migrations:/migrations:ro
+
+  # EMBER-166. The MCP server's login role, ember_mcp, in ember_graph_reader (created by the migrations), so it
+  # reads the graph under row-level security. Run once after postgres-migrate; rerunning resets the password.
+  postgres-mcp-role:
+    profiles: ["postgres"]
+    image: pgvector/pgvector:0.8.7-pg18-trixie
+    depends_on:
+      postgres-migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    environment:
+      PGPASSWORD: "${POSTGRES_PASSWORD:-change-me-locally}"
+      MCP_PASSWORD: "${MCP_POSTGRES_PASSWORD:-change-me-locally}"
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        psql -h postgres -U ember -d ember -v ON_ERROR_STOP=1 -v pw="$$MCP_PASSWORD" <<'SQL'
+        select 'create role ember_mcp login in role ember_graph_reader'
+         where not exists (select from pg_roles where rolname = 'ember_mcp') \gexec
+        alter role ember_mcp password :'pw';
+        SQL
 
   # EMBER-45. Not part of the default `up` (see profiles). Reads connector JSONL from
   # ./data/raw/<tenant>/ (or PIPELINE_INPUT, a path inside the container under /data) and writes

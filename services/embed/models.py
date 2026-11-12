@@ -1,4 +1,4 @@
-"""SQLAlchemy model for the table the embed worker touches (EMBER-77).
+"""SQLAlchemy models for the tables the embed worker touches (EMBER-77, EMBER-166).
 
 It maps docs/ingestion/architecture.md (Storage) and nothing more. The dbmate migrations in
 infra/k8s/apps/postgres/migrations own the schema, so never call create_all on it.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, Text, UniqueConstraint, cast, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Identity, Text, UniqueConstraint, cast, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import UserDefinedType
@@ -59,3 +59,26 @@ class SourceRecord(Base):
     embedding: Mapped[list[float] | None] = mapped_column(Vector())
     embed_text: Mapped[str | None] = mapped_column(Text)
     embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class GraphNode(Base):
+    """graph.nodes, the columns the worker reads and writes (EMBER-164's table)."""
+
+    __tablename__ = "nodes"
+    __table_args__ = {"schema": "graph"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    embed_text: Mapped[str | None] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector())
+    deleted: Mapped[bool] = mapped_column(Boolean)
+
+
+class GraphEdge(Base):
+    """graph.edges, the columns the worker reads and writes (EMBER-164's table)."""
+
+    __tablename__ = "edges"
+    __table_args__ = {"schema": "graph"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    fact: Mapped[str | None] = mapped_column(Text)
+    fact_embedding: Mapped[list[float] | None] = mapped_column(Vector())

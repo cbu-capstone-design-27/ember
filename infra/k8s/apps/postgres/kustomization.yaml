@@ -29,3 +29,5 @@ configMapGenerator:
       - migrations/20261028170000_ingestion_metrics_grants.sql
       - migrations/20261104120000_installations_connection.sql
       - migrations/20261104180000_source_credentials.sql
+      - migrations/20261112120000_graph_tables.sql
+      - migrations/20261112180000_mcp_reader.sql

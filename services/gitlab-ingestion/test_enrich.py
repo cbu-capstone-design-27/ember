@@ -253,7 +253,7 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ref["occurred_at"], await self.received_at(short_id))
         self.assertNotIn("commits", json.loads(ref["record"])["payload"])
 
-        await self.db.execute("truncate source_records, episodes")
+        await self.db.execute("truncate source_records, episodes cascade")
         long = FakeGitLab()
         await self.process(long, await self.insert("push", push(20, total=25)))
         (_at, url), = long.calls
