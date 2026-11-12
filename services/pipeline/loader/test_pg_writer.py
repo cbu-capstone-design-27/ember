@@ -21,9 +21,9 @@ from datetime import datetime, timedelta, timezone
 
 import asyncpg
 
-from loader.pg_writer import PgWriter
+from loader.pg_writer import PgWriter, _shorten
 from loader.records import UUID_NAMESPACE, episode_uuid
-from loader.test_pg_load import DBMATE, MIGRATIONS, PGTEST_URL, database_url, photon_rows
+from loader.test_pg_load import DBMATE, MIGRATIONS, PGTEST_URL, REPO, database_url, photon_rows
 from loader.workers import ExtractWorker, LoadWorker
 
 DB = "ember_test_pg_writer"
@@ -212,6 +212,40 @@ class PgWriterTest(unittest.IsolatedAsyncioTestCase):
         load = await self.run_pipeline()
         self.assertEqual(load.counts["loaded"], len(rows))
         self.assertEqual(await self.db.fetchrow(STATE), before, "re-running load changed the graph")
+
+    async def test_photon_facts_read_as_text_with_names_not_markup_or_ids(self):
+        """Ryan's three facts from the live test, with Slack's users and channels loaded after their messages."""
+        rows = photon_rows()
+        await self.db.executemany(
+            "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record)"
+            " values ($1, 'photon', $2, $3, $4, $5, $6::jsonb)",
+            [(s, k, o, v, at, json.dumps({"payload": p})) for s, k, o, v, at, p in rows])
+        later = max(r[4] for r in rows) + timedelta(days=1)
+        for line in (REPO / "services/pipeline/fixtures/photon/slack-intake.jsonl").read_text().splitlines():
+            body = json.loads(line)["body"]
+            kind = "user" if "real_name" in body else "channel" if "context_team_id" in body else None
+            if kind:  # as enrich:slack stores them: the object itself
+                await self.insert("photon", "slack", kind, body["id"], "1", later, body)
+        await self.run_pipeline()
+
+        async def fact(type_: str, text: str) -> str:
+            return await self.db.fetchval(
+                """select e.fact from graph.edges e join graph.nodes m on m.id in (e.src, e.dst)
+                   where e.type = $1 and m.label = 'Message' and m.embed_text like $2""", type_, f"%{text}%")
+
+        pho87 = await self.db.fetchval("select name from graph.nodes where key = 'PHO-87'")
+        self.assertEqual(await fact("REFERENCES", "browse/PHO-87|"),
+                         f"Daniel Reyes created Bug PHO-87: fix: Caps Lock Hyper key must not toggle Caps Lock "
+                         f"references {pho87}")
+        text = await self.db.fetchval("select embed_text from graph.nodes where embed_text like 'Caps Lock as Hyper%'")
+        authored = await fact("AUTHORED", "Caps Lock as Hyper was turning")
+        self.assertEqual(authored, f"Ryan Stoffel authored {_shorten(text)}")
+        self.assertTrue(authored.endswith("…") and len(_shorten(text)) <= 121, authored)
+        self.assertEqual(await fact("PART_OF", "browse/PHO-20|"),
+                         "Daniel Reyes created Bug PHO-20: Launcher panel throws NSInternalInconsistencyException"
+                         " at launch is part of #photon-bugs")
+        self.assertEqual(await self.db.fetchval(
+            r"select count(*) from graph.edges where fact ~ '<https?:|<[@#!]|slack:|C08[A-Z0-9]+:\d'"), 0)
 
     # --- tenancy and links ---
 
