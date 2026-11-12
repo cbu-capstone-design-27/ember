@@ -7,8 +7,8 @@
 -- after the migrations, and before that the function returns no tenants.
 --
 -- The embed worker (services/embed) also embeds graph.nodes.embed_text and graph.edges.fact. These
--- triggers NOTIFY channel graph when a row needs it, so the worker wakes within a second, and clear
--- a node's embedding when its embed_text changes, so it never keeps the vector of an older text.
+-- triggers NOTIFY channel graph when a row needs it, so the worker wakes within a second. A node whose
+-- embed_text, or an edge whose fact, changes without a new vector in the same update loses its old one.
 
 -- migrate:up
 create function ember_user_tenants(user_email text) returns text[]
@@ -44,12 +44,18 @@ create trigger graph_nodes_embed before insert or update of embed_text on graph.
 
 create function graph_edges_embed() returns trigger language plpgsql as $$
 begin
-  perform pg_notify('graph', 'edges');
-  return null;
+  if tg_op = 'UPDATE' and new.fact is distinct from old.fact
+     and new.fact_embedding is not distinct from old.fact_embedding then
+    new.fact_embedding := null;
+  end if;
+  if new.fact_embedding is null and new.fact is not null then
+    perform pg_notify('graph', 'edges');
+  end if;
+  return new;
 end
 $$;
-create trigger graph_edges_embed after insert on graph.edges
-  for each row when (new.fact is not null and new.fact_embedding is null) execute function graph_edges_embed();
+create trigger graph_edges_embed before insert or update of fact on graph.edges
+  for each row execute function graph_edges_embed();
 
 -- migrate:down
 drop trigger graph_edges_embed on graph.edges;

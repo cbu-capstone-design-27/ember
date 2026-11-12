@@ -11,8 +11,8 @@ writes embedding, embed_text and embedded_at in the same transaction, each row i
 
 EMBER-166: the same for the Postgres graph, with the same model and rules. graph.nodes rows with
 embed_text and no embedding get `embedding`, graph.edges rows with a fact and no fact_embedding get
-`fact_embedding`. Their triggers NOTIFY GRAPH_CHANNEL (default graph), and a node whose embed_text
-changes loses its embedding, so it is embedded again.
+`fact_embedding`. Their triggers NOTIFY GRAPH_CHANNEL (default graph), and a node or edge whose text
+changes without a new vector loses its old one, so it is embedded again.
 429, 5xx and network errors are retried with backoff. SIGINT or SIGTERM stops claiming, lets the
 batch in flight finish, and exits 0.
 

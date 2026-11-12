@@ -524,7 +524,8 @@ grant select on graph.graphs, graph.nodes, graph.edges, graph.mentions, episodes
 
 -- EMBER-166, own migration: the MCP reader resolves a user's tenants from the web app's tables (schema web,
 -- created by the web app at start, so plpgsql resolves them at call time), and the embed worker wakes on
--- channel graph for graph rows to embed. A node whose embed_text changes loses its old embedding.
+-- channel graph for graph rows to embed. A node's embed_text or an edge's fact that changes without a new
+-- vector loses its old one.
 create function ember_user_tenants(user_email text) returns text[]
   language plpgsql stable security definer set search_path = pg_catalog, public as $$
 begin
@@ -558,12 +559,18 @@ create trigger graph_nodes_embed before insert or update of embed_text on graph.
 
 create function graph_edges_embed() returns trigger language plpgsql as $$
 begin
-  perform pg_notify('graph', 'edges');
-  return null;
+  if tg_op = 'UPDATE' and new.fact is distinct from old.fact
+     and new.fact_embedding is not distinct from old.fact_embedding then
+    new.fact_embedding := null;
+  end if;
+  if new.fact_embedding is null and new.fact is not null then
+    perform pg_notify('graph', 'edges');
+  end if;
+  return new;
 end
 $$;
-create trigger graph_edges_embed after insert on graph.edges
-  for each row when (new.fact is not null and new.fact_embedding is null) execute function graph_edges_embed();
+create trigger graph_edges_embed before insert or update of fact on graph.edges
+  for each row execute function graph_edges_embed();
 ```
 
 Retention for `raw_events` is 30 days after an event is fully processed. One that has not finished processing stays until its source is removed from the tenant. One that no connected account claims (`tenant` is null) goes 30 days after it arrived, so connecting an account replays at most its last 30 days ([ADR 0010](../adr/0010-connecting-sources.md#replay-and-backfill-on-connect)). Nothing runs these deletes yet. Replaying enrich therefore reaches back 30 days; anything older comes back through reconcile. Retention for `source_records` and `episodes` is still open.
