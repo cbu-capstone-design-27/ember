@@ -13,7 +13,8 @@ The rules, from Part 1 "Idempotency, versions and deletes":
 - Edges that disappear: a newer version of a record (OWNED) ends the current edges of the types it lists
   in full that it no longer lists. A late, older version's edge is stored already ended.
 - Deterministic uuids, so applying an episode twice changes nothing.
-- HAS_STATUS: a Jira issue's status is a fact on an edge to a Status node, from the webhook changelog.
+- HAS_STATUS and ASSIGNED_TO from a Jira issue's changelog: one fact per value held, from reconcile's
+  issue.changelog.histories or a webhook's changelog.items, each ended when the next began.
 
 Then the link step, for the nodes each episode touched: SAME_AS between a tenant's graphs (same source
 identity, or same email across sources) and REFERENCES for Jira keys and pull request URLs in text. Link
@@ -72,25 +73,74 @@ def _time(value) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) and value else None
 
 
-def _status(episode) -> tuple[dict, dict] | None:
-    """A Jira issue episode's (Status node, HAS_STATUS edge), from its record. Without a status change in
-    the webhook changelog the fact is only known from this snapshot: props.valid_from = 'snapshot'."""
+def _jira_time(value) -> datetime | None:
+    """A Jira time (2026-09-25T10:00:00.000+0000) or an ISO one."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%f%z")
+    except (TypeError, ValueError):
+        return _time(value)
+
+
+def _held(entries, field: str, key: str, now, full: bool, created) -> list[tuple]:
+    """(from when, value, its display name) per value a Jira field held, oldest first, from changelog entries
+    [(time, entry)]. With the full changelog the first value is held since the issue was created; key is
+    'String' for the name (status) or '' for the id (assignee). As the prototype's status_history."""
+    moves = [(at, item) for at, entry in entries for item in entry.get("items") or [] if item.get("field") == field]
+    held = []
+    if full:
+        first = moves[0][1] if moves else None
+        held.append((created, first.get("from" + key) if first else now[0], first.get("fromString") if first
+                     else now[1]))
+    return held + [(at, item.get("to" + key), item.get("toString")) for at, item in moves]
+
+
+def _jira_facts(episode) -> tuple[list[dict], list[dict]]:
+    """A Jira issue episode's status (HAS_STATUS) and assignee (ASSIGNED_TO) facts, one per value held, each
+    ended when the next began. They come from reconcile's issue.changelog.histories (expand=changelog) or a
+    webhook's changelog.items (one change, at the episode's time). A status with no change behind it is only
+    known from this snapshot: props.valid_from = 'snapshot'."""
     if (episode.source, episode.kind) != ("jira", "issue") or episode.attrs.get("deleted"):
-        return None
+        return [], []
     payload = (episode.record or {}).get("payload") or {}
     issue = payload.get("issue") if isinstance(payload.get("issue"), dict) else payload
-    fields = issue.get("fields") or {}
+    fields, key = issue.get("fields") or {}, issue.get("key")
     status = (fields.get("status") or {}).get("name")
-    key = issue.get("key")
-    if not status or not key:
-        return None
+    if not key:
+        return [], []
     project = (fields.get("project") or {}).get("key") or key.rpartition("-")[0]
+    log = issue.get("changelog") or {}
+    histories = log.get("histories") or []
+    full = bool(histories) and (log.get("total") or 0) <= len(histories)  # expand=changelog stops at 100
+    entries = sorted(((_jira_time(h.get("created")), h) for h in histories if _jira_time(h.get("created"))),
+                     key=lambda pair: (pair[0], int(pair[1].get("id") or 0)))
     items = (payload.get("changelog") or {}).get("items") or []
-    moved = any(item.get("field") == "status" for item in items)
-    status_key = f"{project}:{status}"
-    return ({"label": "Status", "key": status_key, "props": {"name": status}},
-            {"type": "HAS_STATUS", "src_label": "WorkItem", "src_key": key, "dst_label": "Status",
-             "dst_key": status_key, "props": {} if moved else {"valid_from": "snapshot"}})
+    if not entries and items:
+        entries = [(episode.occurred_at, {"items": items})]
+    created = _jira_time(fields.get("created"))
+    assignee = fields.get("assignee") or {}
+    nodes, edges = [], []
+
+    def facts(held, node, edge) -> None:
+        for i, (start, value, name) in enumerate(held):
+            if start is None or value is None:
+                continue
+            nodes.append(node(value, name, start))
+            fact = {**edge(value), "valid_at": start}
+            if i + 1 < len(held):
+                fact["invalid_at"] = held[i + 1][0]
+            edges.append(fact)
+
+    statuses = _held(entries, "status", "String", (status, status), full, created)
+    if not statuses and status:
+        statuses = [(episode.occurred_at, status, status)]
+    facts(statuses, lambda v, _n, _t: {"label": "Status", "key": f"{project}:{v}", "props": {"name": v}},
+          lambda v: {"type": "HAS_STATUS", "src_label": "WorkItem", "src_key": key, "dst_label": "Status",
+                     "dst_key": f"{project}:{v}", "props": {"valid_from": "snapshot"} if not entries else {}})
+    facts(_held(entries, "assignee", "", (assignee.get("accountId"), assignee.get("displayName")), full, created),
+          lambda v, n, t: {"label": "Person", "key": f"jira:{v}", "props": {"name": n}, "occurred_at": t.isoformat()},
+          lambda v: {"type": "ASSIGNED_TO", "src_label": "Person", "src_key": f"jira:{v}", "dst_label": "WorkItem",
+                     "dst_key": key, "props": {}})
+    return nodes, edges
 
 
 class Graph:
@@ -152,11 +202,10 @@ class PgWriter:
 
     async def _apply(self, conn, graph: Graph, episode) -> None:
         attrs = episode.attrs
-        nodes, edges = list(attrs["nodes"]), list(attrs["edges"])
-        status = _status(episode)
-        if status:
-            nodes.append(status[0])
-            edges.append(status[1])
+        history_nodes, history = _jira_facts(episode)
+        # History first: its current fact starts when the change happened, and the mapper's copy of that
+        # same fact (stamped with the episode's time) then finds it current and adds nothing.
+        nodes, edges = list(attrs["nodes"]) + history_nodes, history + list(attrs["edges"])
         node_ids = [await self._node(conn, graph, episode, n) for n in nodes]
         touched = set(node_ids)
         for edge in edges:
@@ -217,9 +266,11 @@ class PgWriter:
             raise ValueError(f"not a relationship type in the ontology: {edge['type']!r}")
         src = await self._ensure(conn, graph, edge["src_label"], edge["src_key"])
         dst = await self._ensure(conn, graph, edge["dst_label"], edge["dst_key"])
-        at, invalid_at, invalidated_by = episode.occurred_at, None, None
+        at, invalid_at, invalidated_by = edge.get("valid_at") or episode.occurred_at, None, None
         side = OWNED.get((episode.source, episode.kind), {}).get(edge["type"])
-        if side:
+        if edge.get("invalid_at"):  # history: the changelog says when it ended
+            invalid_at, invalidated_by = edge["invalid_at"], episode.id
+        elif side:
             # A newer fact of this type already holds, so this one is history ended by it, as Graphiti's
             # _apply_temporal_invalidation does: a late arrival never becomes current.
             far = "dst" if side == "src" else "src"
@@ -249,9 +300,9 @@ class PgWriter:
 
     async def _insert_edge(self, conn, key: str, graph_id, tenant, type_, src, dst, props, valid_at, invalid_at,
                            episode_id, invalidated_by) -> None:
-        """Insert unless this uuid exists or (src, type, dst) is already current, whatever its fact: a fact names
-        its nodes, so a renamed node changes it. uuid5 of key, so a replay is a no-op. The conflict target is the
-        pinned edges_current."""
+        """Insert unless this uuid exists or, for a current fact, (src, type, dst) is already current whatever
+        its fact: a fact names its nodes, so a renamed node changes it. uuid5 of key, so a replay is a no-op. The
+        conflict target is the pinned edges_current."""
         await conn.execute(
             """insert into graph.edges (uuid, graph_id, tenant, type, fact, src, dst, props, valid_at, invalid_at,
                                         episode_id, invalidated_by)
@@ -260,8 +311,9 @@ class PgWriter:
                  from graph.nodes s, graph.nodes d
                 where s.id = $6 and d.id = $7
                   and not exists (select from graph.edges e where e.uuid = $1)
-                  and not exists (select from graph.edges e where (e.src, e.type, e.dst) = ($6, $4, $7)
-                                    and e.invalid_at is null and e.expired_at is null)
+                  and ($10::timestamptz is not null or not exists (
+                    select from graph.edges e where (e.src, e.type, e.dst) = ($6, $4, $7)
+                      and e.invalid_at is null and e.expired_at is null))
                on conflict (src, type, dst, md5(coalesce(fact, ''))) where invalid_at is null and expired_at is null
                do nothing""",
             uuid.uuid5(UUID_NAMESPACE, key), graph_id, tenant, type_, FACTS[type_], src, dst, json.dumps(props),
@@ -272,7 +324,8 @@ class PgWriter:
         its time. Only edges that began by then: an older version never ends a newer fact."""
         for edge_type, side in OWNED.get((episode.source, episode.kind), {}).items():
             far = "dst" if side == "src" else "src"
-            listed = [e[f"{far}_key"] for e in edges if e["type"] == edge_type and e[f"{side}_key"] == main["key"]]
+            listed = [e[f"{far}_key"] for e in edges if e["type"] == edge_type and e[f"{side}_key"] == main["key"]
+                      and not e.get("invalid_at")]
             main_id = await self._ensure(conn, graph, main["label"], main["key"])
             await conn.execute(
                 f"""update graph.edges e set invalid_at = $3, invalidated_by = $4
