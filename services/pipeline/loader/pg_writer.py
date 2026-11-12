@@ -67,6 +67,93 @@ FACTS = {
 }
 
 PULL_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
+SLACK_MARKUP = re.compile(r"<([^<>|]*)(?:\|([^<>]*))?>")  # <url|label>, <url>, <@U123>, <#C123|name>, <!here>
+MENTION = re.compile(r"<@([A-Z0-9]+)")
+NAME_LIMIT = 120
+
+
+def _display(n: str) -> str:
+    """SQL for what a fact calls node n: its name, else its id (a Person's account, a Conversation's channel)."""
+    return (f"coalesce({n}.name, case {n}.label when 'Person' then substr({n}.key, strpos({n}.key, ':') + 1)"
+            f" when 'Conversation' then split_part({n}.key, ':', 1) else {n}.key end)")
+
+
+def _fact_sql(template: str) -> str:
+    """SQL for a fact: the template with its nodes' display names filled in (aliases s and d)."""
+    return f"replace(replace({template}, '{{src}}', {_display('s')}), '{{dst}}', {_display('d')})"
+
+
+def _shorten(text: str, limit: int = NAME_LIMIT) -> str:
+    """One line, cut at the last word boundary before limit with an ellipsis. A word longer than the
+    limit (a URL) is kept whole, so a link is never cut."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text.rfind(" ", 0, limit + 1)
+    if cut <= 0:
+        cut = text.find(" ", limit)
+        if cut < 0:
+            return text
+    return text[:cut].rstrip(" ,.;:") + "…"
+
+
+def _slack_text(text: str, people: dict[str, str]) -> str:
+    """Slack mrkdwn as a person reads it: <url|label> is label, <url> is url, <@U123> is the person's name
+    (the id when unknown), <#C123|name> is #name."""
+    def plain(match) -> str:
+        target, label = match.group(1), match.group(2)
+        if target.startswith("@"):
+            return people.get(target[1:]) or label or target
+        if target.startswith("#"):
+            return "#" + (label or target[1:])
+        if target.startswith("!"):
+            return "@" + (label or target[1:])
+        return label or target
+    return SLACK_MARKUP.sub(plain, text)
+
+
+def _person_name(user) -> str | None:
+    if not isinstance(user, dict):
+        return None
+    profile = user.get("profile") if isinstance(user.get("profile"), dict) else {}
+    return (user.get("real_name") or profile.get("real_name") or profile.get("display_name")
+            or user.get("display_name") or user.get("name") or None)
+
+
+def _slack_names(record) -> tuple[dict[str, str], dict[str, str]]:
+    """({user id: name}, {channel id: name}) that a Slack record carries: enrich's users.info and
+    conversations.info copies, a user or channel record itself, or a message's user_profile."""
+    record = record if isinstance(record, dict) else {}
+    payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+    message = record.get("message") if isinstance(record.get("message"), dict) else payload
+    people, channels = {}, {}
+    for user in (record.get("user"), record):
+        if isinstance(user, dict) and str(user.get("id", "")).startswith(("U", "W", "B")) and _person_name(user):
+            people[user["id"]] = _person_name(user)
+    if message.get("user") and _person_name(message.get("user_profile")):
+        people.setdefault(message["user"], _person_name(message["user_profile"]))
+    for channel in (record.get("channel"), record):
+        if isinstance(channel, dict) and str(channel.get("id", "")).startswith(("C", "G")) and channel.get("name"):
+            channels[channel["id"]] = channel["name"]
+    return people, channels
+
+
+def _readable(node: dict, slack: bool, people: dict[str, str], channels: dict[str, str]) -> dict:
+    """The node with a name an agent can read: a message's text without Slack markup, a Slack person or
+    channel named from what the record carries, and every name cut to about NAME_LIMIT characters."""
+    props = dict(node["props"])
+    label = node["label"]
+    if slack and label in ("Person", "Identity") and not props.get("name"):
+        props["name"] = people.get(node["key"].removeprefix("slack:"))
+    if slack and label == "Container" and not props.get("name"):
+        props["name"] = channels.get(node["key"])
+    if label == "Message" and props.get("embed_text"):
+        props["name"] = _slack_text(props["embed_text"], people) if slack else props["embed_text"]
+    if props.get("name"):
+        props["name"] = _shorten(props["name"])
+    return {**node, "props": {k: v for k, v in props.items() if v is not None}}
+
+
 
 
 def _time(value) -> datetime | None:
@@ -206,15 +293,63 @@ class PgWriter:
         # History first: its current fact starts when the change happened, and the mapper's copy of that
         # same fact (stamped with the episode's time) then finds it current and adds nothing.
         nodes, edges = list(attrs["nodes"]) + history_nodes, history + list(attrs["edges"])
-        node_ids = [await self._node(conn, graph, episode, n) for n in nodes]
+        slack = graph.source == "slack"
+        people, channels = _slack_names(episode.record) if slack else ({}, {})
+        if slack:
+            people.update(await self._people(conn, graph, [n["props"].get("embed_text") for n in nodes], people))
+        nodes = [_readable(n, slack, people, channels) for n in nodes]
+        renamed: set[int] = set()
+        node_ids = [await self._node(conn, graph, episode, n, renamed) for n in nodes]
+        if slack:
+            renamed |= await self._rename_slack(conn, graph, node_ids, renamed)
         touched = set(node_ids)
         for edge in edges:
             touched |= await self._edge(conn, graph, episode, edge)
+        if renamed:  # facts Ember wrote earlier (not Graphiti's: extractor_version 0) name the old names
+            await conn.execute(
+                f"""with hit as (select id from graph.edges where src = any($1) and expired_at is null
+                             union select id from graph.edges where dst = any($1) and expired_at is null)
+                    update graph.edges e set fact = {_fact_sql('t.template')}
+                    from hit, graph.nodes s, graph.nodes d, unnest($2::text[], $3::text[]) t(type, template), episodes ep
+                    where e.id = hit.id and s.id = e.src and d.id = e.dst and t.type = e.type
+                      and ep.id = e.episode_id and ep.extractor_version > 0
+                      and e.fact is distinct from {_fact_sql('t.template')}""",
+                sorted(renamed), list(FACTS), list(FACTS.values()))
         if nodes and not attrs.get("deleted"):
             await self._invalidate_missing(conn, graph, episode, nodes[0], edges)
         await conn.executemany("insert into graph.mentions values ($1, $2) on conflict do nothing",
                                [(node_id, episode.id) for node_id in sorted(touched)])
         await self._link(conn, graph.tenant, episode, node_ids)
+
+    async def _people(self, conn, graph: Graph, texts, known: dict[str, str]) -> dict[str, str]:
+        """Names of the Slack users mentioned in texts that an earlier episode named."""
+        ids = {m for text in texts if text for m in MENTION.findall(text)} - set(known)
+        rows = await conn.fetch("select key, name from graph.nodes where graph_id = $1 and label = 'Person'"
+                                " and key = any($2) and name is not null", graph.id, [f"slack:{i}" for i in ids])
+        return {r["key"].removeprefix("slack:"): r["name"] for r in rows}
+
+    async def _rename_slack(self, conn, graph: Graph, node_ids: list[int], renamed: set[int]) -> set[int]:
+        """Names that depend on other nodes, in either load order: a thread is #channel once its channel is
+        named, and a message mentioning a person who just got a name is renamed. Returns the nodes renamed."""
+        changed = {r["id"] for r in await conn.fetch(
+            """update graph.nodes c set name = '#' || ch.name from graph.nodes ch
+                where c.graph_id = $2 and c.label = 'Conversation' and ch.graph_id = c.graph_id
+                  and ch.label = 'Container' and ch.key = split_part(c.key, ':', 1) and ch.name is not null
+                  and (c.id = any($1) or ch.id = any($1)) and c.name is distinct from '#' || ch.name
+                returning c.id""", node_ids, graph.id)}
+        named = [r["key"].removeprefix("slack:") for r in await conn.fetch(
+            "select key from graph.nodes where id = any($1) and label = 'Person'", sorted(renamed))]
+        if named:
+            messages = await conn.fetch(
+                """select id, name, embed_text from graph.nodes where graph_id = $1 and label = 'Message'
+                    and embed_text like any($2) and not deleted""", graph.id, [f"%<@{i}%" for i in named])
+            people = await self._people(conn, graph, [m["embed_text"] for m in messages], {})
+            for message in messages:
+                name = _shorten(_slack_text(message["embed_text"], people))
+                if name != message["name"]:
+                    await conn.execute("update graph.nodes set name = $2 where id = $1", message["id"], name)
+                    changed.add(message["id"])
+        return changed
 
     async def _ensure(self, conn, graph: Graph, label: str, key: str) -> int:
         """The node's id, created as a placeholder if its own episode hasn't loaded yet."""
@@ -228,10 +363,12 @@ class PgWriter:
                select id from graph.nodes where (graph_id, label, key) = ($2, $4, $5) limit 1""",
             node_uuid(graph.group_id, label, key), graph.id, graph.tenant, label, key)
 
-    async def _node(self, conn, graph: Graph, episode, node: dict) -> int:
+    async def _node(self, conn, graph: Graph, episode, node: dict, renamed: set[int]) -> int:
+        """Apply one node by the ordering rules; adds it to renamed when its name changed."""
         node_id = await self._ensure(conn, graph, node["label"], node["key"])
         cur = await conn.fetchrow(
-            "select occurred_at, deleted, props::text as props from graph.nodes where id = $1 for update", node_id)
+            "select occurred_at, deleted, name, props::text as props from graph.nodes where id = $1 for update",
+            node_id)
         at = _time(node.get("occurred_at")) or episode.occurred_at
         newer = cur["occurred_at"] is None or at >= cur["occurred_at"]
         props = dict(node["props"])
@@ -252,13 +389,15 @@ class PgWriter:
         name, embed_text = props.pop("name", None), props.pop("embed_text", None)
         old = json.loads(cur["props"])
         merged = {**old, **props} if newer else {**props, **old}
-        await conn.execute(
+        stored = await conn.fetchval(
             """update graph.nodes set props = $2::jsonb, placeholder = false,
                  name = case when $5 then coalesce($3, name) else coalesce(name, $3) end,
                  embed_text = case when $5 then coalesce($4, embed_text) else coalesce(embed_text, $4) end,
                  occurred_at = case when $5 then $6 else occurred_at end
-               where id = $1""",
+               where id = $1 returning name""",
             node_id, json.dumps(merged), name, embed_text, newer, at)
+        if stored != cur["name"]:
+            renamed.add(node_id)
         return node_id
 
     async def _edge(self, conn, graph: Graph, episode, edge: dict) -> set[int]:
@@ -304,9 +443,9 @@ class PgWriter:
         its fact: a fact names its nodes, so a renamed node changes it. uuid5 of key, so a replay is a no-op. The
         conflict target is the pinned edges_current."""
         await conn.execute(
-            """insert into graph.edges (uuid, graph_id, tenant, type, fact, src, dst, props, valid_at, invalid_at,
-                                        episode_id, invalidated_by)
-               select $1, $2, $3, $4, replace(replace($5, '{src}', coalesce(s.name, s.key)), '{dst}', coalesce(d.name, d.key)),
+            f"""insert into graph.edges (uuid, graph_id, tenant, type, fact, src, dst, props, valid_at, invalid_at,
+                                         episode_id, invalidated_by)
+               select $1, $2, $3, $4, {_fact_sql('$5')},
                       s.id, d.id, $8::jsonb, $9, $10, $11, $12
                  from graph.nodes s, graph.nodes d
                 where s.id = $6 and d.id = $7
