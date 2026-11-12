@@ -28,7 +28,6 @@ export async function GET(request: NextRequest) {
     // Back to Settings, not here: log-in follows `next` with a client-side navigation, which can't
     // follow this route's redirect to github.com
     if (who.reason === "signed-out") return NextResponse.redirect(new URL("/login?next=%2Fsettings", appOrigin(request)));
-    if (who.reason === "no-organization") return NextResponse.redirect(new URL("/organizations", appOrigin(request)));
     return NextResponse.redirect(settingsUrl(request, "forbidden"));
   }
   const config = githubAppConfig();

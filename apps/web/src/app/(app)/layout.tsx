@@ -1,6 +1,7 @@
 // The signed-in app: sidebar on wide screens, top bar on narrow ones.
-// Every page under (app) needs a user who has finished onboarding and belongs
-// to an organization (EMBER-124); the sidebar shows which one and switches.
+// Every page under (app) needs a user who has finished onboarding, and works in
+// one organization (EMBER-124), their personal workspace at least (EMBER-165);
+// the sidebar shows which one and switches.
 
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -27,7 +28,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
           <div className={styles.workspace}>
             <OrgSwitcher
-              organizations={user.memberships.map(({ id, name, slug }) => ({ id, name, slug }))}
+              organizations={user.memberships.map(({ id, name, slug, personal }) => ({ id, name, slug, personal }))}
               activeId={user.organization.id}
             />
           </div>

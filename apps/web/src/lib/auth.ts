@@ -1,7 +1,8 @@
 // Server-side auth (EMBER-51, ADR 0006): email + password today.
 // GitHub OAuth (EMBER-12) is added later as a socialProviders entry, without
 // changing how sign-in works. Organizations (EMBER-124) come from Better Auth's
-// organization plugin; each one owns a tenant (lib/organizations.ts).
+// organization plugin; each one owns a tenant (lib/organizations.ts). Each user
+// also gets a personal workspace, an organization of their own (EMBER-165).
 //
 // The CLI signs in through the browser (EMBER-81): `ember auth login` asks for
 // a device code, the user approves it on /device, and the CLI receives a
@@ -14,7 +15,16 @@ import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
 import { bearer, deviceAuthorization, organization } from "better-auth/plugins";
 import { closeDatabase, createDatabase, DEFAULT_DATABASE_URL } from "./db.ts";
-import { activeMembership, listMemberships, tenantHasData, tenantProblem, type OrgAdapter } from "./organizations.ts";
+import {
+  activeMembership,
+  ensurePersonalWorkspace,
+  isPersonalOrganization,
+  listMemberships,
+  PERSONAL_TENANT_PREFIX,
+  tenantHasData,
+  tenantProblem,
+  type OrgAdapter,
+} from "./organizations.ts";
 import { sourcesSchema } from "./sources.ts";
 
 export const MIN_PASSWORD_LENGTH = 8;
@@ -54,10 +64,18 @@ export const userFields = {
  * Columns Ember adds to the plugin's `organization` table. `tenant` starts as
  * the slug and changes only when an Ember admin links the organization to a
  * tenant that already holds data (linkTenant). Unique: one organization per tenant.
+ * `personal` marks a user's personal workspace (EMBER-165); only
+ * ensurePersonalWorkspace sets it.
  */
 export const organizationFields = {
   tenant: { type: "string", required: true, unique: true, input: false },
+  personal: { type: "boolean", required: false, defaultValue: false, input: false },
 } as const;
+
+/** Refuses an organization action on a personal workspace (EMBER-165). */
+function refusePersonal(organization: Record<string, unknown>, message: string) {
+  if (organization.personal) throw APIError.fromStatus("FORBIDDEN", { message });
+}
 
 /** Invite links are sent by hand for now, so they last a week (the plugin's default is 48 hours). */
 export const INVITATION_EXPIRES_IN = 60 * 60 * 24 * 7;
@@ -81,6 +99,19 @@ export function authOptions(settings: AuthSettings = {}) {
       minPasswordLength: MIN_PASSWORD_LENGTH,
     },
     user: { additionalFields: userFields },
+    databaseHooks: {
+      user: {
+        create: {
+          // Runs after sign-up commits. If it fails, the next session load creates it (listMemberships).
+          after: async (user: { id: string }, ctx: { context: { adapter: unknown } } | null) => {
+            if (!ctx) return;
+            await ensurePersonalWorkspace(ctx.context.adapter as OrgAdapter, user.id).catch((error: Error) =>
+              console.warn(`[auth] personal workspace for ${user.id} not created at sign-up: ${error.message}`),
+            );
+          },
+        },
+      },
+    },
     // Count requests in the database (table rateLimit), not in this process's
     // memory, so every copy of the app shares one count (EMBER-80). Better
     // Auth limits only in production; sign-in and sign-up allow 3 per 10 s per IP.
@@ -94,6 +125,9 @@ export function authOptions(settings: AuthSettings = {}) {
           const slug = String(ctx.body?.slug ?? "");
           const problem = tenantProblem(slug);
           if (problem) throw APIError.fromStatus("BAD_REQUEST", { message: problem });
+          if (slug.startsWith(PERSONAL_TENANT_PREFIX)) {
+            throw APIError.fromStatus("BAD_REQUEST", { message: `Slugs starting with ${PERSONAL_TENANT_PREFIX} are reserved. Pick another.` });
+          }
           const adapter = ctx.context.adapter as unknown as OrgAdapter;
           const holder = await adapter.findOne({ model: "organization", where: [{ field: "tenant", value: slug }] });
           if (holder || (await tenantHasData(database, slug))) {
@@ -102,6 +136,13 @@ export function authOptions(settings: AuthSettings = {}) {
         }
         if (ctx.path === "/organization/update" && ctx.body?.data?.slug !== undefined) {
           throw APIError.fromStatus("BAD_REQUEST", { message: "The slug can't change: it names the organization's tenant." });
+        }
+        // Leave runs no organization hook, and delete clears the active organization before its hook runs
+        if ((ctx.path === "/organization/leave" || ctx.path === "/organization/delete") && typeof ctx.body?.organizationId === "string") {
+          const adapter = ctx.context.adapter as unknown as OrgAdapter;
+          if (await isPersonalOrganization(adapter, ctx.body.organizationId)) {
+            throw APIError.fromStatus("FORBIDDEN", { message: "Your personal workspace can't be left or deleted." });
+          }
         }
       }),
     },
@@ -112,6 +153,9 @@ export function authOptions(settings: AuthSettings = {}) {
         schema: { organization: { additionalFields: organizationFields } },
         organizationHooks: {
           beforeCreateOrganization: async ({ organization }) => ({ data: { ...organization, tenant: organization.slug } }),
+          beforeCreateInvitation: async ({ organization }) => refusePersonal(organization, "Nobody can be invited to a personal workspace."),
+          beforeAddMember: async ({ organization }) => refusePersonal(organization, "A personal workspace has one member."),
+          beforeRemoveMember: async ({ organization }) => refusePersonal(organization, "Your personal workspace can't be left."),
         },
       }),
       // Codes last 30 minutes and the CLI polls every 5 s (the plugin's defaults).
@@ -148,7 +192,7 @@ export interface CliUser {
   email: string;
   /** Every organization the user belongs to. */
   organizations: CliOrganization[];
-  /** The slug of the one this session works in, or null when the user has none. */
+  /** The slug of the one this session works in. */
   active: string | null;
 }
 
