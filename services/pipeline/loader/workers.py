@@ -2,6 +2,10 @@
 
     DATABASE_URL=postgresql://... python -m loader extract
     DATABASE_URL=postgresql://... NEO4J_URI=bolt://localhost:7687 NEO4J_PASSWORD=... python -m loader load
+    DATABASE_URL=postgresql://... GRAPH_STORE=postgres python -m loader load
+
+GRAPH_STORE picks load's graph: neo4j (the default) or postgres (pg_writer.py, EMBER-164), which writes
+graph.* in the same transaction that stamps loaded_at, and also takes each graph's own advisory lock.
 
 Both claim rows like the enrich workers until the job queue lands (docs/ingestion/architecture.md,
 "Interim: claiming without the job queue"): LISTEN on a channel (extract: source_records, load:
@@ -46,7 +50,8 @@ from . import db
 from .db import Episode, SourceRecord
 from .extract import EXTRACTED, EXTRACTOR_VERSION, SourceRow, extract, graph_records
 from .mappers import Reject, Skip
-from .records import ordering_time
+from .pg_writer import PgWriter
+from .records import episode_uuid, ordering_time
 
 LOG = logging.getLogger("loader")
 POLL_SECONDS = 30.0
@@ -260,7 +265,8 @@ class ExtractWorker(Worker):
             for warning in draft.warnings:
                 LOG.warning("source_records %s: %s", row.id, warning)
 
-            values = dict(key=draft.key, tenant=draft.tenant, source=draft.source, kind=draft.kind,
+            values = dict(key=draft.key, uuid=episode_uuid(draft.key), name=draft.key,
+                          tenant=draft.tenant, source=draft.source, kind=draft.kind,
                           occurred_at=draft.occurred_at, text=draft.text, attrs=draft.attrs,
                           source_record_id=draft.source_record_id, extractor_version=EXTRACTOR_VERSION)
             insert = pg_insert(Episode).values(**values)
@@ -348,15 +354,27 @@ class LoadWorker(Worker):
                 select(func.pg_try_advisory_xact_lock(func.hashtext(f"{tenant}_{source}"))))
             if not locked:
                 return False
-            stmt = (select(Episode.id, Episode.key, Episode.occurred_at, Episode.attrs, Episode.updated_at)
+            stmt = (select(Episode.id, Episode.key, Episode.source, Episode.kind, Episode.occurred_at, Episode.attrs,
+                           Episode.updated_at)
                     .where(Episode.tenant == tenant, Episode.source == source, Episode.loaded_at.is_(None))
                     .order_by(Episode.occurred_at, Episode.id).limit(self.batch))
+            if isinstance(self.writer, PgWriter):  # the Postgres writer reads each record's scope and changelog
+                stmt = stmt.add_columns(SourceRecord.object_id, SourceRecord.record).join_from(
+                    Episode, SourceRecord, SourceRecord.id == Episode.source_record_id, isouter=True)
             if self.given_up:
                 stmt = stmt.where(Episode.id.not_in(list(self.given_up)))
             episodes = (await session.execute(stmt)).all()
             if not episodes:
                 return False
-            loaded = await asyncio.to_thread(self._write, episodes)
+            if isinstance(self.writer, PgWriter):
+                # On this session's connection, in this transaction: the graph commits with loaded_at.
+                conn = (await (await session.connection()).get_raw_connection()).driver_connection
+                loaded, failed = await self.writer.write(conn, tenant, source, episodes)
+                for episode in episodes:
+                    if episode.id in failed:
+                        self._give_up(episode, failed[episode.id])
+            else:
+                loaded = await asyncio.to_thread(self._write, episodes)
             if loaded:
                 # Only rows unchanged since the read: extract may have re-extracted one meanwhile
                 # (clearing loaded_at), and that newer version still has to be written.
@@ -495,11 +513,18 @@ def main(argv: list[str]) -> int:
     except ValueError:
         print("CONCURRENCY and LOAD_BATCH must be whole numbers", file=sys.stderr)
         return 2
+    store = os.environ.get("GRAPH_STORE", "neo4j")
+    if store not in ("neo4j", "postgres"):
+        print("GRAPH_STORE must be neo4j or postgres", file=sys.stderr)
+        return 2
 
     async def start() -> None:
         if args.stage == "extract":
             worker: Worker = ExtractWorker(database_url, concurrency=concurrency)
         else:
+            if store == "postgres":
+                await serve(LoadWorker(database_url, PgWriter(), concurrency=concurrency, batch=batch), args.once)
+                return
             writer = neo4j_writer()  # the caller owns the writer, so tests can reuse one across workers
             try:
                 await serve(LoadWorker(database_url, writer, concurrency=concurrency, batch=batch), args.once)

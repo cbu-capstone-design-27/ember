@@ -14,6 +14,11 @@ def node_uuid(group_id: str, label: str, key: str) -> str:
     return str(uuid.uuid5(_NAMESPACE, f"{group_id}|{label}|{key}"))
 
 
+def episode_uuid(key: str) -> str:
+    """episodes.uuid (EMBER-164): uuid5 of the episode key, as the migration's backfill computes it."""
+    return str(uuid.uuid5(_NAMESPACE, key))
+
+
 def ordering_time(value: datetime) -> str:
     """A source time as the fixed-width UTC string stored on nodes and edges, so that comparing two
     of them as strings, which Neo4j does, orders them by time."""

@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, Integer, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -52,6 +52,10 @@ class Episode(Base):
     extractor_version: Mapped[int] = mapped_column(Integer)
     loaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # EMBER-164: Graphiti's episode uuid (records.episode_uuid) and name (= key); the Postgres load sets graph_id
+    uuid: Mapped[str | None] = mapped_column(UUID(as_uuid=False), unique=True)
+    graph_id: Mapped[int | None] = mapped_column(BigInteger)
+    name: Mapped[str | None] = mapped_column(Text)
 
 
 def async_url(database_url: str):

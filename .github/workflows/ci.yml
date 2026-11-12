@@ -204,7 +204,8 @@ jobs:
           "$RUNNER_TEMP/embed-venv/bin/pip" install -q -r services/embed/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/embed-venv/bin/python3" services/embed/test_embed.py
       # EMBER-85: on the pg container and dbmate from "Postgres migrations match the ingestion doc". The
-      # writer is in memory here; the graph side runs against Neo4j when NEO4J_TEST_URI is set (README)
+      # writer is in memory here; the graph side runs against Neo4j when NEO4J_TEST_URI is set (README).
+      # test_pg_writer (EMBER-164) loads into the Postgres graph tables on the same container
       - name: Pipeline loader against Postgres
         working-directory: services/pipeline
         env:
@@ -214,7 +215,7 @@ jobs:
           # A venv, because the runner's system Python refuses pip installs (PEP 668)
           python3 -m venv "$RUNNER_TEMP/pipeline-venv"
           "$RUNNER_TEMP/pipeline-venv/bin/pip" install -q -r requirements.txt
-          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/pipeline-venv/bin/python3" -m unittest loader.test_pg_load -v
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/pipeline-venv/bin/python3" -m unittest loader.test_pg_load loader.test_pg_writer -v
       - name: Slack ingestion webhook contract
         run: python3 services/slack-ingestion/test_webhook.py
       - name: Slack ingestion local pull contract
