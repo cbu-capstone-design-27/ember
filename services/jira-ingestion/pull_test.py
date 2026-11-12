@@ -504,27 +504,29 @@ def iter_issue_keys(origin: str, project: str, email: str, api_token: str, excha
     Each page asks for keys only. The following GET /issue/{key} is the
     object that gets emitted, so the description is the full issue field.
     """
+    return search_issue_keys(
+        origin, f"project = {project} ORDER BY key ASC", _headers(email, api_token, json_body=True), exchange
+    )
+
+
+def search_issue_keys(origin: str, jql: str, headers: dict[str, str], exchange) -> Iterator[str]:
+    """iter_issue_keys for any JQL and auth, e.g. enrich's reconcile with a 3LO bearer token."""
     url = f"{origin}/rest/api/3/search/jql"
     next_token: str | None = None
     pages = 0
     while True:
         pages += 1
         if pages > MAX_PAGES:
-            raise PullError(f"stopped after {MAX_PAGES} search pages for project {project}")
+            raise PullError(f"stopped after {MAX_PAGES} search pages for {jql}")
         payload: dict = {
-            "jql": f"project = {project} ORDER BY key ASC",
+            "jql": jql,
             "maxResults": PAGE_SIZE,
             "fields": ["key"],
         }
         if next_token:
             payload["nextPageToken"] = next_token
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        response = exchange(
-            "POST",
-            url,
-            _headers(email, api_token, json_body=True),
-            body,
-        )
+        response = exchange("POST", url, headers, body)
         page = _read_json(response, f"POST {url}")
         if not isinstance(page, dict):
             raise PullError(f"expected a JSON object from {url}")
@@ -543,10 +545,10 @@ def iter_issue_keys(origin: str, project: str, email: str, api_token: str, excha
         token = page.get("nextPageToken")
         if not isinstance(token, str) or not token:
             if page.get("isLast") is False:
-                raise PullError(f"search page for {project} was not last and had no nextPageToken")
+                raise PullError(f"search page for {jql} was not last and had no nextPageToken")
             return
         if token == next_token:
-            raise PullError(f"search pagination repeated nextPageToken for {project}")
+            raise PullError(f"search pagination repeated nextPageToken for {jql}")
         next_token = token
 
 
@@ -568,6 +570,15 @@ def get_json(url: str, headers: dict[str, str], exchange, *, optional: bool = Fa
         print(f"skipped optional {response.status} {url}", file=sys.stderr)
         return None
     return _read_json(response, f"GET {url}")
+
+
+def get_paged_items(origin: str, path: str, field: str, headers: dict[str, str], exchange) -> list[dict]:
+    """Every item of a startAt-paged list (an issue's comments or changelog), pages in order."""
+    build = lambda start: paged_url(origin, path, start)
+    first = _as_dict(get_json(build(0), headers, exchange), build(0))
+    pages = [first] + [_as_dict(get_json(build(start), headers, exchange), build(start))
+                       for start in remaining_starts(first, build(0))]
+    return _items_from_pages(pages, field, build)
 
 
 def _as_dict(payload, url: str) -> dict:

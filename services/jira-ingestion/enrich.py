@@ -14,6 +14,11 @@ notification (the payload is ignored), and every POLL_SECONDS. Each row is claim
 (default 4) at a time. What each event becomes and what is fetched follows
 docs/ingestion/jira-webhooks.md. SIGINT or SIGTERM stops claiming, lets in-flight rows finish,
 and exits 0.
+
+Reconcile on connect (EMBER-167, jira-webhooks.md "Reconcile on connect"): at start and on every wake,
+when none is running, it backfills each connected site with an api credential whose
+`reconcile:<site>` cursor isn't `done`, one at a time. RECONCILE_SINCE (an ISO date) limits it to
+issues updated since.
 """
 
 from __future__ import annotations
@@ -28,21 +33,24 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from atlassian import OAuthClient, SiteCredentials, api_origin, bearer_headers
-from models import RateLimit, RawEvent, SourceRecord
+from models import Cursor, Installation, RateLimit, RawEvent, SourceCredential, SourceRecord
 from pull_test import (
     PullError,
     Response,
+    _bucket_total,
     exchange_with_retry,
     get_json,
+    get_paged_items,
     is_rate_limited,
     issue_url,
     rate_limit_wait,
+    search_issue_keys,
     throttle_seconds,
     urllib_exchange,
 )
@@ -64,6 +72,7 @@ PAYLOAD_KEY = {
     "issue_property": "property",
 }
 COMMENT_ISSUE = re.compile(r"/issue/(\d+)/comment/")
+DONE = "done"   # a reconcile cursor's position once its stream has been read to the end
 
 log = logging.getLogger("enrich:jira")
 
@@ -132,6 +141,39 @@ def describe(body: dict) -> Optional[tuple[str, str, str, list[str]]]:
     return kind, object_id, _entity_time(body) or str(body["timestamp"]), issue_ids
 
 
+def _millis(jira_time: str) -> int:
+    return int(datetime.strptime(jira_time, JIRA_TIME).timestamp() * 1000)
+
+
+def issue_bodies(origin: str, key: str, headers: dict[str, str], exchange) -> list[dict]:
+    """One issue for reconcile: the issue with its whole changelog, then its comments, each shaped as the
+    webhook body for its latest change (jira:issue_updated, comment_updated), so describe() reads it."""
+    issue = get_json(issue_url(origin, key), headers, exchange)
+    # As expand=changelog nests it, but every page: GET /issue/{key}/changelog
+    issue["changelog"] = {"histories": get_paged_items(origin, f"/rest/api/3/issue/{key}/changelog", "values", headers, exchange)}
+    bodies = [{"webhookEvent": "jira:issue_updated", "timestamp": _millis(issue["fields"]["updated"]), "issue": issue}]
+    if _bucket_total(issue, "comment") != 0:
+        reduced = {"id": issue["id"], "key": issue["key"], "self": issue["self"],
+                   "fields": {"summary": issue["fields"].get("summary")}}   # what a comment webhook carries
+        bodies += [{"webhookEvent": "comment_updated", "timestamp": _millis(comment["updated"]), "comment": comment,
+                    "issue": reduced}
+                   for comment in get_paged_items(origin, f"/rest/api/3/issue/{key}/comment", "comments", headers, exchange)]
+    return bodies
+
+
+def reconcile_since(value: str) -> Optional[str]:
+    """RECONCILE_SINCE, an ISO date, as a JQL date. Empty = all history."""
+    return datetime.fromisoformat(value.strip()[:10]).strftime("%Y-%m-%d") if value.strip() else None
+
+
+def cursor_upsert(tenant: str, stream: str, position: str):
+    statement = insert(Cursor).values(source=SOURCE, tenant=tenant, stream=stream, position=position)
+    return statement.on_conflict_do_update(
+        index_elements=["source", "tenant", "stream"],
+        set_={"position": statement.excluded.position, "updated_at": func.now()},
+    )
+
+
 def make_engine(database_url: str, pool_size: int) -> AsyncEngine:
     """Async engine on asyncpg for a postgres:// or postgresql:// DATABASE_URL, sslmode included."""
     url = make_url(database_url).set(drivername="postgresql+asyncpg")
@@ -155,6 +197,7 @@ class Worker:
         concurrency: int = DEFAULT_CONCURRENCY,
         poll_seconds: float = POLL_SECONDS,
         channel: str = DEFAULT_CHANNEL,
+        reconcile_since: Optional[str] = None,
     ) -> None:
         self.engine = engine
         self.session = async_sessionmaker(engine, expire_on_commit=False)
@@ -169,6 +212,9 @@ class Worker:
         # ponytail: a failing row is skipped until the next poll and then retried, forever. The job
         # queue's dead-letter replaces this.
         self.failed: set[int] = set()
+        self.reconcile_since = reconcile_since   # a JQL date, e.g. 2026-01-01; None = all history
+        self.reconciling: Optional[asyncio.Task] = None
+        self.failed_accounts: set[str] = set()   # sites whose reconcile failed, retried after the next poll
 
     def stop(self) -> None:
         if not self.stopping.is_set():
@@ -191,9 +237,12 @@ class Worker:
                         await asyncio.wait_for(self.wake.wait(), self.poll_seconds)
                     except asyncio.TimeoutError:
                         self.failed.clear()
+                        self.failed_accounts.clear()
                     self.wake.clear()
+                    if self.reconciling is None or self.reconciling.done():
+                        self.reconciling = asyncio.create_task(self.reconcile_pending())
                     await self._drain()
-                await asyncio.gather(*list(self.tasks))
+                await asyncio.gather(*self.tasks, *([self.reconciling] if self.reconciling else []))
                 await listener.remove_listener(self.channel, self._notified)
         finally:
             for sig in (signal.SIGINT, signal.SIGTERM):
@@ -255,6 +304,8 @@ class Worker:
         described = describe(body)
         if described is not None:
             kind, object_id, version, issue_ids = described
+            if row.origin == "reconcile":
+                issue_ids = []   # reconcile writes each issue before its comments
             record: dict = {"payload": body}
             if version.startswith("deleted:"):
                 record["deleted"] = True
@@ -287,27 +338,143 @@ class Worker:
         return found is not None
 
     async def _fetch(self, row: RawEvent, issue_id: str) -> Optional[dict]:
-        """GET one issue through pull_test's get_json and exchange_with_retry (429, 5xx), with every
-        attempt waiting on and updating the rate_limits row for this site. A 403 or 404 returns None."""
+        """GET one issue through pull_test's get_json, rate limited and retried as _limited_exchange says.
+        A 403 or 404 returns None."""
         site = row.account_id
         credential = await self.credentials.fresh(site, tenant=row.tenant) if site else None
         if credential is None:
             raise PullError(f"no Connect Jira token for site {site} and tenant {row.tenant}")
         url = issue_url(api_origin(credential["cloud_id"]), issue_id)
         headers = bearer_headers(credential["access_token"])
+        return await asyncio.to_thread(get_json, url, headers, self._limited_exchange(row.tenant, site), optional=True)
+
+    def _limited_exchange(self, tenant: str, site: str):
+        """pull_test's exchange_with_retry (429, 5xx) for a thread, with every attempt waiting on and
+        updating the rate_limits row for this site."""
         bucket = f"https://{site}"
         loop = asyncio.get_running_loop()
 
         def limited(method: str, url: str, headers: dict[str, str], body: Optional[bytes]) -> Response:
-            asyncio.run_coroutine_threadsafe(self._wait_turn(row.tenant, bucket), loop).result()
+            asyncio.run_coroutine_threadsafe(self._wait_turn(tenant, bucket), loop).result()
             response = self.exchange(method, url, headers, body)
-            asyncio.run_coroutine_threadsafe(self._record_limit(row.tenant, bucket, response), loop).result()
+            asyncio.run_coroutine_threadsafe(self._record_limit(tenant, bucket, response), loop).result()
             return response
 
         def retrying(method: str, url: str, headers: dict[str, str], body: Optional[bytes]) -> Response:
             return exchange_with_retry(limited, method, url, headers, body)
 
-        return await asyncio.to_thread(get_json, url, headers, retrying, optional=True)
+        return retrying
+
+    async def reconcile_pending(self) -> None:
+        """Backfill every connected site whose reconcile hasn't finished (ADR 0010), one at a time.
+        A failed one is logged and retried after the next poll."""
+        # ponytail: one site and one request at a time. Run them concurrently if a backfill is too slow.
+        try:
+            async with self.session() as session:
+                sites = (await session.execute(
+                    select(Installation.account_id, Installation.tenant)
+                    .join(SourceCredential, (SourceCredential.source == Installation.source)
+                          & (SourceCredential.account_id == Installation.account_id) & (SourceCredential.kind == "api"))
+                    .where(Installation.source == SOURCE, Installation.disconnected_at.is_(None),
+                           ~exists().where(Cursor.source == SOURCE, Cursor.tenant == Installation.tenant,
+                                           Cursor.stream == "reconcile:" + Installation.account_id,
+                                           Cursor.position == DONE))
+                    .order_by(Installation.added_at)
+                )).all()
+        except Exception:
+            log.exception("reconcile: listing sites failed; retrying on the next wake")
+            return
+        for site, tenant in sites:
+            if self.stopping.is_set():
+                return
+            if site in self.failed_accounts:
+                continue
+            try:
+                await self.reconcile_site(tenant, site)
+            except Exception:
+                self.failed_accounts.add(site)
+                log.exception("reconcile %s failed; retrying after the next poll", site)
+
+    async def reconcile_site(self, tenant: str, site: str) -> None:
+        """Every project in the site's stored JQL, then `reconcile:<site>` = done."""
+        credential = await self.credentials.fresh(site, tenant=tenant)
+        if credential is None:
+            return
+        projects = re.findall(r"\d+", credential["jql"])   # project in (<ids>), from Connect Jira
+        log.info("reconcile %s (%s): starting, projects %s", site, tenant, ", ".join(projects))
+        for project in projects:
+            if not await self.reconcile_project(tenant, site, project):
+                return
+        async with self.engine.begin() as conn:
+            await conn.execute(cursor_upsert(tenant, f"reconcile:{site}", DONE))
+        log.info("reconcile %s (%s): done", site, tenant)
+
+    async def reconcile_project(self, tenant: str, site: str, project: str) -> bool:
+        """The project's issues by key from the stream's cursor (the last key written), each with its changelog
+        and comments. The cursor moves with each issue's rows. False when stopping or disconnected."""
+        stream = f"reconcile:{site}:{project}"
+        async with self.engine.connect() as conn:
+            position = await conn.scalar(select(Cursor.position).where(
+                Cursor.source == SOURCE, Cursor.tenant == tenant, Cursor.stream == stream))
+        if position == DONE:
+            return True
+        jql = f"project = {project}"
+        if position:
+            jql += f' AND key > "{position}"'
+        if self.reconcile_since:
+            jql += f' AND updated >= "{self.reconcile_since}"'
+        jql += " ORDER BY key ASC"
+        exchange = self._limited_exchange(tenant, site)
+        credential = await self.credentials.fresh(site, tenant=tenant)
+        if credential is None:
+            return False
+        # An access token lasts an hour. If it expires mid-search, the 401 fails the site until the next poll,
+        # which resumes from the cursor with a fresh one.
+        keys = search_issue_keys(api_origin(credential["cloud_id"]), jql,
+                                 bearer_headers(credential["access_token"], json_body=True), exchange)
+        written = 0
+        while (key := await asyncio.to_thread(next, keys, None)) is not None:
+            if self.stopping.is_set():
+                return False
+            credential = await self.credentials.fresh(site, tenant=tenant)
+            if credential is None:
+                log.info("reconcile %s: disconnected, stopped", site)
+                return False
+            bodies = await asyncio.to_thread(issue_bodies, api_origin(credential["cloud_id"]), key,
+                                             bearer_headers(credential["access_token"]), exchange)
+            if not await self.store(tenant, site, bodies, stream, key):
+                log.info("reconcile %s: disconnected, stopped", site)
+                return False
+            written += len(bodies)
+            log.info("%s: %s, %d objects so far", stream, key, written)
+        async with self.engine.begin() as conn:
+            await conn.execute(cursor_upsert(tenant, stream, DONE))
+        return True
+
+    async def store(self, tenant: str, site: str, bodies: list[dict], stream: str, position: str) -> bool:
+        """Insert the bodies as raw_events (origin reconcile) and move the cursor, in one transaction, only while
+        the site is still connected. False when it isn't."""
+        received = datetime.now(timezone.utc)
+        rows = []
+        for body in bodies:
+            raw = RawEvent(envelope={"type": SOURCE, "body": body}, received_at=received)
+            _kind, object_id, version, _issues = describe(body)
+            rows.append({"source": SOURCE, "delivery_id": f"{object_id}@{version}", "account_id": site,
+                         "tenant": tenant, "event_name": body["webhookEvent"], "origin": "reconcile",
+                         "envelope": raw.envelope, "occurred_at": ordering_value(raw)})
+        async with self.engine.begin() as conn:
+            # Shared lock: a disconnect waits for this commit, and nothing is written after it
+            connected = await conn.scalar(
+                select(Installation.account_id)
+                .where(Installation.source == SOURCE, Installation.account_id == site,
+                       Installation.tenant == tenant, Installation.disconnected_at.is_(None))
+                .with_for_update(read=True))
+            if connected is None:
+                return False
+            if rows:
+                await conn.execute(insert(RawEvent).values(rows).on_conflict_do_nothing(index_elements=["source", "delivery_id"]))
+            await conn.execute(cursor_upsert(tenant, stream, position))
+        return True
 
     @staticmethod
     def _limit_key(tenant: str, bucket: str):
@@ -358,6 +525,11 @@ def main(exchange=urllib_exchange) -> int:
     except (CredentialError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 2
+    try:
+        since = reconcile_since(os.environ.get("RECONCILE_SINCE", ""))
+    except ValueError:
+        print("RECONCILE_SINCE must be an ISO date, e.g. 2026-01-01", file=sys.stderr)
+        return 2
     client = OAuthClient.from_env()
     if ring is None or client is None:
         print("SOURCE_CREDENTIALS_API_KEYS and the Atlassian app's JIRA_OAUTH_CLIENT_ID and "
@@ -372,6 +544,7 @@ def main(exchange=urllib_exchange) -> int:
             await Worker(
                 engine, credentials=SiteCredentials(engine, ring, client, exchange=exchange), exchange=exchange,
                 concurrency=concurrency, channel=os.environ.get("RAW_EVENTS_CHANNEL", "").strip() or DEFAULT_CHANNEL,
+                reconcile_since=since,
             ).run()
         finally:
             await engine.dispose()

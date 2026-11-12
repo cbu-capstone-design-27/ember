@@ -531,6 +531,8 @@ export async function connectSite(
        set key_id = excluded.key_id, ciphertext = excluded.ciphertext, updated_at = now()`,
     [SOURCE, site.host, keyId, ciphertext],
   );
+  // Wake enrich:jira to backfill the site (EMBER-167). connectAccount's hand-off notified before this credential existed
+  await pool.query("select pg_notify('raw_events', $1)", [SOURCE]);
   const stale = (previous?.webhook_ids ?? []).filter((id) => id !== webhookId);
   if (stale.length > 0) {
     // Best effort: another user's webhook may not be ours to delete, and it lapses within 30 days

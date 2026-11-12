@@ -96,8 +96,11 @@ class Atlassian:
     first issue GETs, delay slows each issue GET, and token_error fails every refresh with that error."""
 
     def __init__(self, *, delay: float = 0.0, first: list[Response] | None = None,
-                 token_error: str | None = None, refresh_status: int = 200) -> None:
+                 token_error: str | None = None, refresh_status: int = 200, hold: str | None = None) -> None:
         self.delay = delay
+        self.hold = hold   # an issue key whose GET blocks until release is set
+        self.holding = threading.Event()
+        self.release = threading.Event()
         self.first = list(first or [])
         self.token_error = token_error
         self.refresh_status = refresh_status
@@ -117,8 +120,26 @@ class Atlassian:
                 "expires_in": 3600, "scope": "read:jira-work offline_access"}).encode())
         if method == "PUT" and url == f"{API}/rest/api/3/webhook/refresh":
             return Response(self.refresh_status, {}, b'{"expirationDate": "2026-12-05T09:17:00.000+0000"}')
+        if not headers.get("Authorization", "").startswith("Bearer access-"):
+            return Response(401, {}, b'{"message": "unexpected call"}')
+        if method == "POST" and url == f"{API}/rest/api/3/search/jql":
+            if self.first:
+                return self.first.pop(0)
+            return self.search(json.loads(body))
+        match = re.fullmatch(re.escape(API) + r"/rest/api/3/issue/(PHO-\d+)(/changelog|/comment)?\?.*", url)
+        if method == "GET" and match:
+            issue = RECONCILE_ISSUES[match.group(1)]
+            if match.group(2) == "/changelog":
+                return page_of("values", [{"id": f"{issue['id']}1", "created": issue["fields"]["updated"],
+                                           "items": [{"field": "status", "toString": "Done"}]}])
+            if match.group(2) == "/comment":
+                return page_of("comments", [c for c in COMMENTS if f"/issue/{issue['id']}/comment/" in c["self"]])
+            if match.group(1) == self.hold:
+                self.holding.set()
+                self.release.wait(10)
+            return Response(200, {}, json.dumps(issue).encode())
         match = re.fullmatch(re.escape(API) + r"/rest/api/3/issue/(\d+)\?.*", url)
-        if method == "GET" and match and headers.get("Authorization", "").startswith("Bearer access-"):
+        if method == "GET" and match:
             time.sleep(self.delay)
             if self.first:
                 return self.first.pop(0)
@@ -130,6 +151,37 @@ class Atlassian:
 
     def urls(self) -> list[str]:
         return [f"{call.method} {call.url}" for call in self.calls]
+
+    def searches(self) -> list[str]:
+        return [json.loads(call.body)["jql"] for call in self.calls if call.url.endswith("/search/jql")]
+
+    @staticmethod
+    def search(payload: dict) -> Response:
+        """Keys of RECONCILE_ISSUES for the JQL reconcile writes: project, key >, updated >=, by key."""
+        jql = payload["jql"]
+        after = re.search(r'key > "PHO-(\d+)"', jql)
+        since = re.search(r'updated >= "([\d-]+)"', jql)
+        assert jql.startswith("project = 10000 ") and jql.endswith(" ORDER BY key ASC"), jql
+        keys = [key for key, issue in RECONCILE_ISSUES.items()
+                if (not after or int(key[4:]) > int(after.group(1)))
+                and (not since or issue["fields"]["updated"][:10] >= since.group(1))]
+        start = int(payload.get("nextPageToken") or 0)
+        page = {"issues": [{"key": key} for key in keys[start:start + 5]], "isLast": start + 5 >= len(keys)}
+        if not page["isLast"]:
+            page["nextPageToken"] = str(start + 5)
+        return Response(200, {}, json.dumps(page).encode())
+
+
+def page_of(field: str, items: list[dict]) -> Response:
+    return Response(200, {}, json.dumps({"startAt": 0, "maxResults": 100, "total": len(items), "isLast": True,
+                                         field: items}).encode())
+
+
+# The site's project 10000 (PHO) for reconcile: its first 20 issues by key, and the comments on them
+RECONCILE_ISSUES = {issue["key"]: issue for issue in sorted(ISSUES.values(), key=lambda i: int(i["key"][4:]))
+                    if int(issue["key"][4:]) <= 20}
+RECONCILE_COMMENTS = [c for c in COMMENTS
+                      if enrich.COMMENT_ISSUE.search(c["self"]).group(1) in {i["id"] for i in RECONCILE_ISSUES.values()}]
 
 
 async def connect_site(engine, *, site: str = SITE, tenant: str = TENANT, expires_at: float | None = None,
@@ -188,7 +240,10 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         self.engine = enrich.make_engine(self.url, pool_size=10)
         async with self.engine.begin() as conn:
             await conn.execute(text(
-                "truncate raw_events, source_records, rate_limits, installations restart identity cascade"))
+                "truncate raw_events, source_records, rate_limits, cursors, installations restart identity cascade"))
+            # Reconciled already, so these tests see only their own rows; the reconcile tests delete this
+            await conn.execute(text("insert into cursors (source, tenant, stream, position)"
+                                    " values ('jira', :t, :s, 'done')"), {"t": TENANT, "s": f"reconcile:{SITE}"})
         await connect_site(self.engine)   # photon's site, connected by TENANT, with an hour left on its token
 
     async def asyncTearDown(self):
@@ -226,6 +281,25 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         await self.wait_for("select count(*) = 0 from raw_events where enriched_at is null")
         worker.stop()
         await asyncio.wait_for(task, 10)
+
+    async def reconcile(self, stub: Atlassian, **kwargs) -> None:
+        """Run the worker until the site's reconcile is done and every row it wrote is enriched."""
+        worker = self.worker(stub, **kwargs)
+        task = asyncio.create_task(worker.run())
+        try:
+            await self.wait_for(f"select exists (select 1 from cursors where stream = 'reconcile:{SITE}' and position = 'done')"
+                                " and not exists (select 1 from raw_events where enriched_at is null)", timeout=20)
+        finally:
+            worker.stop()
+            await asyncio.wait_for(task, 10)
+
+    async def forget_reconcile(self) -> None:
+        """As connected now: the site's reconcile hasn't run."""
+        async with self.engine.begin() as conn:
+            await conn.execute(text("delete from cursors"))
+
+    async def reconciled(self) -> int:
+        return await self.scalar("select count(*) from raw_events where origin = 'reconcile'")
 
     async def test_issue_and_comment_events_become_source_records(self):
         issue = ISSUES["10001"]
@@ -364,6 +438,93 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         got = await asyncio.gather(*(credentials.fresh(SITE, tenant=TENANT) for _ in range(4)))
         self.assertEqual(stub.refreshes, 1)
         self.assertEqual({c["refresh_token"] for c in got}, {"refresh-1"})
+
+
+    async def test_connect_backfills_issues_with_changelog_and_comments_through_enrich(self):
+        await self.forget_reconcile()
+        stub = Atlassian()
+        await self.reconcile(stub)
+
+        self.assertEqual(stub.searches()[0], "project = 10000 ORDER BY key ASC")
+        objects = len(RECONCILE_ISSUES) + len(RECONCILE_COMMENTS)
+        self.assertGreater(len(RECONCILE_COMMENTS), 0)
+        self.assertEqual(await self.reconciled(), objects)
+        self.assertEqual(await self.scalar("select count(*) from source_records"), objects)
+        issue = RECONCILE_ISSUES["PHO-15"]
+        async with self.engine.connect() as conn:
+            raw = (await conn.execute(text("select * from raw_events where delivery_id = :d"),
+                                      {"d": f"{issue['id']}@{issue['fields']['updated']}"})).one()
+            comment = (await conn.execute(text("select * from source_records where kind = 'comment' limit 1"))).one()
+        self.assertEqual((raw.event_name, raw.account_id, raw.tenant), ("jira:issue_updated", SITE, TENANT))
+        self.assertEqual(raw.occurred_at, datetime.strptime(issue["fields"]["updated"], enrich.JIRA_TIME))
+        self.assertEqual(raw.envelope["body"]["issue"]["changelog"]["histories"][0]["items"][0]["toString"], "Done")
+        self.assertNotIn("issues", comment.record)   # its issue came from reconcile, not a fetch
+        self.assertEqual(await self.scalar(f"select position from cursors where stream = 'reconcile:{SITE}:10000'"), "done")
+
+    async def test_a_killed_reconcile_resumes_from_its_cursor_without_duplicates(self):
+        await self.forget_reconcile()
+        stub = Atlassian(hold="PHO-11")
+        worker = self.worker(stub)
+        task = asyncio.create_task(worker.run())
+        self.assertTrue(await asyncio.to_thread(stub.holding.wait, 10))
+        task.cancel()   # killed while PHO-11 is in flight
+        worker.reconciling.cancel()
+        stub.release.set()
+        await asyncio.gather(task, worker.reconciling, return_exceptions=True)
+        self.assertEqual(await self.scalar(f"select position from cursors where stream = 'reconcile:{SITE}:10000'"), "PHO-10")
+        written = await self.reconciled()
+
+        stub = Atlassian()
+        await self.reconcile(stub)
+        self.assertEqual(stub.searches()[0], 'project = 10000 AND key > "PHO-10" ORDER BY key ASC')
+        objects = len(RECONCILE_ISSUES) + len(RECONCILE_COMMENTS)
+        self.assertLess(written, objects)
+        self.assertEqual(await self.reconciled(), objects)
+        self.assertEqual(await self.scalar("select count(*) from source_records"), objects)
+
+    async def test_a_webhook_and_a_reconcile_copy_of_one_version_make_one_record(self):
+        await self.forget_reconcile()
+        await self.insert(issue_created(ISSUES["10001"]), f"{SITE}:created")
+        await self.reconcile(Atlassian())
+        self.assertEqual(await self.scalar("select count(*) from raw_events where delivery_id like '10001@%'"
+                                           " or delivery_id = :d", d=f"{SITE}:created"), 2)
+        self.assertEqual(await self.scalar("select count(*) from source_records where object_id = '10001'"), 1)
+
+    async def test_a_429_waits_and_continues(self):
+        await self.forget_reconcile()
+        stub = Atlassian(first=[Response(429, {"Retry-After": "1"}, b"{}")])
+        await self.reconcile(stub)
+        throttled, retried = [call for call in stub.calls if call.url.endswith("/search/jql")][:2]
+        self.assertGreaterEqual(retried.at - throttled.at, 1.0)
+        self.assertEqual(await self.reconciled(), len(RECONCILE_ISSUES) + len(RECONCILE_COMMENTS))
+
+    async def test_a_disconnected_site_is_not_reconciled(self):
+        await self.forget_reconcile()
+        stub = Atlassian(hold="PHO-11")
+        worker = self.worker(stub, poll_seconds=0.2)
+        task = asyncio.create_task(worker.run())
+        self.assertTrue(await asyncio.to_thread(stub.holding.wait, 10))
+        async with self.engine.begin() as conn:
+            await conn.execute(text("update installations set disconnected_at = now()"))
+        searched = len(stub.searches())
+        stub.release.set()
+        await asyncio.sleep(1.0)   # the held issue, then several polls
+        worker.stop()
+        await asyncio.wait_for(task, 10)
+        self.assertEqual(await self.scalar("select count(*) from raw_events where delivery_id like :d",
+                                           d=f"{RECONCILE_ISSUES['PHO-11']['id']}@%"), 0)
+        self.assertEqual(await self.scalar(f"select position from cursors where stream = 'reconcile:{SITE}:10000'"), "PHO-10")
+        self.assertEqual(len(stub.searches()), searched)   # no later poll started it again
+
+    async def test_reconcile_since_limits_the_pull(self):
+        await self.forget_reconcile()
+        stub = Atlassian()
+        await self.reconcile(stub, reconcile_since=enrich.reconcile_since("2026-09-20"))
+        self.assertEqual(stub.searches()[0], 'project = 10000 AND updated >= "2026-09-20" ORDER BY key ASC')
+        recent = [i for i in RECONCILE_ISSUES.values() if i["fields"]["updated"][:10] >= "2026-09-20"]
+        self.assertTrue(0 < len(recent) < len(RECONCILE_ISSUES))
+        self.assertEqual(await self.scalar("select count(*) from raw_events where event_name = 'jira:issue_updated'"),
+                         len(recent))
 
 
 if __name__ == "__main__":

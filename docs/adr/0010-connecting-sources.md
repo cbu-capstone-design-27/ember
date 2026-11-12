@@ -147,6 +147,8 @@ Out of scope here. Its account is the Microsoft 365 `tenantId`, through Entra ad
 - **History before that comes from reconcile,** not from stored deliveries. A first connect of an account enqueues that source's reconcile from the beginning, as the onboarding backfill. Until the job queue and `Enricher.reconcile` land, an operator runs the source's `pull_test.py` backfill.
 - **Overlap is harmless.** A replayed delivery and a reconcile copy of the same object fold into one `source_records` row on `(source, tenant, object_id, version)`. Enrich applies changes by `occurred_at`, so arrival order does not matter.
 
+**As built (EMBER-167, 2026-11-12):** with no job queue yet, `enrich:github` and `enrich:jira` run the backfill themselves. At start and on every wake, each looks for connected accounts whose `reconcile:<account_id>` cursor isn't `done` and reads their issues, pull requests and comments into `raw_events` with `origin = 'reconcile'`. Progress is in `cursors`, so a restart or a reconnect carries on, and a disconnect stops it. No schema change. Details: [`github-webhooks.md`](../ingestion/github-webhooks.md#reconcile-on-connect-ember-167) and [`jira-webhooks.md`](../ingestion/jira-webhooks.md#reconcile-on-connect-ember-167). Slack and GitLab still use their `pull_test.py` backfills.
+
 ### `make map-tenant`
 
 `make map-tenant` stays as the operator override: for accounts connected before this flow (installation `164866568`), and for an Ember admin connecting an account on a customer's behalf. It follows the same rules as the web app:
