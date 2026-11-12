@@ -50,6 +50,43 @@ DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=
   .venv/bin/python apps/mcp/seed_photon.py --no-embed
 ```
 
+## Local stack
+
+One path runs Ember on this Mac, on the compose Postgres (pgvector, PG 18.6), never the cluster's. From the repo root:
+
+```sh
+cp .env.example .env    # first time; fill in what the checklist below asks for
+scripts/local-stack.sh
+```
+
+It starts Postgres, applies the migrations and creates `ember_mcp` (`postgres-mcp-role`). Then it runs, until Ctrl+C, with logs in `/tmp/ember-local-stack`:
+
+- the web app on that Postgres at http://localhost:3000, so the MCP sees the accounts and organizations you make there
+- each source's enrich worker whose credentials are in `.env`; it prints which ones it skipped and why
+- extract, then load with `GRAPH_STORE=postgres`
+- embed, when `EMBEDDING_URL` is set. Without it, search runs on BM25 and graph traversal
+
+It ignores `DATABASE_URL` from `.env`. Then sign up at http://localhost:3000 and create an organization. Its slug is your tenant. Register the MCP as in [Add it to an agent](#add-it-to-an-agent), with your email.
+
+### Connecting accounts: what you still do by hand
+
+No source pulls its history into `source_records` yet. Reconcile isn't built (ADR 0010, "Replay and backfill on connect"), and the pull scripts only write JSONL. Webhooks bring new events only, and they need a public HTTPS URL to intake (a tunnel to `localhost:8080`). For Jira and Slack, `seed_photon.py` imports a pull's JSONL under your tenant, since the photon fixtures are that same output. The running extract and load then build the graph.
+
+- [ ] **Every source.** In `.env`: `SOURCE_CREDENTIALS_API_KEYS` and `SOURCE_CREDENTIALS_WEBHOOK_KEYS`, each `k1:<openssl rand -base64 32>` (`packages/source-credentials`).
+- [ ] **Jira.** Create an OAuth 2.0 (3LO) app in the Atlassian developer console with scopes `read:jira-work`, `read:jira-user` and `manage:jira-webhook`, callback `http://localhost:3000/connect/jira/callback`, and sharing on. Set `JIRA_OAUTH_CLIENT_ID`, `JIRA_OAUTH_CLIENT_SECRET` and `JIRA_WEBHOOK_URL` (it must be HTTPS, or Connect Jira is disabled). Connect in Settings → Connections. History, with an API token for `JIRA_BASE_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN`:
+  ```sh
+  .venv/bin/python services/jira-ingestion/pull_test.py --project KEY --output /tmp/jira.jsonl
+  DATABASE_URL=postgresql://ember:change-me-locally@localhost:5432/ember \
+    .venv/bin/python apps/mcp/seed_photon.py --no-embed --tenant <your org slug> --jira /tmp/jira.jsonl
+  ```
+- [ ] **Slack.** There is no web connect flow yet (EMBER-148). Create the app from `services/slack-ingestion/slack-app-manifest.json`, install it and set `SLACK_BOT_TOKEN`. History: `pull_test.py --output /tmp/slack.jsonl`, then `seed_photon.py ... --slack /tmp/slack.jsonl` as above. For live events, map the workspace to your tenant with `infra/ansible/playbooks/map-tenant.sql` against the local database (`make map-tenant` only targets the cluster):
+  ```sh
+  psql postgresql://ember:change-me-locally@localhost:5432/ember \
+    -v source=slack -v account=<team id> -v tenant=<your org slug> -f infra/ansible/playbooks/map-tenant.sql
+  ```
+- [ ] **GitHub.** Register a dev GitHub App with callback `http://localhost:3000/connect/github/callback`, "Request user authorization (OAuth) during installation" on, and read access to Metadata, Contents, Issues, Pull requests and Members. Generate a client secret and a private key. Set `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_SLUG` and `GITHUB_APP_PRIVATE_KEY_PATH`, then connect in Settings → Connections. History: none yet. `pull_test.py`'s output isn't in a shape `seed_photon.py` reads, so only webhook events arrive, and those need `GITHUB_WEBHOOK_SECRET` and a public URL to intake.
+- [ ] **GitLab.** Connect in Settings → Connections by pasting a `read_api` token for an HTTPS instance (`GITLAB_WEBHOOK_URL` must be HTTPS too). History: none in the graph yet. `pull.py` writes JSONL only, and extract doesn't map GitLab.
+
 ## Add it to an agent
 
 Run these from the repo root. `PYTHONPATH` lets `python -m ember_mcp` find the package from any directory.
