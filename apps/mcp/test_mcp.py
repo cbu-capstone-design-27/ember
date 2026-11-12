@@ -342,6 +342,16 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
                     hits = await retrieval.search(question, k=3)
                     self.assertIn(object_id, [h["object_id"] for h in hits])
 
+    async def test_seeded_jira_issues_carry_their_changelog_histories(self):
+        """The photon changelog pages ride on each issue as issue.changelog.histories, the expand=changelog shape."""
+        with patch.dict(os.environ, DATABASE_URL=database_url()):
+            await seed_photon.main(embed_rows=False)
+        record = await retrieval.get_record("jira", "10015")  # PHO-15, read back as Ada through the MCP
+        issue = record["record"]["payload"]["issue"]
+        moves = [(item["fromString"], item["toString"]) for entry in issue["changelog"]["histories"]
+                 for item in entry["items"] if item["field"] == "status"]
+        self.assertEqual((issue["key"], moves), ("PHO-15", [("To Do", "In Progress"), ("In Progress", "Done")]))
+
     async def test_without_an_api_key_no_authorization_header_is_sent(self):
         key = os.environ.pop("EMBEDDING_API_KEY")
         try:
