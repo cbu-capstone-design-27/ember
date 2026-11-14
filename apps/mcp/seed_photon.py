@@ -28,7 +28,7 @@ COMMENT_ISSUE = re.compile(r"/issue/(\d+)/comment/")
 
 
 def bodies(name: str) -> list[dict]:
-    return [json.loads(line)["body"] for line in (FIXTURES / name).read_text().splitlines() if line]
+    return [json.loads(line)["body"] for line in (FIXTURES / name).read_text(encoding="utf-8").splitlines() if line]
 
 
 def jira_time(value: str) -> datetime:

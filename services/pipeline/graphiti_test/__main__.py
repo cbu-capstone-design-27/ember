@@ -28,7 +28,9 @@ def main(argv=None) -> int:
     run = commands.add_parser("run", help="ingest, search and write a reference")
     run.add_argument("--tenant", default="photon", choices=["photon"], help="only the made-up photon data")
     run.add_argument("--limit", type=int, default=None, help="a sample of N records; default all")
-    run.add_argument("--profile", default=None, help="a profile in config/models.toml")
+    provider = run.add_mutually_exclusive_group()
+    provider.add_argument("--profile", default=None, help="a profile in config/models.toml")
+    provider.add_argument("--vertex", action="store_true", help="native Vertex AI with Google application default credentials")
     run.add_argument("--fake", action="store_true", help="use the local fake models; output is not meaningful for "
                                                          "quality or cost")
     run.add_argument("--out", required=True, help="folder for the ledger and the reference; reuse it to resume")
@@ -46,6 +48,8 @@ def main(argv=None) -> int:
     diff.add_argument("--ranking", action="store_true", help="also list differences in result order")
 
     args = parser.parse_args(argv)
+    if args.command == "run" and args.vertex and args.fake:
+        parser.error("--vertex and --fake cannot be combined; use the existing fake profile for offline checks")
     if args.command == "diff":
         from .report import compare, split_ranking
 
