@@ -90,7 +90,7 @@ jobs:
       - name: Repo layout present
         run: |
           set -euo pipefail
-          for p in apps/web apps/cli apps/mcp services/pipeline services/github-ingestion services/jira-ingestion services/slack-ingestion services/gitlab-ingestion apps/web/package.json apps/web/Dockerfile packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
+          for p in apps/web apps/cli apps/mcp services/backend services/pipeline services/github-ingestion services/jira-ingestion services/slack-ingestion services/gitlab-ingestion apps/web/package.json apps/web/Dockerfile packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
             test -e "$p" || { echo "missing: $p"; exit 1; }
           done
           echo "layout ok"
@@ -181,6 +181,33 @@ jobs:
           trap 'docker logs "$cid"; docker rm -f "$cid" > /dev/null' EXIT
           curl -fsS --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:18080/health
           echo
+      # EMBER-160: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
+      - name: Backend against Postgres
+        env:
+          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/backend-venv"
+          "$RUNNER_TEMP/backend-venv/bin/pip" install -q services/backend
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_runtime.py
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_intake.py
+      # The image: as nobody, exiting 2 without DATABASE_URL, healthy against the pg container, and a source
+      # with no secret disabled rather than fatal
+      - name: Backend container
+        run: |
+          set -euo pipefail
+          docker build -f services/backend/Dockerfile -t ember-backend:ci .
+          test "$(docker inspect -f '{{.Config.User}}' ember-backend:ci)" = nobody
+          rc=0; out=$(timeout 30 docker run --rm ember-backend:ci 2>&1) || rc=$?
+          test "$rc" -eq 2 || { echo "::error::expected exit 2 without DATABASE_URL, got $rc: $out"; exit 1; }
+          grep -F "DATABASE_URL is not set" <<<"$out"
+          cid=$(docker run -d --network host -e LISTEN_PORT=18081 -e GITHUB_WEBHOOK_SECRET=ci-local \
+            -e DATABASE_URL='postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable' ember-backend:ci)
+          trap 'docker logs "$cid"; docker rm -f "$cid" > /dev/null' EXIT
+          curl -fsS --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:18081/health
+          curl -fsS http://127.0.0.1:18081/status | tee /dev/stderr | grep -F '"webhook:slack":"SLACK_SIGNING_SECRET is not set"'
+          docker stop -t 30 "$cid" > /dev/null
+          test "$(docker inspect -f '{{.State.ExitCode}}' "$cid")" -eq 0
       - name: GitHub ingestion local pull contract
         run: python3 services/github-ingestion/test_pull.py
       # EMBER-65: uses the pg container and dbmate the migrations step started and downloaded
