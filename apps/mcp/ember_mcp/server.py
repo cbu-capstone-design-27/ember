@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from . import retrieval
+from . import graph, retrieval
+
+# RETRIEVAL_BACKEND picks the search behind the tool (EMBER-122). Every backend returns the same Hit shape.
+BACKENDS: dict[str, retrieval.Search] = {
+    "pgvector": retrieval.search, "neo4j": graph.neo4j_search, "pggraph": graph.pggraph_search}
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
@@ -35,13 +40,18 @@ async def search(question: str, k: int = 8, sources: list[str] | None = None) ->
 
     Each hit has source, kind, object_id, version, occurred_at, title, snippet (the start of the
     text that was embedded), url (link to the original, when known) and score (cosine similarity,
-    higher is closer). Pass a hit's source and object_id to get_record to read it in full.
+    higher is closer). Pass a hit's source and object_id to get_record to read it in full. Some
+    deployments add records linked in Ember's graph to the best hits; those carry `via`, the hit
+    they link to and the link's type.
     """
     if not 1 <= k <= 50:
         raise ToolError("k must be between 1 and 50")
+    name = os.environ.get("RETRIEVAL_BACKEND") or "pgvector"
+    if name not in BACKENDS:
+        raise ToolError(f"RETRIEVAL_BACKEND={name!r} is not one of {', '.join(BACKENDS)}")
     try:
-        return await retrieval.search(question, k, sources)
-    except (retrieval.DatabaseError, retrieval.EmbeddingError) as e:
+        return await BACKENDS[name](question, k, sources, None)
+    except (retrieval.DatabaseError, retrieval.EmbeddingError, graph.GraphError) as e:
         raise ToolError(str(e)) from e
 
 

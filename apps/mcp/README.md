@@ -6,7 +6,26 @@ MCP (Model Context Protocol) server that lets a coding agent (Claude Code, Codex
 
 `search` is semantic vector search (EMBER-78). The question is embedded by the same embedding service the embed worker uses ([ADR 0001](../../docs/adr/0001-embedding-model.md), [`services/embedding`](../../services/embedding/README.md)), with the query template `Instruct: {task}\nQuery: {question}` and the README's default task. Documents were embedded without a prefix. Rows are ranked by cosine distance to `source_records.embedding` on its HNSW index (`order by embedding <=> $q limit k`). Only rows the embed worker ([`services/embed`](../../services/embed/README.md)) has processed are searchable.
 
-All retrieval sits behind one function, `search(question, k, sources) -> list[Hit]` in [`ember_mcp/retrieval.py`](ember_mcp/retrieval.py). There is no keyword fallback: if the embedding service is unreachable or returns a vector that isn't 1024-long, `search` is a tool error.
+Every backend implements one interface, `Search`: `(question, k, sources, tenant) -> list[Hit]` in [`ember_mcp/retrieval.py`](ember_mcp/retrieval.py), the interface agreed for EMBER-119. `tenant` None searches every tenant, and the tool passes None. There is no keyword fallback: if the embedding service is unreachable or returns a vector that isn't 1024-long, `search` is a tool error.
+
+## Backends (EMBER-122)
+
+`RETRIEVAL_BACKEND` picks the backend, read on every call. Any other value is a tool error.
+
+| Value | |
+|---|---|
+| `pgvector` (default) | The vector search above, unchanged |
+| `neo4j` | Seed and expand over Neo4j as `services/pipeline`'s load writes it. Reads `NEO4J_URI`, `NEO4J_USER` (default `neo4j`), `NEO4J_PASSWORD` and optionally `NEO4J_DATABASE`, in a read-only session |
+| `pggraph` | Seed and expand over the `graph.*` tables of [ADR 0011](../../docs/adr/0011-graph-in-postgres.md) and [the research doc](../../docs/research/postgres-graph.md#tables), in Ember's Postgres. No migration creates them yet (research Phase A), so until one does, `search` is a tool error that says so |
+
+Seed and expand, in [`ember_mcp/graph.py`](ember_mcp/graph.py), with no LLM:
+
+1. The top `k` pgvector hits are the seeds.
+2. Each seed's node is found through its `episodes` row (`source_record_id`): the record's own node is the node in `attrs.nodes` whose `props.kind` is the episode's kind. Load writes it in Neo4j on `(group_id = <tenant>_<source>, source, external_id = key)`, and in `graph.nodes` on `(tenant, source, label, key)`.
+3. One hop from it, in either direction, over current edges. `CONTAINS` is skipped, because a project's or channel's `CONTAINS` edges reach every ticket or thread in it. Placeholder and deleted nodes are skipped.
+4. A neighbour that is some record's own node becomes a hit, as that object's newest, non-deleted version, under the same source and tenant filters. People, statuses, threads and placeholders have no record, so they never become hits.
+
+A graph hit scores `0.9 x` its seed's score (`GRAPH_WEIGHT`). A record reached twice keeps its best score. The top `k` by score come back, so graph hits can replace lower seeds. `get_record` reads `source_records` on every backend.
 
 ## Run
 
@@ -75,7 +94,8 @@ Returns `{"result": [Hit, ...]}`, best first. Search covers only the newest vers
 | `title` | PR or issue title (Jira: `KEY summary`), first line of a commit, or the start of a message |
 | `snippet` | The first 300 characters of `embed_text`, the text that was embedded |
 | `url` | GitHub `html_url`, the Jira browse URL built from the site and key, the GitLab `url`, or a Slack permalink if stored. Otherwise null |
-| `score` | Cosine similarity, `1 - (embedding <=> question)` |
+| `score` | Cosine similarity, `1 - (embedding <=> question)`. A graph hit's is `0.9 x` its seed's |
+| `via` | Graph backends only, on hits the graph added: `seed_source`, `seed_object_id` and `edge`, the edge type that links it to that seed |
 
 ### `get_record`
 
@@ -89,6 +109,8 @@ Returns the newest version of that object: `source`, `tenant`, `kind`, `object_i
 ## Tests
 
 [`test_mcp.py`](test_mcp.py) runs against a real Postgres with pgvector built from the repo migrations, as the enrich tests do, and a stub embedding server that hashes words into 1024 dimensions, so texts sharing words are close. It also seeds the photon data with `seed_photon.py` and checks five hand-written questions find their records, so it needs `services/embed/requirements.txt` too. It is the `MCP server against Postgres` step in CI.
+
+The graph backend tests create the `graph.*` tables from the research prototype's `SCHEMA` and load a small fixture graph. CI has no Neo4j, so there the Neo4j driver call is stubbed. With `NEO4J_TEST_URI` and `NEO4J_PASSWORD` set, one more test loads the same graph into that Neo4j (deleting its `acme_*` nodes) and runs against it.
 
 ```sh
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' python3 apps/mcp/test_mcp.py

@@ -1,4 +1,6 @@
-"""ember_mcp against a real Postgres with pgvector and a stub embedding server (EMBER-79, EMBER-78).
+"""ember_mcp against a real Postgres with pgvector and a stub embedding server (EMBER-79, EMBER-78), and its
+graph backends (EMBER-122): pggraph on the research prototype's tables, Neo4j through a stub driver call, or a
+real Neo4j when NEO4J_TEST_URI and NEO4J_PASSWORD are set.
 
 Needs psql, dbmate, the packages in requirements.txt and services/embed/requirements.txt (the photon
 seed embeds through the embed worker), and a Postgres server with the vector extension
@@ -12,6 +14,7 @@ It builds the repo migrations in database ember_test_mcp.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import json
@@ -37,8 +40,9 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 import seed_photon  # noqa: E402
-from ember_mcp import retrieval, server  # noqa: E402
+from ember_mcp import graph, retrieval, server  # noqa: E402
 
+PROTOTYPE = REPO / "docs" / "research" / "postgres-graph-prototype.py"
 MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_mcp"
@@ -161,7 +165,9 @@ ROWS = [
 ]
 
 
-class McpTest(unittest.IsolatedAsyncioTestCase):
+class Database(unittest.IsolatedAsyncioTestCase):
+    """A migrated ember_test_mcp with ROWS inserted before each test, and the stub embedding server."""
+
     @classmethod
     def setUpClass(cls):
         run("psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", os.environ["PGTEST_URL"],
@@ -190,6 +196,9 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
              for source, kind, object_id, version, day, record, text in ROWS])
         await db.close()
 
+
+
+class McpTest(Database):
     async def test_search_ranks_the_relevant_record_first_and_filters_by_source(self):
         hits = await retrieval.search(QUESTION, k=50)
         self.assertEqual((hits[0]["source"], hits[0]["object_id"], hits[0]["version"]), ("jira", "10004", "v2"))
@@ -315,6 +324,159 @@ class McpTest(unittest.IsolatedAsyncioTestCase):
             os.environ["DATABASE_URL"] = url
         self.assertTrue(result.is_error)
         self.assertIn("DATABASE_URL is not set", result.content[0].text)
+
+
+def prototype_schema() -> str:
+    """The graph.* DDL from the research prototype (ADR 0011), read without importing it."""
+    for node in ast.parse(PROTOTYPE.read_text()).body:
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) == "SCHEMA":
+            return ast.literal_eval(node.value)
+    raise AssertionError("no SCHEMA in the prototype")
+
+
+REPO_ROW = ("github", "repository", "acme/photon", "r1", 1, {"payload": {"full_name": "acme/photon"}})
+COMMENT_ROW = ("jira", "comment", "10004/comment/1", "c1", 23, {"payload": {
+    "comment": {"id": "1", "body": "Spotlight owns cmd-space, pick option-space"},
+    "issue": {"id": "10004", "key": "PHO-4", "self": ISSUE_SELF}}})
+COMMENT = "10004/comment/1"
+# Each record's own node as extract writes it in its episode: (source, kind, object_id, label, key)
+OWN = [("jira", "issue", "10004", "WorkItem", "PHO-4"), ("jira", "comment", COMMENT, "Message", "1"),
+       ("github", "commit", COMMIT, "Change", COMMIT), ("github", "pull_request", PULL, "Change", PULL),
+       ("github", "repository", "acme/photon", "Container", "acme/photon"),
+       ("slack", "message", SLACK, "Message", SLACK.replace("/", ":"))]
+PERSON, PLACEHOLDER = ("jira", "Person", "jira:u1"), ("jira", "WorkItem", "PHO-5")
+# (type, src, dst) as (source, label, key). CONTAINS is a hub edge, a Person has no record, a placeholder is skipped.
+EDGES = [("REFERENCES", ("jira", "Message", "1"), ("jira", "WorkItem", "PHO-4")),
+         ("AUTHORED", PERSON, ("jira", "WorkItem", "PHO-4")),
+         ("RELATES_TO", ("jira", "WorkItem", "PHO-4"), PLACEHOLDER),
+         ("CONTAINS", ("github", "Container", "acme/photon"), ("github", "Change", COMMIT))]
+GRAPH_NODES = [(s, label, key) for s, _k, _o, label, key in OWN] + [PERSON, PLACEHOLDER]
+
+
+async def add_episodes() -> None:
+    """The comment and repository rows (never embedded), and an episode per record whose own node is in OWN."""
+    db = await asyncpg.connect(database_url())
+    await db.executemany(
+        "insert into source_records (source, tenant, kind, object_id, version, occurred_at, record)"
+        " values ($1, 'acme', $2, $3, $4, $5, $6)",
+        [(source, kind, object_id, version, datetime(2026, 9, day, tzinfo=timezone.utc), json.dumps(record))
+         for source, kind, object_id, version, day, record in (REPO_ROW, COMMENT_ROW)])
+    for source, kind, object_id, label, key in OWN:
+        attrs = {"nodes": [{"label": label, "key": key, "props": {"kind": kind, "external_id": key}},
+                           {"label": "Person", "key": "jira:u1", "props": {"name": "Ana"}}], "edges": []}
+        await db.execute(
+            """insert into episodes (key, tenant, source, kind, occurred_at, text, attrs, source_record_id, extractor_version)
+               select 'ep:' || id, tenant, source, kind, occurred_at, '', $4, id, 1 from source_records
+               where (source, kind, object_id) = ($1, $2, $3) order by occurred_at desc limit 1""",
+            source, kind, object_id, json.dumps(attrs))
+    await db.close()
+
+
+class GraphBackendTest(Database):
+    """The seed-and-expand backends on ROWS plus the comment and repository rows, GRAPH_NODES and EDGES."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await add_episodes()
+        db = await asyncpg.connect(database_url())
+        await db.execute(prototype_schema())
+        await db.executemany(
+            "insert into graph.nodes (uuid, tenant, source, label, key, placeholder) values (gen_random_uuid(), 'acme', $1, $2, $3, $4)",
+            [(*n, n == PLACEHOLDER) for n in GRAPH_NODES])
+        await db.executemany(
+            """insert into graph.edges (uuid, tenant, source, type, src, dst, valid_at)
+               select gen_random_uuid(), 'acme', s.source, $1, s.id, d.id, now() from graph.nodes s, graph.nodes d
+               where (s.source, s.label, s.key) = ($2, $3, $4) and (d.source, d.label, d.key) = ($5, $6, $7)""",
+            [(t, *a, *b) for t, a, b in EDGES])
+        await db.close()
+        self.addAsyncCleanup(self.drop_graph)
+
+    async def drop_graph(self):
+        db = await asyncpg.connect(database_url())
+        await db.execute("drop schema if exists graph cascade")
+        await db.close()
+
+    async def check_expansion(self, search):
+        """The jira comment comes back through PHO-4, scored below it; the hub, Person and placeholder never do."""
+        hits = await search(QUESTION, 50, None, None)
+        seeds = await retrieval.search(QUESTION, k=50)
+        issue = next(h for h in hits if h["object_id"] == "10004")
+        comment = next(h for h in hits if h["object_id"] == COMMENT)
+        self.assertEqual(comment["via"], {"seed_source": "jira", "seed_object_id": "10004", "edge": "REFERENCES"})
+        self.assertAlmostEqual(comment["score"], graph.GRAPH_WEIGHT * issue["score"])
+        self.assertEqual(comment["url"], "https://photon.atlassian.net/browse/PHO-4")
+        self.assertEqual([h for h in hits if "via" not in h], seeds)
+        self.assertNotIn("acme/photon", [h["object_id"] for h in hits])
+        self.assertEqual([h["object_id"] for h in await search(QUESTION, 1, None, None)], ["10004"])
+        self.assertNotIn(COMMENT, [h["object_id"] for h in await search(QUESTION, 50, ["github"], None)])
+        self.assertEqual(await search(QUESTION, 50, None, "other"), [])
+
+    async def test_pggraph_expands_one_hop_over_the_graph_tables(self):
+        await self.check_expansion(graph.pggraph_search)
+
+    async def test_pggraph_without_its_tables_is_a_tool_error(self):
+        await self.drop_graph()
+        with patch.dict(os.environ, RETRIEVAL_BACKEND="pggraph"):
+            async with Client(server.mcp) as client:
+                result = await client.call_tool("search", {"question": QUESTION})
+        self.assertTrue(result.is_error)
+        self.assertIn("graph.nodes and graph.edges tables", result.content[0].text)
+
+    async def test_neo4j_maps_seeds_to_the_loaders_node_keys(self):
+        """CI has no Neo4j, so the driver call is stubbed: it gets each seed's (tenant, source, label, key) and
+        answers what NEO4J_NEIGHBOURS would for this graph."""
+        calls = []
+
+        async def stub(_conn, nodes):
+            calls.append(nodes)
+            if ("acme", "jira", "WorkItem", "PHO-4") not in nodes:
+                return []
+            pho4 = nodes.index(("acme", "jira", "WorkItem", "PHO-4"))
+            return [(pho4, "REFERENCES", ("acme", "jira", "Message", "1")), (pho4, "AUTHORED", ("acme", *PERSON))]
+
+        with patch.object(graph, "neo4j_neighbours", stub):
+            await self.check_expansion(graph.neo4j_search)
+        self.assertCountEqual(calls[0], [("acme", source, label, key) for source, kind, object_id, label, key in OWN
+                                         if object_id in ("10004", PULL, SLACK, COMMIT)])
+
+    @unittest.skipUnless(os.environ.get("NEO4J_TEST_URI"), "NEO4J_TEST_URI is not set")
+    async def test_neo4j_expands_one_hop_in_a_real_neo4j(self):
+        import neo4j
+
+        auth = ("neo4j", os.environ["NEO4J_PASSWORD"])
+        with neo4j.GraphDatabase.driver(os.environ["NEO4J_TEST_URI"], auth=auth) as driver:
+            driver.execute_query("MATCH (n) WHERE n.group_id STARTS WITH 'acme_' DETACH DELETE n")
+            for source, label, key in GRAPH_NODES:  # as load writes them: group_id, source, external_id
+                driver.execute_query(f"CREATE (:{label} {{group_id: $g, source: $s, external_id: $k, placeholder: $p}})",
+                                     g=f"acme_{source}", s=source, k=key, p=(source, label, key) == PLACEHOLDER)
+            for t, (s1, l1, k1), (s2, l2, k2) in EDGES:
+                driver.execute_query(f"MATCH (a:{l1} {{group_id: $g1, external_id: $k1}}), (b:{l2} {{group_id: $g2, external_id: $k2}}) "
+                                     f"CREATE (a)-[:{t}]->(b)", g1=f"acme_{s1}", k1=k1, g2=f"acme_{s2}", k2=k2)
+            try:
+                with patch.dict(os.environ, NEO4J_URI=os.environ["NEO4J_TEST_URI"]):
+                    await self.check_expansion(graph.neo4j_search)
+            finally:
+                driver.execute_query("MATCH (n) WHERE n.group_id STARTS WITH 'acme_' DETACH DELETE n")
+
+    async def test_neo4j_without_config_and_an_unknown_backend_are_tool_errors(self):
+        for env, message in (({"RETRIEVAL_BACKEND": "neo4j", "NEO4J_URI": ""}, "needs NEO4J_URI and NEO4J_PASSWORD"),
+                             ({"RETRIEVAL_BACKEND": "neo4j", "NEO4J_URI": "bolt://127.0.0.1:1", "NEO4J_PASSWORD": "x"},
+                              "Can't read Ember's Neo4j"),
+                             ({"RETRIEVAL_BACKEND": "elastic"}, "is not one of pgvector, neo4j, pggraph")):
+            with self.subTest(env), patch.dict(os.environ, env):
+                async with Client(server.mcp) as client:
+                    result = await client.call_tool("search", {"question": QUESTION})
+                self.assertTrue(result.is_error)
+                self.assertIn(message, result.content[0].text)
+
+    async def test_graph_hits_keep_the_hit_shape_through_the_tool(self):
+        with patch.dict(os.environ, RETRIEVAL_BACKEND="pggraph"):
+            async with Client(server.mcp) as client:
+                result = await client.call_tool("search", {"question": QUESTION, "k": 2})
+        self.assertFalse(result.is_error)
+        issue, comment = result.structured_content["result"]
+        self.assertEqual(set(comment) - {"via"}, set(issue))
+        self.assertEqual(comment["via"]["seed_object_id"], "10004")
 
 
 if __name__ == "__main__":
