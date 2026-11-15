@@ -104,6 +104,11 @@ services:
       GITLAB_WEBHOOK_SIGNING_TOKEN: "${GITLAB_WEBHOOK_SIGNING_TOKEN:-}"
       GITLAB_WEBHOOK_SECRET_TOKEN: "${GITLAB_WEBHOOK_SECRET_TOKEN:-}"
       SOURCE_CREDENTIALS_WEBHOOK_KEYS: "${SOURCE_CREDENTIALS_WEBHOOK_KEYS:-}"
+      # enrich:github's App. The PEM itself: .env's GITHUB_APP_PRIVATE_KEY_PATH is a host path, for the backfill CLI
+      GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
+      GITHUB_APP_PRIVATE_KEY: "${GITHUB_APP_PRIVATE_KEY:-}"
+      GITHUB_ENRICH_CONCURRENCY: "${GITHUB_ENRICH_CONCURRENCY:-4}"
+      GITHUB_ENRICH_BATCH: "${GITHUB_ENRICH_BATCH:-25}"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
       interval: 10s

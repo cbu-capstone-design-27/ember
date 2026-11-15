@@ -191,6 +191,7 @@ jobs:
           "$RUNNER_TEMP/backend-venv/bin/pip" install -q services/backend
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_runtime.py
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_intake.py
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_enrich_github.py
       # The image: as nobody, exiting 2 without DATABASE_URL, healthy against the pg container, and a source
       # with no secret disabled rather than fatal
       - name: Backend container
