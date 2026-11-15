@@ -1,6 +1,6 @@
 # services/backend
 
-`ember-backend` is Ember's Python backend in one image and one process (EMBER-160, [ADR 0012](../../docs/adr/0012-one-backend-image.md)). It holds intake (the webhook listener) today. The enrich workers, the scheduled jobs and embed move in one connector at a time, and each old service is deleted once this image does its job.
+`ember-backend` is Ember's Python backend in one image and one process (EMBER-160, [ADR 0012](../../docs/adr/0012-one-backend-image.md)). It holds intake (the webhook listener) and `enrich:github` today. The other enrich workers, the scheduled jobs and embed move in one connector at a time, and each old service is deleted once this image does its job.
 
 The design of each stage is unchanged: [`docs/ingestion/architecture.md`](../../docs/ingestion/architecture.md). What changes is how the stages are packaged: one process runs every component, and one bad source can't take down the rest.
 
@@ -13,11 +13,12 @@ python -m ember run
             ├─ http           /webhook/{source}, /health, /status, /metrics on LISTEN_PORT
             ├─ intake         stores every verified delivery in raw_events
             ├─ loop           watches event-loop lag
-            └─ enrich:<source>, job:<name>, …   as connectors move in
+            ├─ enrich:github  raw_events -> source_records (connectors/github/enrich.py)
+            └─ enrich:<source>, job:<name>, …   as the other connectors move in
 ```
 
 - **Component** (`runtime/component.py`): what the supervisor runs. `start()` acquires what it needs, `run(stopping)` works until shutdown, `close()` releases. Each component makes its own Postgres engine, so one exhausting its pool or losing its connections doesn't starve another.
-- **Connector** (`connectors/base.py`): one per source. It loads that source's settings and builds its parts: the webhook adapter intake serves, and later its enrich worker and scheduled jobs. Each part is built on its own, so a source with a webhook secret but no API credentials still receives deliveries.
+- **Connector** (`connectors/base.py`): one per source. It loads that source's settings and builds its parts: the webhook adapter intake serves, its enrich worker (GitHub so far), and later its scheduled jobs. Each part is built on its own, so a source with a webhook secret but no API credentials still receives deliveries.
 - **QueueWorker** (`work/queue_worker.py`): the base of every worker that claims rows from Postgres. It wakes on `LISTEN/NOTIFY`, catches up on start, claims with `for update skip locked` in the source's order (EMBER-63), runs up to `concurrency` jobs at once, and sets failed rows aside by failure class (`core/errors.py`).
 - **Deps** (`runtime/deps.py`): the shared dependencies, built once and passed to constructors: the database, the credential key rings, the metrics registry. No DI framework.
 
@@ -29,6 +30,8 @@ python -m ember run
 | A source's secret missing or unusable (`GITHUB_WEBHOOK_SECRET` with a trailing newline, a GitLab token that isn't `whsec_`, an unreadable key ring) | That part is disabled and `/status` says why. `/webhook/<source>` answers 404. Everything else runs |
 | A component crashes (an exception, or `run` returns before shutdown) | Restarted after 1 s, 2 s, 4 s … up to `EMBER_RESTART_MAX` (60 s), forever. The delay starts again from 1 s once it has run 5 minutes. Nothing else restarts |
 | A component raises `ConfigError` on start | Disabled for the life of the process, with the reason |
+| A worker's settings unusable (`GITHUB_APP_PRIVATE_KEY_PATH` unreadable, a key that isn't PEM) | `workers:<source>` is disabled with the reason. Intake still stores that source's deliveries, which wait in `raw_events` |
+| A row fails in a worker | Only that row is set aside, by class: a rate limit until the source allows the next call, a 5xx or network error with backoff (2 s doubling to 5 minutes), a missing object or a permission error for an hour. The rest keep going. The skip list is in memory, so a restart retries every row once |
 | Postgres down | `/health` answers 503, intake answers 503 (the source retries), workers crash and retry until it is back |
 
 ### Shutdown
@@ -83,6 +86,8 @@ Only `DATABASE_URL` is required. Everything else turns a part on.
 | `JIRA_WEBHOOK_SECRET`, `JIRA_OAUTH_CLIENT_SECRET` | Either serves `/webhook/jira`: admin webhooks and Connect Jira's dynamic webhooks |
 | `SOURCE_CREDENTIALS_WEBHOOK_KEYS` | The webhook key ring (`packages/source-credentials`). Serves `/webhook/gitlab` with the signing tokens Connect GitLab stores |
 | `GITLAB_WEBHOOK_SIGNING_TOKEN`, `GITLAB_WEBHOOK_SECRET_TOKEN` | Shared GitLab tokens for webhooks set up by hand. Either serves `/webhook/gitlab` |
+| `GITHUB_APP_ID`, and `GITHUB_APP_PRIVATE_KEY_PATH` (a mounted `.pem`) or `GITHUB_APP_PRIVATE_KEY` (the PEM itself) | The App `enrich:github` calls the API as, for the two events that fetch (pull request files, the commits of a full push). Without them it still enriches every other event; those two are set aside until the App is configured |
+| `GITHUB_ENRICH_CONCURRENCY`, `GITHUB_ENRICH_BATCH` | `enrich:github`'s jobs at once (default 4) and rows per job (default 25) |
 
 Secrets with leading or trailing whitespace are refused, since no signature would match them. Messages name the variable, never its value.
 
@@ -115,9 +120,11 @@ The tests run against a real Postgres. They need psql, dbmate and this package i
 pip install services/backend
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' python3 services/backend/tests/test_runtime.py
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' python3 services/backend/tests/test_intake.py
+PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' python3 services/backend/tests/test_enrich_github.py
 ```
 
 - `test_runtime.py`: the supervisor (restart, backoff, isolation, shutdown order), the queue worker (wake, catch-up, ordering, concurrency, replicas, failures, stop, reconnect), and the controller with a broken connector beside a working one.
 - `test_intake.py`: intake's contract for every source, carried over from `services/intake`, and `python -m ember` as the container runs it.
+- `test_enrich_github.py`: `enrich:github`'s records, fetches, ordering, bulk skip, rate limits and failure classes against a stubbed GitHub, carried over from `services/github-ingestion/test_enrich.py`, and how `GITHUB_APP_*` become the App's JWT.
 
-CI runs both in the `sanity` job on the `pgvector/pgvector:0.8.7-pg18-trixie` container, and builds the image.
+CI runs them in the `sanity` job on the `pgvector/pgvector:0.8.7-pg18-trixie` container, and builds the image.

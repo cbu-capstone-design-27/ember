@@ -51,6 +51,9 @@ async def wait_any(*events: asyncio.Event, timeout: float) -> None:
 class QueueWorker(Component, Generic[Row]):
     channel: ClassVar[str]  # the NOTIFY channel the table's insert trigger uses
     model: ClassVar[type]   # the mapped table; rows need an integer `id`
+    # Connections a job holds at once: its claim's transaction, plus any it opens on the side (a
+    # rate-limit row updated outside that transaction)
+    connections_per_job: ClassVar[int] = 1
 
     def __init__(self, db: Database, *, name: str, concurrency: int = 4, batch: int = 1,
                  poll_seconds: float = 30.0, clock: Callable[[], float] = time.monotonic) -> None:
@@ -85,7 +88,7 @@ class QueueWorker(Component, Generic[Row]):
         """
 
     async def start(self) -> None:
-        self.engine = self.db.engine(pool_size=self.concurrency + 1)
+        self.engine = self.db.engine(pool_size=self.concurrency * self.connections_per_job + 1)
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
 
     async def close(self) -> None:

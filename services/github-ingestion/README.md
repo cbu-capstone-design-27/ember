@@ -158,7 +158,7 @@ These are intentional. The pull stays on Metadata, Contents, Issues, and Pull re
 
 ## Enrich worker
 
-`enrich.py` is `enrich:github` (EMBER-65). It turns GitHub rows in `raw_events` into `source_records`, fetching only what the payload lacks (`docs/ingestion/github-webhooks.md`), and sets `enriched_at` in the same transaction. It wakes on any notification on `RAW_EVENTS_CHANNEL` (default `raw_events`) and ignores the payload, catches up at start, and polls every 30 s. `CONCURRENCY` (default 4) bounds rows in flight. Ctrl+C or SIGTERM finishes the rows in flight, then exits.
+`enrich.py` is `enrich:github` (EMBER-65). It has also moved into `services/backend` (EMBER-160, `connectors/github/enrich.py`), which claims by `occurred_at` and reads it from `raw_events`. This copy stays until the cluster runs the backend image; a change to one goes into both. It turns GitHub rows in `raw_events` into `source_records`, fetching only what the payload lacks (`docs/ingestion/github-webhooks.md`), and sets `enriched_at` in the same transaction. It wakes on any notification on `RAW_EVENTS_CHANNEL` (default `raw_events`) and ignores the payload, catches up at start, and polls every 30 s. `CONCURRENCY` (default 4) bounds rows in flight. Ctrl+C or SIGTERM finishes the rows in flight, then exits.
 
 Against the local Postgres, from the repo root:
 

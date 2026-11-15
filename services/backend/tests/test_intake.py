@@ -1102,7 +1102,7 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(list(plan["disabled"]), [part])
                 self.assertIn(message, plan["disabled"][part])
                 self.assertNotIn(value.strip() or "x" * 99, json.dumps(plan))
-                self.assertEqual(plan["components"], ["intake"])
+                self.assertEqual(plan["components"], ["intake", "enrich:github"])
 
     def test_an_unreadable_webhook_key_ring_disables_gitlab_only(self):
         for ring in ("no-colon", "test:not base64!", "test:" + base64.b64encode(b"short").decode()):
@@ -1111,7 +1111,7 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
                                   SOURCE_CREDENTIALS_WEBHOOK_KEYS=ring)
                 self.assertIn("SOURCE_CREDENTIALS_WEBHOOK_KEYS can't be read", plan["disabled"]["webhook:gitlab"])
                 self.assertNotIn("not base64!", json.dumps(plan).replace("'test'", ""))
-                self.assertEqual(plan["components"], ["intake"])
+                self.assertEqual(plan["components"], ["intake", "enrich:github"])
 
     def test_each_source_is_served_only_with_its_secret(self):
         # GitLab: a shared token, or the key ring alone (EMBER-149). Jira: either secret
@@ -1127,16 +1127,20 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
                 plan = self.check(**extra)
                 disabled = {part.removeprefix("webhook:") for part in plan["disabled"] if part.startswith("webhook:")}
                 self.assertEqual({"github", "gitlab", "jira", "slack"} - disabled, served)
-                self.assertEqual(plan["components"], ["intake"] if served else [])
+                self.assertEqual(plan["components"], ["intake", "enrich:github"] if served else ["enrich:github"])
                 if not served:
                     self.assertEqual(plan["disabled"]["intake"], "no source has a usable webhook secret")
 
     def test_ember_components_picks_what_runs(self):
+        # The split ADR 0012 describes: intake in one container, the workers in another
         plan = self.check(GITHUB_WEBHOOK_SECRET=SECRET, EMBER_COMPONENTS="enrich:*")
-        self.assertEqual(plan["components"], [])
+        self.assertEqual(plan["components"], ["enrich:github"])
         self.assertEqual(plan["disabled"]["intake"], "not selected by EMBER_COMPONENTS")
+        plan = self.check(GITHUB_WEBHOOK_SECRET=SECRET, EMBER_COMPONENTS="intake")
+        self.assertEqual(plan["components"], ["intake"])
+        self.assertEqual(plan["disabled"]["enrich:github"], "not selected by EMBER_COMPONENTS")
         self.assertEqual(self.check(GITHUB_WEBHOOK_SECRET=SECRET, EMBER_COMPONENTS=" intake , enrich:*")["components"],
-                         ["intake"])
+                         ["intake", "enrich:github"])
 
     async def start(self, **extra: str) -> tuple[subprocess.Popen, int]:
         port = free_port()
