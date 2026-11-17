@@ -39,7 +39,7 @@ sys.path.insert(0, str(HERE))
 import seed_photon  # noqa: E402
 from ember_mcp import retrieval, server  # noqa: E402
 
-MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
+MIGRATIONS = REPO / "services" / "backend" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_mcp"
 ISSUE_SELF = "https://photon.atlassian.net/rest/api/2/issue/10004"

@@ -47,7 +47,7 @@ from ember.runtime.controller import plan  # noqa: E402
 from ember.runtime.deps import Deps  # noqa: E402
 from source_credentials import KeyRing  # noqa: E402
 
-MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
+MIGRATIONS = REPO / "services" / "backend" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_enrich_jira"
 SITE = "photon-synthetic.atlassian.net"

@@ -36,7 +36,7 @@ import enrich  # noqa: E402
 from pull_test import Response  # noqa: E402
 from source_credentials import KeyRing  # noqa: E402
 
-MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
+MIGRATIONS = REPO / "services" / "backend" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 TEST_DB = "ember_test_enrich"
 SITE = "photon-synthetic.atlassian.net"

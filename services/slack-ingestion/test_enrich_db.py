@@ -26,7 +26,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
+MIGRATIONS = REPO / "services" / "backend" / "migrations"
 sys.path.insert(0, str(HERE))
 
 from sqlalchemy import create_engine, func, select, text  # noqa: E402

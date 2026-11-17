@@ -48,7 +48,7 @@ from ember.runtime.controller import Controller  # noqa: E402
 from ember.runtime.supervisor import State, Supervisor  # noqa: E402
 from ember.work.queue_worker import QueueWorker  # noqa: E402
 
-MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
+MIGRATIONS = REPO / "services" / "backend" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_runtime"
 SECRET = "test-webhook-secret"
