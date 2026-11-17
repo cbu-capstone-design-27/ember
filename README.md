@@ -49,7 +49,7 @@ The full design is in [`docs/ingestion/architecture.md`](docs/ingestion/architec
 | [`apps/`](apps) | The [web app](apps/web) (Next.js, Better Auth), the [MCP server](apps/mcp) and the [CLI](apps/cli) |
 | [`services/`](services) | [intake](services/intake), the per-source ingestion and enrich workers, the [embed](services/embed) worker and the [embedding service](services/embedding) |
 | [`packages/`](packages) | Shared libraries, added only once a second consumer needs them |
-| [`infra/`](infra) | Local Docker Compose, and the homelab k3s cluster: Ansible for the nodes, Flux deploying [`infra/k8s`](infra/k8s) from `develop` |
+| [`infra/`](infra) | Local Docker Compose. The cluster (k3s, Flux, Ansible, Secrets) lives in the private [`infra`](https://github.com/cbu-capstone-design-27/infra) repo |
 | [`docs/`](docs) | [Architecture decisions](docs/adr), the [ingestion design](docs/ingestion), the [graph schema](docs/graph-schema.md) and the [working agreement](docs/working-agreement.md) |
 
 ## Quick start

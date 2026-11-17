@@ -117,13 +117,13 @@ DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=
   python3 services/intake/intake.py
 ```
 
-On the cluster it runs from `infra/k8s/apps/intake`, behind nginx at `https://ember.tail470a31.ts.net/webhook/{source}`. [`infra/k8s/README.md`, "intake"](../../infra/k8s/README.md#intake) covers the Deployment, its logs and metrics, and setting the webhook secret.
+On the cluster it runs inside `ember-backend` (`services/backend`, ADR 0012), behind nginx at `https://ember.tail470a31.ts.net/webhook/{source}`. The infra repo's `k8s/README.md` covers the Deployment and the webhook secrets.
 
 To send real deliveries to a local intake instead, point a tunnel at the port (`cloudflared tunnel --url http://127.0.0.1:8080`) and set the App's webhook URL to `https://<tunnel-host>/webhook/github` with the same secret, or the Slack app's Request URL to `https://<tunnel-host>/webhook/slack` with its signing secret in `SLACK_SIGNING_SECRET`.
 
 ## Test
 
-`test_intake.py` runs intake against a real Postgres, both in process and as `python3 intake.py`. It needs psql, dbmate and the packages in `requirements.txt`, like `infra/k8s/apps/postgres/test_migrations.py`:
+`test_intake.py` runs intake against a real Postgres, both in process and as `python3 intake.py`. It needs psql, dbmate and the packages in `requirements.txt`, like `services/backend/tests/test_migrations.py`:
 
 ```sh
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \

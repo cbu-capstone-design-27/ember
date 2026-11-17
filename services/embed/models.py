@@ -1,7 +1,7 @@
 """SQLAlchemy model for the table the embed worker touches (EMBER-77).
 
 It maps docs/ingestion/architecture.md (Storage) and nothing more. The dbmate migrations in
-infra/k8s/apps/postgres/migrations own the schema, so never call create_all on it.
+services/backend/migrations own the schema, so never call create_all on it.
 """
 
 from __future__ import annotations

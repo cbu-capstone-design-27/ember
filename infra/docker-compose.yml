@@ -332,7 +332,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # EMBER-75. Applies infra/k8s/apps/postgres/migrations with the dbmate the migrate Job runs, then exits.
+  # EMBER-75. Applies services/backend/migrations with the dbmate the backend image ships, then exits.
   postgres-migrate:
     profiles: ["postgres"]
     image: ghcr.io/amacneil/dbmate:2.36.0
@@ -344,7 +344,7 @@ services:
     environment:
       DATABASE_URL: "postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable"
     volumes:
-      - ./k8s/apps/postgres/migrations:/migrations:ro
+      - ../services/backend/migrations:/migrations:ro
 
   # EMBER-45. Not part of the default `up` (see profiles). Reads connector JSONL from
   # ./data/raw/<tenant>/ (or PIPELINE_INPUT, a path inside the container under /data) and writes

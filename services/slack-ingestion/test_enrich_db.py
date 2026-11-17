@@ -6,7 +6,7 @@ database on, e.g. the compose one or CI's:
     PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
         python3 services/slack-ingestion/test_enrich_db.py
 
-dbmate builds database ember_test_enrich from infra/k8s/apps/postgres/migrations, as the cluster's
+dbmate builds database ember_test_enrich from services/backend/migrations, as the cluster's
 migrate Job does. The migrations include the trigger that sends NOTIFY raw_events on insert
 (EMBER-75). Slack is FakeSlackApi from test_enrich.py.
 """

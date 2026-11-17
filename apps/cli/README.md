@@ -44,10 +44,11 @@ The local Postgres from `infra/docker-compose.yml` (profile `postgres`, migratio
 export DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable'
 ```
 
-The cluster's Postgres, from the tailnet. `make postgres-url` reads the password from the cluster, so it needs the kubeconfig ([`infra/k8s/README.md`](../../infra/k8s/README.md), Postgres):
+The cluster's Postgres, through a port-forward (needs the cluster kubeconfig, context `proxmox`):
 
 ```sh
-export DATABASE_URL="$(make -s -C infra/ansible postgres-url)"
+kubectl -n ember port-forward svc/postgres-rw 5432 &
+export DATABASE_URL="$(kubectl -n ember get secret postgres-app -o jsonpath='{.data.uri}' | base64 -d | sed 's/@[^/]*/@localhost:5432/')"
 ```
 
 `sslmode` works as in `psql`. Without it, `ember` uses TLS when the server offers it, which the cluster's does. `require` insists on TLS. `verify-ca` and `verify-full` also check the certificate against `sslrootcert`.
@@ -108,7 +109,7 @@ Logged out of http://localhost:3000
 EMBER-120 checks this flow against the web app on the cluster, which is tailnet-only (EMBER-112). Run it once that deploy lands, and again after changing sign-in on either side:
 
 1. Join the cluster's tailnet, as in [`apps/web/README.md`](../web/README.md#cluster-postgres) step 1.
-2. Point the CLI at the deployed web app. Its address is in the EMBER-112 deploy docs (`infra/k8s/README.md`): `export EMBER_URL=<web app address>`.
+2. Point the CLI at the deployed web app. `export EMBER_URL=https://ember-web.tail470a31.ts.net` (tailnet only).
 3. `ember auth login`. The browser opens the web app's `/device` page with the same code the terminal shows. Sign in, approve, and the terminal prints `Successfully authenticated as <your email>`.
 4. `ember auth status` prints `Logged in to <web app address> as <your email>`, then your organization. On a fresh cluster you have none until you create one, or an Ember admin adds you to the one linked to `ember-development`.
 5. `ember` opens the terminal UI. The Workspace screen shows the same account and organization.

@@ -1,9 +1,1 @@
 .env
-pi-image/out/
-pi-image/user-data
-pi-image/network-config
-worker-image/out/
-worker-image/user-data
-ansible/.venv/
-ansible/collections/
-ansible/.vault-pass

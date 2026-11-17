@@ -1,7 +1,7 @@
 """SQLAlchemy models for the ingestion tables, shared by every component in this image.
 
 They map docs/ingestion/architecture.md (Storage) and nothing more. The dbmate migrations in
-infra/k8s/apps/postgres/migrations own the schema, so never call create_all on these. A table is
+services/backend/migrations own the schema, so never call create_all on these. A table is
 mapped here once a component uses it.
 """
 

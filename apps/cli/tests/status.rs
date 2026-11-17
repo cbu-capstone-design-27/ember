@@ -14,7 +14,7 @@ use sqlx::{Connection, PgConnection};
 
 const MIGRATIONS: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../infra/k8s/apps/postgres/migrations"
+    "/../../services/backend/migrations"
 );
 
 /// Runs `ember status` with DATABASE_URL set to `database_url`, or unset.

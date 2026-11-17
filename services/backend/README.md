@@ -117,6 +117,10 @@ DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=
   GITHUB_WEBHOOK_SECRET=throwaway-local-secret python -m ember run
 ```
 
+## Migrations
+
+`migrations/` holds the schema as dbmate migrations ([`docs/ingestion/architecture.md`, Storage](../../docs/ingestion/architecture.md#storage) is the source of truth). The image ships them in `/opt/ember/migrations` with the pinned `dbmate`, and `DBMATE_MIGRATIONS_DIR` points at them, so the cluster's migrate Job runs the same image and tag as the backend with `dbmate up` as its command: schema and code always deploy together. Locally, the compose `postgres-migrate` service applies the same directory.
+
 ## Test
 
 The tests run against a real Postgres. They need psql, dbmate and this package installed:
@@ -127,11 +131,13 @@ PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' p
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' python3 services/backend/tests/test_intake.py
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' python3 services/backend/tests/test_enrich_github.py
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' python3 services/backend/tests/test_enrich_jira.py
+PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' python3 services/backend/tests/test_migrations.py
 ```
 
 - `test_runtime.py`: the supervisor (restart, backoff, isolation, shutdown order), the queue worker (wake, catch-up, ordering, concurrency, replicas, failures, stop, reconnect), and the controller with a broken connector beside a working one.
 - `test_intake.py`: intake's contract for every source, carried over from `services/intake`, and `python -m ember` as the container runs it.
 - `test_enrich_github.py`: `enrich:github`'s records, fetches, ordering, bulk skip, rate limits and failure classes against a stubbed GitHub, carried over from `services/github-ingestion/test_enrich.py`, and how `GITHUB_APP_*` become the App's JWT.
+- `test_migrations.py`: the migrations apply, roll back, and build exactly the schema `docs/ingestion/architecture.md` defines.
 - `test_enrich_jira.py`: `enrich:jira`'s records, issue fetches, token refresh, rate limits and failure classes, and `keep-alive:jira`'s refresh, disconnect, advisory lock and schedule, against a stubbed Atlassian. Carried over from `services/jira-ingestion/test_enrich.py` and `test_keep_alive.py`.
 
 CI runs them in the `sanity` job on the `pgvector/pgvector:0.8.7-pg18-trixie` container, and builds the image.
