@@ -12,7 +12,7 @@ The design is [`docs/ingestion/architecture.md`](docs/ingestion/architecture.md)
 - **`unique (source, delivery_id)`** on `raw_events` makes a re-sent delivery a no-op. Each adapter derives `delivery_id` so it is stable across the source's retries.
 - **Source ordering value (EMBER-63).** Arrival order is not the source's order: retries, overlapping deliveries and reconcile rows arrive late. Workers order and apply changes by the source's own ordering value, and a change applies only if it is newer than what is stored for that object. The value is `raw_events.occurred_at` ([Source ordering value](docs/ingestion/architecture.md#source-ordering-value-ember-63)). Whoever writes a `raw_events` row sets it by that source's rule in `docs/ingestion/<source>-webhooks.md`. Ties break on `id`.
 
-**Schema source of truth:** the SQL block in [`architecture.md`, Storage](docs/ingestion/architecture.md#storage). Do not copy it elsewhere. The cluster gets it from the dbmate migrations in [`infra/k8s/apps/postgres/migrations`](infra/k8s/apps/postgres/migrations), and CI fails if the two differ. A schema change edits both, as a new migration file. Never edit a merged migration.
+**Schema source of truth:** the SQL block in [`architecture.md`, Storage](docs/ingestion/architecture.md#storage). Do not copy it elsewhere. The cluster gets it from the dbmate migrations in [`services/backend/migrations`](services/backend/migrations), which ship in the backend image for the cluster's migrate Job, and CI fails if the two differ. A schema change edits both, as a new migration file. Never edit a merged migration.
 
 Per-source behavior (event types, `delivery_id`, ordering, gaps) lives in `docs/ingestion/<source>*.md`.
 

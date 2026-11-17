@@ -2,7 +2,7 @@
 
 They match docs/ingestion/architecture.md (Storage), the source of truth for the ingestion
 schema. A schema change starts in that doc and a migration under
-infra/k8s/apps/postgres/migrations; these models follow it. The worker never creates or
+services/backend/migrations; these models follow it. The worker never creates or
 alters tables: the migrations do. test_enrich_db.py checks the models against the schema the
 migrations build.
 """

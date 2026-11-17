@@ -1,7 +1,7 @@
 """SQLAlchemy models for the tables enrich:gitlab touches (EMBER-68).
 
 They map docs/ingestion/architecture.md (Storage) and nothing more. The dbmate migrations in
-infra/k8s/apps/postgres/migrations own the schema, so never call create_all on these.
+services/backend/migrations own the schema, so never call create_all on these.
 """
 
 from __future__ import annotations

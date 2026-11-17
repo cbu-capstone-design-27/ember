@@ -44,7 +44,7 @@ from ember.core.settings import Settings  # noqa: E402
 from ember.runtime.controller import plan  # noqa: E402
 from ember.runtime.deps import Deps  # noqa: E402
 
-MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
+MIGRATIONS = REPO / "services" / "backend" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_enrich_github"
 FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "github.json").read_text())

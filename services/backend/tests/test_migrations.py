@@ -3,7 +3,7 @@
 Needs psql, dbmate, and a Postgres server it may create and drop databases on:
 
     PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \
-        python3 infra/k8s/apps/postgres/test_migrations.py
+        python3 services/backend/tests/test_migrations.py
 
 It builds the doc's SQL in database ember_test_doc and the migrations in ember_test_migrations.
 """
@@ -18,9 +18,9 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[3]
+REPO = HERE.parents[2]
 DOC = REPO / "docs" / "ingestion" / "architecture.md"
-MIGRATIONS = HERE / "migrations"
+MIGRATIONS = HERE.parent / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 
 DOC_DB = "ember_test_doc"
@@ -105,12 +105,6 @@ class MigrationsTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         psql("postgres", f"drop database if exists {DOC_DB}; drop database if exists {MIGRATIONS_DB};")
-
-    def test_every_migration_is_shipped_to_the_job(self):
-        kustomization = (HERE / "kustomization.yaml").read_text()
-        for path in sorted(MIGRATIONS.glob("*.sql")):
-            self.assertIn(f"- migrations/{path.name}\n", kustomization,
-                          f"{path.name} is not in kustomization.yaml, so the migrate Job won't see it")
 
     def test_migrations_apply_roll_back_and_match_the_doc(self):
         dbmate("migrate")

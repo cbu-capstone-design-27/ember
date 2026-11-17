@@ -41,7 +41,7 @@ fn query_failed(error: &sqlx::Error, target: &str) -> Error {
     {
         return Error::Database(format!(
             "{target} has no source_records table. Apply the ingestion migrations \
-             (infra/k8s/apps/postgres/migrations) to it with dbmate."
+             (services/backend/migrations) to it with dbmate."
         ));
     }
     Error::Database(format!(

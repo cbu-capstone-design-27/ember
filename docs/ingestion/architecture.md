@@ -227,7 +227,7 @@ Raise `CONCURRENCY` first, then replicas, then add KEDA.
 
 ## Per-source auth
 
-Each source has two credentials, and they never sit in the same pod. Intake holds the one that **verifies** deliveries, which cannot call any API. That source's enrich worker holds the one that **calls** the API. Per-account credentials go in `source_credentials` ([Storage](#storage)) when an owner connects the account, encrypted by the application with one key for `api` rows (web app and enrich) and another for `webhook` rows (web app and intake), as [ADR 0010](../adr/0010-connecting-sources.md#credentials) decides. Credentials that are one per source, and the accounts connected before that, stay in `*.sops.yaml` Secrets (`infra/docs/flux.md`).
+Each source has two credentials, and they never sit in the same pod. Intake holds the one that **verifies** deliveries, which cannot call any API. That source's enrich worker holds the one that **calls** the API. Per-account credentials go in `source_credentials` ([Storage](#storage)) when an owner connects the account, encrypted by the application with one key for `api` rows (web app and enrich) and another for `webhook` rows (web app and intake), as [ADR 0010](../adr/0010-connecting-sources.md#credentials) decides. Credentials that are one per source, and the accounts connected before that, stay in `*.sops.yaml` Secrets (`docs/flux.md` in the infra repo).
 
 | Source | Inbound: intake verifies | Outbound: enrich calls the API | Scope of the outbound credential |
 |---|---|---|---|
@@ -246,7 +246,7 @@ Postgres runs on the cluster and holds everything stateful. The envelope keeps t
 
 The same `ember` database also holds the web app's sign-in tables, in schema `web` beside these in `public` (EMBER-80). Better Auth creates and migrates them when the web app starts, not dbmate, so they are not in the block below ([`apps/web/README.md`, Database](../../apps/web/README.md#database)).
 
-The SQL below is the source of truth for the schema, and for the SQLAlchemy models in intake and every enrich worker, which map these tables and nothing more. The cluster gets it from the migrations in `infra/k8s/apps/postgres/migrations` (EMBER-61, ADR 0005), and CI fails if those build a different schema from this block. A schema or model change starts here: edit this block, add a migration, then change the models.
+The SQL below is the source of truth for the schema, and for the SQLAlchemy models in intake and every enrich worker, which map these tables and nothing more. The cluster gets it from the migrations in `services/backend/migrations` (EMBER-61, ADR 0005), and CI fails if those build a different schema from this block. A schema or model change starts here: edit this block, add a migration, then change the models.
 
 ```sql
 create table raw_events (
@@ -533,7 +533,7 @@ ember-admin map     --source github --account 12345 --tenant acme
 
 ## Deployment
 
-Everything lives in `infra/k8s/apps` and is deployed by Flux (ADR 0003). Images come from GHCR. The packages are public, so the cluster pulls them without a secret (`docs/container-images.md`).
+Everything lives in `k8s/apps` of the infra repo and is deployed by Flux (ADR 0003). Images come from GHCR. The packages are public, so the cluster pulls them without a secret (`docs/container-images.md`).
 
 | Component | Kubernetes object | Image | Secrets it holds |
 |---|---|---|---|

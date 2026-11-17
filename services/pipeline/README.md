@@ -162,9 +162,6 @@ tunnel its port with `ssh -L 8001:127.0.0.1:8001 shared-dev` and the profile's d
 autossh) so it restarts if it drops (ADR 0008). For `openai-dev` set `OPENAI_API_KEY` and a monthly
 spending limit on the provider account.
 
-Deploy or refresh the servers on the Spark with `infra/spark/deploy-llm.sh` (chat) and
-`infra/spark/deploy.sh` (embeddings).
-
 Check that the models answer (one chat call and one embedding call). The first
 command runs from `services/pipeline`; the docker command runs from the repo root:
 
