@@ -12,8 +12,8 @@ services/github-ingestion/enrich.py onto QueueWorker (EMBER-160), which brings:
 Unchanged: mapped rows are claimed BATCH at a time, one savepoint per row. Before each round every
 claimable row whose event isn't mapped (CI events and the like) is marked enriched in one statement
 (EMBER-92). File lists and compares are fetched once per head and kept in a small LRU. Every call
-waits on and updates the shared `rate_limits` row for the installation, so replicas and the backfill
-respect one limit.
+waits on and updates the shared `rate_limits` row for the installation (work/rate_limits.py), so
+replicas and the backfill respect one limit.
 """
 
 from __future__ import annotations
@@ -23,17 +23,17 @@ import logging
 import time
 from collections import OrderedDict
 from collections.abc import Callable
-from datetime import timedelta
-
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ember.connectors.github import api
+from ember.core import http
 from ember.core.db import Database
-from ember.core.errors import Permanent, Throttled
-from ember.core.models import RateLimit, RawEvent, SourceRecord
+from ember.core.errors import Permanent
+from ember.core.models import RawEvent, SourceRecord
 from ember.work.queue_worker import QueueWorker
+from ember.work.rate_limits import SharedRateLimit
 
 LOG = logging.getLogger("ember.enrich.github")
 
@@ -43,8 +43,6 @@ PR_FILE_ACTIONS = ("opened", "reopened", "synchronize")
 TOKEN_TTL = 50 * 60  # installation tokens last an hour
 INSERT_CHUNK = 1000
 FETCH_CACHE = 500  # file lists and compares kept, least recently used dropped
-# A wait on the shared rate_limits row up to this long is slept out; a longer one sets the row aside
-WAIT_IN_JOB = 30.0
 
 # event: (kind, payload key of the object, object_id pattern, version field)
 OBJECTS = {
@@ -128,11 +126,12 @@ class GitHubEnrich(QueueWorker[RawEvent]):
     model = RawEvent
     connections_per_job = 2  # the claim's transaction, and a short one for rate_limits
 
-    def __init__(self, db: Database, *, app_jwt: Callable[[], str], exchange: api.Exchange = api.urllib_exchange,
+    def __init__(self, db: Database, *, app_jwt: Callable[[], str], exchange: http.Exchange = http.urllib_exchange,
                  concurrency: int = 4, batch: int = 25, poll_seconds: float = 30.0) -> None:
         super().__init__(db, name="enrich:github", concurrency=concurrency, batch=batch, poll_seconds=poll_seconds)
         self.app_jwt = app_jwt
         self.exchange = exchange
+        self.limits = SharedRateLimit(SOURCE, api.LIMITS, lambda: self.sessions)
         self.tokens: dict[str, tuple[str, float]] = {}
         self.fetched: OrderedDict[tuple, asyncio.Future] = OrderedDict()
         self.skipped_unmapped = 0
@@ -215,17 +214,18 @@ class GitHubEnrich(QueueWorker[RawEvent]):
         body = raw.envelope["body"]
         repo = body["repository"]["full_name"]
         bucket = raw.account_id or str(body["installation"]["id"])
-        exchange = self.limited_exchange(raw.tenant, bucket)
+        exchange = self.limits.exchange(raw.tenant, bucket, self.exchange)
         token = await self.token(bucket, repo, exchange)
         url: str | None = f"{api.API}/repos/{repo}{path}?per_page=100"
         pages = []
         while url and len(pages) < api.MAX_PAGES:
-            response = await asyncio.to_thread(api.exchange_with_retry, exchange, "GET", url, api.headers(token), None)
-            pages.append(api.read_json(response, f"GET {path}"))
+            response = await asyncio.to_thread(http.exchange_with_retry, exchange, "GET", url, api.headers(token), None,
+                                               limits=api.LIMITS)
+            pages.append(http.read_json(response, f"GET {path}", api.LIMITS))
             url = api.parse_next_link(response.headers.get("Link") or response.headers.get("link"))
         return pages
 
-    async def token(self, bucket: str, repo: str, exchange: api.Exchange) -> str:
+    async def token(self, bucket: str, repo: str, exchange: http.Exchange) -> str:
         cached = self.tokens.get(bucket)
         if cached and cached[1] > time.monotonic():
             return cached[0]
@@ -233,53 +233,6 @@ class GitHubEnrich(QueueWorker[RawEvent]):
         token = await asyncio.to_thread(api.installation_token, jwt_token, repo, exchange)
         self.tokens[bucket] = (token, time.monotonic() + TOKEN_TTL)
         return token
-
-    def limited_exchange(self, tenant: str, bucket: str) -> api.Exchange:
-        """A blocking exchange, run in a thread, that waits on and updates the shared rate_limits row."""
-        loop = asyncio.get_running_loop()
-
-        def exchange(method: str, url: str, headers: dict[str, str], body: bytes | None) -> api.Response:
-            asyncio.run_coroutine_threadsafe(self.wait_turn(tenant, bucket), loop).result()
-            response = self.exchange(method, url, headers, body)
-            asyncio.run_coroutine_threadsafe(self.record_limit(tenant, bucket, response), loop).result()
-            return response
-
-        return exchange
-
-    def _bucket(self, tenant: str, bucket: str) -> tuple:
-        return (RateLimit.source == SOURCE, RateLimit.tenant == tenant, RateLimit.bucket == bucket)
-
-    async def wait_turn(self, tenant: str, bucket: str) -> None:
-        assert self.sessions is not None
-        async with self.sessions() as session:
-            delay = await session.scalar(
-                select(func.extract("epoch", RateLimit.next_allowed_at - func.now())).where(*self._bucket(tenant, bucket)))
-        if delay is None or delay <= 0:
-            return
-        if delay > WAIT_IN_JOB:  # set the row aside instead of holding its transaction that long
-            raise Throttled(f"installation {bucket} is rate limited", retry_after=float(delay))
-        await asyncio.sleep(float(delay))
-
-    async def record_limit(self, tenant: str, bucket: str, response: api.Response) -> None:
-        lowered = {key.lower(): value for key, value in response.headers.items()}
-        remaining_header = lowered.get("x-ratelimit-remaining", "")
-        remaining = int(remaining_header) if remaining_header.isdigit() else None
-        # A throttle (429, or a 403 that is a limit, not a permission error), else a pause when the
-        # remaining quota is at or under its floor. 5xx backoff stays per request
-        wait = api.rate_limit_wait(response) if api.is_rate_limited(response) else api.throttle_seconds(response) or 0.0
-        statement = insert(RateLimit).values(source=SOURCE, tenant=tenant, bucket=bucket,
-                                             next_allowed_at=func.now() + timedelta(seconds=wait), remaining=remaining)
-        statement = statement.on_conflict_do_update(
-            index_elements=["source", "tenant", "bucket"],
-            set_={
-                # Never shorten a wait another worker recorded
-                "next_allowed_at": func.greatest(RateLimit.next_allowed_at, statement.excluded.next_allowed_at),
-                "remaining": statement.excluded.remaining,
-            },
-        )
-        assert self.sessions is not None
-        async with self.sessions.begin() as session:
-            await session.execute(statement)
 
 
 def missing_app(reason: str) -> Callable[[], str]:

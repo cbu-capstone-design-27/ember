@@ -180,10 +180,10 @@ Connect Jira stores one `api` row per site in `source_credentials` (`account_id`
 
 ## Keeping dynamic webhooks alive
 
-A dynamic webhook lapses 30 days after it was registered or last extended (`PUT /rest/api/3/webhook/refresh`, which moves the expiry to 30 days from now). A refresh token expires after 90 days without use. `services/jira-ingestion/keep_alive.py` runs daily as CronJob `enrich-jira-keep-alive`. For each connected site with an `api` credential, it refreshes the token whether or not it is due, then extends the site's `webhook_ids`.
+A dynamic webhook lapses 30 days after it was registered or last extended (`PUT /rest/api/3/webhook/refresh`, which moves the expiry to 30 days from now). A refresh token expires after 90 days without use. `services/jira-ingestion/keep_alive.py` runs daily as CronJob `enrich-jira-keep-alive`; in `services/backend` it is component `keep-alive:jira`, at the same 10:17 UTC, one replica at a time by a Postgres advisory lock (EMBER-160). For each connected site with an `api` credential, it refreshes the token whether or not it is due, then extends the site's `webhook_ids`.
 
 - **Refresh refused** (`invalid_grant`: the user lost access to the site, revoked the app, or left the token unused for 90 days): it disconnects the site, as Settings' Disconnect does, without the webhook delete that no token can make. Settings then asks for a reconnect. Any other refusal (a wrong client secret, say) is ours to fix, so the site stays connected.
-- **Anything else fails** (Atlassian down, a webhook id it no longer knows): the site is logged and the run exits 1, so the Job shows as failed. The next day's run tries again, well inside the 30 days.
+- **Anything else fails** (Atlassian down, a webhook id it no longer knows): the site is logged and the run exits 1, so the Job shows as failed (in the backend, `/status` shows the run's failed count). The next day's run tries again, well inside the 30 days.
 
 ## Open questions
 

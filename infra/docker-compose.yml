@@ -109,6 +109,12 @@ services:
       GITHUB_APP_PRIVATE_KEY: "${GITHUB_APP_PRIVATE_KEY:-}"
       GITHUB_ENRICH_CONCURRENCY: "${GITHUB_ENRICH_CONCURRENCY:-4}"
       GITHUB_ENRICH_BATCH: "${GITHUB_ENRICH_BATCH:-25}"
+      # enrich:jira and keep-alive:jira: Connect Jira's tokens, opened with the api ring and refreshed with
+      # the 3LO app (JIRA_OAUTH_CLIENT_SECRET above). Without them only the events that need no call go
+      JIRA_OAUTH_CLIENT_ID: "${JIRA_OAUTH_CLIENT_ID:-}"
+      SOURCE_CREDENTIALS_API_KEYS: "${SOURCE_CREDENTIALS_API_KEYS:-}"
+      JIRA_ENRICH_CONCURRENCY: "${JIRA_ENRICH_CONCURRENCY:-4}"
+      JIRA_ENRICH_BATCH: "${JIRA_ENRICH_BATCH:-10}"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
       interval: 10s
