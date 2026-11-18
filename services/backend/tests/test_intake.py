@@ -66,7 +66,7 @@ DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_intake"
 SECRET = "test-webhook-secret"
 # Every connector's workers and scheduled jobs: planned even without their API settings (EMBER-160)
-WORKERS = ["enrich:github", "enrich:jira", "keep-alive:jira"]
+WORKERS = ["enrich:github", "enrich:jira", "keep-alive:jira", "enrich:slack"]
 FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "github.json").read_text())["body"]
 SLACK_SECRET = "test-signing-secret"
 SLACK_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "slack.json").read_text())["body"]
@@ -1136,14 +1136,14 @@ class ProcessTest(unittest.IsolatedAsyncioTestCase):
     def test_ember_components_picks_what_runs(self):
         # The split ADR 0012 describes: intake in one container, the workers in another
         plan = self.check(GITHUB_WEBHOOK_SECRET=SECRET, EMBER_COMPONENTS="enrich:*")
-        self.assertEqual(plan["components"], ["enrich:github", "enrich:jira"])
+        self.assertEqual(plan["components"], ["enrich:github", "enrich:jira", "enrich:slack"])
         self.assertEqual(plan["disabled"]["keep-alive:jira"], "not selected by EMBER_COMPONENTS")
         self.assertEqual(plan["disabled"]["intake"], "not selected by EMBER_COMPONENTS")
         plan = self.check(GITHUB_WEBHOOK_SECRET=SECRET, EMBER_COMPONENTS="intake")
         self.assertEqual(plan["components"], ["intake"])
         self.assertEqual(plan["disabled"]["enrich:github"], "not selected by EMBER_COMPONENTS")
         self.assertEqual(self.check(GITHUB_WEBHOOK_SECRET=SECRET, EMBER_COMPONENTS=" intake , enrich:*")["components"],
-                         ["intake", "enrich:github", "enrich:jira"])
+                         ["intake", "enrich:github", "enrich:jira", "enrich:slack"])
 
     async def start(self, **extra: str) -> tuple[subprocess.Popen, int]:
         port = free_port()
