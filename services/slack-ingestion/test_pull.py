@@ -50,7 +50,7 @@ HISTORY = {
         {
             "type": "message",
             "user": "U0ADA",
-            "text": "Decision: use Neo4j for the graph.",
+            "text": "Decision: use Postgres for the graph.",
             "ts": "1700000100.000100",
             "thread_ts": "1700000100.000100",
             "reply_count": 2,
@@ -60,8 +60,8 @@ HISTORY = {
 }
 REPLIES = {
     ("C0DEC", "1700000100.000100"): [
-        {"type": "message", "user": "U0ADA", "text": "Decision: use Neo4j for the graph.", "ts": "1700000100.000100", "thread_ts": "1700000100.000100", "reply_count": 2},
-        {"type": "message", "user": "U0ADA", "text": "Because of Cypher.", "ts": "1700000200.000100", "thread_ts": "1700000100.000100"},
+        {"type": "message", "user": "U0ADA", "text": "Decision: use Postgres for the graph.", "ts": "1700000100.000100", "thread_ts": "1700000100.000100", "reply_count": 2},
+        {"type": "message", "user": "U0ADA", "text": "Because of SQL.", "ts": "1700000200.000100", "thread_ts": "1700000100.000100"},
         {"type": "message", "subtype": "thread_broadcast", "user": "U0ADA", "text": "Also sent to channel", "ts": "1700000250.000100", "thread_ts": "1700000100.000100"},
     ]
 }
@@ -176,8 +176,8 @@ class PullFlowTest(unittest.TestCase):
                 "U0ADA",
                 "U0BOT",
                 "C0DEC",
-                "Decision: use Neo4j for the graph.",
-                "Because of Cypher.",
+                "Decision: use Postgres for the graph.",
+                "Because of SQL.",
                 "Also sent to channel",
                 "Follow-up",
                 "G0PRIV",
@@ -230,7 +230,7 @@ class PullFlowTest(unittest.TestCase):
         reply_calls = [p for m, p in fake.calls if m == "conversations.replies"]
         self.assertEqual({(p["channel"], p["ts"]) for p in reply_calls}, {("C0DEC", "1700000100.000100")})
         texts = [b.get("text") for b in got]
-        self.assertEqual(texts.count("Decision: use Neo4j for the graph."), 1)
+        self.assertEqual(texts.count("Decision: use Postgres for the graph."), 1)
         self.assertEqual(texts.count("Also sent to channel"), 1)
 
     def test_cursor_pages_are_followed(self):
@@ -400,9 +400,9 @@ class ReadableOutputTest(unittest.TestCase):
         self.assertIn("#decisions (C0DEC, public)", summary)
         self.assertIn("#core-team (G0PRIV, private)", summary)
         self.assertIn("Ember (U0BOT) bot", summary)
-        self.assertIn("#decisions 2023-11-14 22:15 Ada — Decision: use Neo4j for the graph. (2 replies)", summary)
+        self.assertIn("#decisions 2023-11-14 22:15 Ada — Decision: use Postgres for the graph. (2 replies)", summary)
         self.assertIn("  ↳ #decisions", summary)
-        self.assertIn("Because of Cypher.", summary)
+        self.assertIn("Because of SQL.", summary)
 
     def test_summary_from_file_matches_in_memory(self):
         envelopes = run(FakeSlack())

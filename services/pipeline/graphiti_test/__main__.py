@@ -1,11 +1,13 @@
-"""Stock Graphiti on Neo4j with the photon data (EMBER-146). From services/pipeline:
+"""Graphiti on Ember's Postgres graph tables (the fork's PostgresDriver) with the photon data (EMBER-146). From
+services/pipeline:
 
     python -m graphiti_test run --tenant photon --limit 40 --fake --out ../../data/out/graphiti-fake
     python -m graphiti_test run --tenant photon --limit 40 --profile local-spark --out ../../data/out/graphiti-spark
     python -m graphiti_test diff ../../data/out/a/reference.json ../../data/out/b/reference.json
 
-Reads NEO4J_URI (default bolt://localhost:7687), NEO4J_USER, NEO4J_PASSWORD and NEO4J_DATABASE, plus the key variables
-the profile names. Rerun with the same --out to resume. Exit 0 clean, 1 failures (or differences, for diff), 2 could
+Writes into the Postgres at --database-url or GRAPHITI_TEST_DATABASE_URL (a local one with the repo's migrations,
+never the cluster's), in graphs of its own (graph.graphs scope `graphiti-test`), and reads the key variables the profile
+names. Rerun with the same --out to resume. Exit 0 clean, 1 failures (or differences, for diff), 2 could
 not start. Steps and caveats: docs/research/graphiti-test.md.
 """
 
@@ -32,8 +34,8 @@ def main(argv=None) -> int:
     run.add_argument("--fake", action="store_true", help="use the local fake models; output is not meaningful for "
                                                          "quality or cost")
     run.add_argument("--out", required=True, help="folder for the ledger and the reference; reuse it to resume")
-    run.add_argument("--neo4j-uri", default=None)
-    run.add_argument("--reset", action="store_true", help="delete this tenant's subgraphs and the ledger first")
+    run.add_argument("--database-url", default=None, help="default GRAPHITI_TEST_DATABASE_URL")
+    run.add_argument("--reset", action="store_true", help="empty this tenant's harness graphs and the ledger first")
     run.add_argument("--concurrency", type=int, default=4, help="Graphiti's max_coroutines, per gather")
     run.add_argument("--structured-mode", default="json_schema", choices=["json_schema", "json_object"],
                      help="how OpenAIGenericClient asks for structured output")
@@ -65,7 +67,7 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     if not args.verbose:  # request logs would drown the progress lines
-        for noisy in ("httpx", "httpcore", "openai", "neo4j", "graphiti_core"):
+        for noisy in ("httpx", "httpcore", "openai", "graphiti_core"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
 
     from .run import SetupError, run as execute

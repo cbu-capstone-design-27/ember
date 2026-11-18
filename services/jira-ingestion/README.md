@@ -88,7 +88,7 @@ python3 services/jira-ingestion/receiver.py
 
 `JIRA_INGESTION_PORT` defaults to `8081`.
 
-Own container, optional compose profile. A plain `up` still starts only Neo4j:
+Own container, optional compose profile:
 
 ```sh
 docker compose -f infra/docker-compose.yml --env-file .env \

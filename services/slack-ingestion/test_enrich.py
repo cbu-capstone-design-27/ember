@@ -52,7 +52,7 @@ USERS = {
 CHANNELS = {
     CHANNEL: {"id": CHANNEL, "name": "decisions", "is_private": False, "created": 1690000000, "updated": 1700000000123},
 }
-PARENT = {"type": "message", "user": "U0ADA", "text": "Decision: use Neo4j.", "ts": "1700000100.000100", "thread_ts": "1700000100.000100", "reply_count": 1}
+PARENT = {"type": "message", "user": "U0ADA", "text": "Decision: use Postgres.", "ts": "1700000100.000100", "thread_ts": "1700000100.000100", "reply_count": 1}
 THREADS = {(CHANNEL, PARENT["ts"]): [PARENT]}
 
 

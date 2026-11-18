@@ -300,7 +300,7 @@ class EmbedTest(unittest.IsolatedAsyncioTestCase):
     async def test_cosine_nearest_neighbours_use_the_hnsw_index(self):
         ids = {text: await self.insert("slack", "message", {"payload": {"text": text}}) for text in (
             "login redirect drops the query string", "postgres backup schedule", "slack bot token rotation",
-            "neo4j memory settings", "grafana dashboard for intake")}
+            "redis memory settings", "grafana dashboard for intake")}
         await self.drain(self.worker())
 
         query = """select id from source_records where embedding is not null

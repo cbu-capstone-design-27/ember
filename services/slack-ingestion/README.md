@@ -81,7 +81,7 @@ Edits arrive as `message` with `subtype: message_changed` (new text in `event.me
 python3 services/slack-ingestion/receiver.py
 ```
 
-Own container, optional compose profile. A plain `up` still starts only Neo4j:
+Own container, optional compose profile:
 
 ```sh
 docker compose -f infra/docker-compose.yml --env-file .env \

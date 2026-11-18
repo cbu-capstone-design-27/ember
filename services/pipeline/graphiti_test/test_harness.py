@@ -16,7 +16,6 @@ from types import SimpleNamespace
 from unittest import mock
 
 import httpx
-from ontology import subgraph_id
 
 from graphiti_test import fake_models
 from graphiti_test.__main__ import main
@@ -54,8 +53,11 @@ class Stub:
         return SimpleNamespace(nodes=[1, 2], edges=[1])
 
 
+GROUPS = {"jira": "photon_jira_1", "slack": "photon_slack_2"}
+
+
 def run_ingest(stub, rows, ledger, counters=None, existing=frozenset(), secrets=()):
-    return asyncio.run(ingest(stub, rows, "photon", ledger, counters or Counters(), lambda name: name,
+    return asyncio.run(ingest(stub, rows, GROUPS, ledger, counters or Counters(), lambda name: name,
                               set(existing), secrets))
 
 
@@ -120,7 +122,7 @@ class Ingest(unittest.TestCase):
         self.assertEqual(summary["ok"], 6)
         self.assertEqual([c["name"] for c in stub.calls], [r.name for r in self.rows])
         for call, row in zip(stub.calls, self.rows):
-            self.assertEqual(call["group_id"], subgraph_id("photon", row.source))
+            self.assertEqual(call["group_id"], GROUPS[row.source])
             self.assertEqual(call["reference_time"], row.occurred_at)
             self.assertIn("WorkItem", call["entity_types"])
             self.assertIn(("Person", "WorkItem"), call["edge_type_map"])
@@ -254,7 +256,7 @@ def reference(**overrides):
     arguments = dict(
         fake=True,
         engine={"graphiti_core": "0.31.2",
-                "server": {"name": "Neo4j Kernel", "version": "5.26", "edition": "community"}},
+                "server": {"name": "PostgreSQL", "version": "17.6", "edition": "pgvector 0.8.1"}},
         models={"profile": "local-spark"},
         run={"tenant": "photon", "limit": 2, "selected": ["b", "a"]},
         ingest={"ok": 1, "failed": 1, "skipped": 0, "out_of_order": 0, "stopped_early": False},
@@ -269,7 +271,7 @@ def reference(**overrides):
         temporal={"query": "q", "invalidated": [{"fact": "old", "valid_at": "t0", "invalid_at": "t1"}],
                   "old_fact_seen_before": True, "old_fact_ended": True, "old_fact_gone_after": True},
         resend={"entities_added": 0, "edges_added": 0, "episodes_added": 1},
-        compatibility={"indexes_online": 3, "indexes_not_online": 0, "index_build_error": None, "notifications": {}},
+        compatibility={"indexes_online": 3, "indexes_not_online": 0, "index_build_error": None},
     )
     return build_reference(**{**arguments, **overrides})
 
@@ -430,24 +432,24 @@ class FakeModelTests(unittest.TestCase):
 
 
 class Boundaries(unittest.TestCase):
-    def test_no_cluster_neo4j_and_no_missing_password(self):
-        from graphiti_test.run import SetupError, neo4j_settings
+    def test_no_cluster_postgres_and_no_missing_url(self):
+        from graphiti_test.run import SetupError, database_url
 
-        for uri in ("bolt://hv-worker-1:7687", "bolt://neo4j.tail1234.ts.net:7687", "bolt://100.101.102.103:7687",
-                    "bolt://[fd7a:115c:a1e0::1]:7687"):
+        for url in ("postgresql://u:p@hv-worker-1:5432/ember", "postgresql://u:p@pg.tail1234.ts.net/ember",
+                    "postgresql://u:p@100.101.102.103:5432/ember", "postgresql://u:p@[fd7a:115c:a1e0::1]:5432/ember"):
             with self.assertRaises(SetupError):
-                neo4j_settings(SimpleNamespace(neo4j_uri=uri), {"NEO4J_PASSWORD": "x"})
-        tailnet_alias = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.66.59.107", 7687))]
+                database_url(SimpleNamespace(database_url=url), {})
+        tailnet_alias = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.66.59.107", 5432))]
         with mock.patch("socket.getaddrinfo", return_value=tailnet_alias), self.assertRaises(SetupError):
-            neo4j_settings(SimpleNamespace(neo4j_uri="bolt://graph-alias:7687"), {"NEO4J_PASSWORD": "x"})
-        for uri in ("bolt://127.0.0.1:7687", "bolt://neo4j-test:7687"):  # loopback, and a local container's name
-            local = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.18.0.2", 7687))]
+            database_url(SimpleNamespace(database_url="postgresql://u:p@graph-alias/ember"), {})
+        for url in ("postgresql://u:p@127.0.0.1:5432/ember", "postgresql://u:p@postgres-test/ember"):  # loopback, a container
+            local = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.18.0.2", 5432))]
             with mock.patch("socket.getaddrinfo", return_value=local):
-                self.assertEqual(neo4j_settings(SimpleNamespace(neo4j_uri=uri), {"NEO4J_PASSWORD": "x"})[0], uri)
+                self.assertEqual(database_url(SimpleNamespace(database_url=url), {}), url)
         with self.assertRaises(SetupError):
-            neo4j_settings(SimpleNamespace(neo4j_uri="bolt://localhost:7687"), {})
-        settings = neo4j_settings(SimpleNamespace(neo4j_uri=None), {"NEO4J_PASSWORD": "x"})
-        self.assertEqual(settings[0], "bolt://localhost:7687")
+            database_url(SimpleNamespace(database_url=None), {})
+        env = {"GRAPHITI_TEST_DATABASE_URL": "postgresql://u:p@localhost/ember"}
+        self.assertEqual(database_url(SimpleNamespace(database_url=None), env), env["GRAPHITI_TEST_DATABASE_URL"])
 
     def test_only_the_made_up_tenant_is_accepted(self):
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):

@@ -7,7 +7,6 @@ import ipaddress
 import json
 import logging
 import os
-import re
 import socket
 import sys
 from importlib.metadata import version
@@ -16,7 +15,7 @@ from urllib.parse import urlsplit
 
 from models.client import DEFAULT_TASK
 from models.config import Profile, load_profile
-from ontology import subgraph_id, tenant_subgraphs
+from ontology import subgraph_id
 
 from .data import load_rows, questions, select_rows
 from .fake_models import KEY as FAKE_KEY
@@ -64,34 +63,38 @@ def _is_cluster_host(host: str) -> bool:
         return False
 
 
-def neo4j_settings(args, env=os.environ) -> tuple[str, str, str, str]:
-    uri = args.neo4j_uri or env.get("NEO4J_URI") or "bolt://localhost:7687"
-    host = urlsplit(uri).hostname or ""
+def database_url(args, env=os.environ) -> str:
+    """The Postgres the harness writes Graphiti's graph into: --database-url or GRAPHITI_TEST_DATABASE_URL."""
+    url = args.database_url or env.get("GRAPHITI_TEST_DATABASE_URL")
+    if not url:
+        raise SetupError("set --database-url or GRAPHITI_TEST_DATABASE_URL (a local, migrated Postgres)")
+    host = urlsplit(url).hostname or ""
     if _is_cluster_host(host):
-        raise SetupError(f"refusing {host}: this harness adds Graphiti's indexes and data to the graph it is given, "
-                         "so it takes a throwaway Neo4j, never the cluster's")
-    password = env.get("NEO4J_PASSWORD")
-    if not password:
-        raise SetupError("NEO4J_PASSWORD is not set")
-    return uri, env.get("NEO4J_USER", "neo4j"), password, env.get("NEO4J_DATABASE", "neo4j")
+        raise SetupError(f"refusing {host}: this harness writes Graphiti's data into the graph tables it is given, "
+                         "so it takes a throwaway Postgres, never the cluster's")
+    return url
 
 
-class _NotificationLog(logging.Handler):
-    """The Neo4j driver logs what the server says about a query: deprecations, for instance. Those are compatibility
-    evidence."""
-
-    def __init__(self) -> None:
-        super().__init__(logging.WARNING)
-        self.seen: dict[str, int] = {}
-
-    def emit(self, record: logging.LogRecord) -> None:
-        text = record.getMessage()
-        match = re.search(r"gql_status='([^']*)', status_description='([^']*)'", text)
-        key = f"{match.group(1)} {match.group(2)}" if match else text.split("\n")[0][:300]
-        self.seen[key] = self.seen.get(key, 0) + 1
+SCOPE = "graphiti-test"  # graph.graphs.scope of the harness's own graphs, so they never mix with the loader's
 
 
-async def _resend_check(graphiti, reader, rows, tenant, groups, episode_type, marker: Path) -> dict | None:
+async def harness_graphs(driver, tenant: str, sources: list[str]) -> dict[str, str]:
+    """One graph per source for this tenant, created once: source -> Graphiti group_id ({tenant}_{source}_{id})."""
+    async with driver.connection() as conn:
+        for source in sources:
+            await conn.execute(
+                "insert into graph.graphs (tenant, source, scope, name, group_id) "
+                "values ($1, $2, $3, $4, $1 || '_' || $2 || '_pending') on conflict (tenant, source, scope) do nothing",
+                tenant, source, SCOPE, f"Graphiti test ({source})")
+            await conn.execute(
+                "update graph.graphs set group_id = tenant || '_' || source || '_' || id "
+                "where tenant = $1 and source = $2 and scope = $3", tenant, source, SCOPE)
+        rows = await conn.fetch("select source, group_id from graph.graphs where tenant = $1 and scope = $2 "
+                                "and source = any($3::text[])", tenant, SCOPE, sources)
+    return {r["source"]: r["group_id"] for r in rows}
+
+
+async def _resend_check(graphiti, reader, rows, groups: dict[str, str], episode_type, marker: Path) -> dict | None:
     """ADR 0002 criterion 2: the first row again, as a source's retry would. Graphiti has no idempotency key of its
     own, so this is what a duplicate does if nothing upstream stops it. Runs once per graph."""
     from ontology import EDGE_TYPE_MAP, EDGE_TYPES, ENTITY_TYPES
@@ -105,8 +108,8 @@ async def _resend_check(graphiti, reader, rows, tenant, groups, episode_type, ma
         return None
 
     async def totals():
-        reports = [await reader.group_report(g) for g in groups]
-        names = await reader.episode_names(groups)
+        reports = [await reader.group_report(g) for g in groups.values()]
+        names = await reader.episode_names(list(groups.values()))
         return {"entities": sum(r["entities"] for r in reports), "edges": sum(r["edges"] for r in reports),
                 "episodes": len(names)}
 
@@ -115,7 +118,7 @@ async def _resend_check(graphiti, reader, rows, tenant, groups, episode_type, ma
     arguments = render(row)
     arguments["source"] = episode_type(arguments["source"])
     arguments["name"] += RESEND_SUFFIX
-    await graphiti.add_episode(**arguments, reference_time=row.occurred_at, group_id=subgraph_id(tenant, row.source),
+    await graphiti.add_episode(**arguments, reference_time=row.occurred_at, group_id=groups[row.source],
                                entity_types=ENTITY_TYPES, edge_types=EDGE_TYPES, edge_type_map=EDGE_TYPE_MAP)
     after = await totals()
     result = {"record": row.name, "entities_added": after["entities"] - before["entities"],
@@ -126,6 +129,7 @@ async def _resend_check(graphiti, reader, rows, tenant, groups, episode_type, ma
 
 async def run(args) -> int:
     out = Path(args.out)
+    url = database_url(args)  # before the fake models start, so a refusal leaves nothing running
     profile = load_profile(args.profile)
     fake = FakeModels(profile.embedding_dimensions) if args.fake else None
     if fake:
@@ -134,52 +138,47 @@ async def run(args) -> int:
         llm_key = embedding_key = FAKE_KEY
     else:
         llm_key, embedding_key = profile.llm_key(), profile.embedding_key()
-    secrets = (llm_key, embedding_key, os.environ.get("NEO4J_PASSWORD", ""))
+    secrets = (llm_key, embedding_key, urlsplit(url).password or "")
     try:
-        return await _run(args, out, profile, llm_key, embedding_key, secrets, bool(fake))
+        return await _run(args, url, out, profile, llm_key, embedding_key, secrets, bool(fake))
     finally:
         if fake:
             fake.__exit__()
 
 
-async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> int:
+async def _run(args, url, out, profile, llm_key, embedding_key, secrets, is_fake) -> int:
     _graphiti_environment(profile)
-    uri, user, password, database = neo4j_settings(args)
 
     from graphiti_core import Graphiti
-    from graphiti_core.driver.neo4j_driver import Neo4jDriver
+    from graphiti_core.driver.postgres_driver import PostgresDriver
     from graphiti_core.nodes import EpisodeType
 
     from .clients import build_clients
     from .graph_reader import GraphReader
     from .search_suite import run_search, run_temporal
 
-    notifications = _NotificationLog()
-    neo4j_log = logging.getLogger("neo4j")  # neo4j.notifications propagates here
-    neo4j_log.addHandler(notifications)
-    neo4j_log.propagate = bool(args.verbose)  # counted in the reference; one line per query would drown the log
-
     all_rows = list(load_rows())
     rows = select_rows(all_rows, args.limit)
-    groups = tenant_subgraphs(args.tenant)
     counters = Counters()
 
-    driver = Neo4jDriver(uri, user, password, database)
+    driver = PostgresDriver(url, tenants=[args.tenant])
     graphiti = Graphiti(graph_driver=driver, max_coroutines=args.concurrency,
                         **build_clients(profile, llm_key, embedding_key, counters, args.structured_mode))
     reader = GraphReader(driver)
     ledger = Ledger(out / "episodes.jsonl")
     resend_marker = out / "resend.json"
     try:
+        groups = await harness_graphs(driver, args.tenant, sorted({r.source for r in all_rows}))
+        group_list = list(groups.values())
         if args.reset:
-            await reader.reset(groups)
+            await reader.reset(group_list)
             ledger.clear()
             resend_marker.unlink(missing_ok=True)
 
         index_error = None
         try:
             await graphiti.build_indices_and_constraints()
-        except Exception as exc:  # noqa: BLE001  whether this works is the question on a new Neo4j
+        except Exception as exc:  # noqa: BLE001  a no-op on Postgres (migrations own the schema); recorded if not
             index_error = f"{type(exc).__name__}: {describe_error(exc, secrets)}"
             log.error("index build failed: %s", index_error)
         indexes = await reader.indexes()
@@ -188,26 +187,27 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
         vector_of = await _query_embedder(graphiti, profile)
         await vector_of("dimension check")  # a wrong dimension should stop the run now, not at the first search
 
-        existing = await reader.episode_names(groups)
-        summary = await ingest(graphiti, rows, args.tenant, ledger, counters, lambda name: EpisodeType[name],
+        existing = await reader.episode_names(group_list)
+        summary = await ingest(graphiti, rows, groups, ledger, counters, lambda name: EpisodeType[name],
                                existing, secrets)
 
-        graph = {g: await reader.group_report(g) for g in groups}
+        # Keyed {tenant}_{source}, not by group_id, whose id differs between databases, so references compare.
+        graph = {subgraph_id(args.tenant, s): await reader.group_report(g) for s, g in groups.items()}
         graph = {g: r for g, r in graph.items() if r["episodes"] or r["entities"]}
         before = counters.snapshot()
-        search, measures = await run_search(graphiti, reader, counters, groups, questions(all_rows), vector_of, secrets)
+        search, measures = await run_search(graphiti, reader, counters, group_list, questions(all_rows), vector_of, secrets)
         search_cost = delta(counters.snapshot(), before)
-        temporal = await run_temporal(graphiti, reader, groups, vector_of)
+        temporal = await run_temporal(graphiti, reader, group_list, vector_of)
         resend = None
         if not args.no_resend_check and not summary["stopped_early"]:
-            resend = await _resend_check(graphiti, reader, rows, args.tenant, groups,
+            resend = await _resend_check(graphiti, reader, rows, groups,
                                          lambda name: EpisodeType[name], resend_marker)
 
         online = [i for i in indexes if i["state"] == "ONLINE"]
         reference = build_reference(
             fake=is_fake,
-            engine={"graphiti_core": version("graphiti-core"), "neo4j_driver": version("neo4j"),
-                    "openai": version("openai"), "httpx": version("httpx"), "backend": "neo4j", "server": server},
+            engine={"graphiti_core": version("graphiti-core"), "asyncpg": version("asyncpg"),
+                    "openai": version("openai"), "httpx": version("httpx"), "backend": "postgres", "server": server},
             models={"profile": profile.name, "llm_model": profile.llm_model, "embedding_model": profile.embedding_model,
                     "embedding_dimensions": profile.embedding_dimensions, "send_dimensions": profile.send_dimensions,
                     "query_template": profile.query_template, "query_task": DEFAULT_TASK,
@@ -218,11 +218,10 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
             ingest={**summary, "search_cost": search_cost},
             ledger_entries={r.name: ledger.entries[r.name] for r in rows if r.name in ledger.entries},
             graph=graph,
-            isolation={"crossing_edges": await reader.crossing_edges(groups)},
+            isolation={"crossing_edges": await reader.crossing_edges(group_list)},
             search=search, search_measures=measures, temporal=temporal, resend=resend,
             compatibility={"indexes_online": len(online), "indexes_not_online": len(indexes) - len(online),
-                           "index_build_error": index_error, "indexes": indexes,
-                           "notifications": notifications.seen},
+                           "index_build_error": index_error, "indexes": indexes},
         )
         json_path, md_path = write_reference(reference, out, counters.structured_failures)
         log.info("wrote %s and %s", json_path, md_path)
@@ -232,7 +231,6 @@ async def _run(args, out, profile, llm_key, embedding_key, secrets, is_fake) -> 
         return 1 if failed else 0
     finally:
         await graphiti.close()
-        neo4j_log.removeHandler(notifications)
 
 
 async def _query_embedder(graphiti, profile: Profile):
