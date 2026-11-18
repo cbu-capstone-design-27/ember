@@ -103,3 +103,15 @@ class RateLimit(Base):
     bucket: Mapped[str] = mapped_column(Text, primary_key=True)
     next_allowed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     remaining: Mapped[int | None] = mapped_column(Integer)
+
+
+class Cursor(Base):
+    """How far a reconcile or backfill has read one stream of one tenant's source (architecture.md, Storage)."""
+
+    __tablename__ = "cursors"
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    tenant: Mapped[str] = mapped_column(Text, primary_key=True)
+    stream: Mapped[str] = mapped_column(Text, primary_key=True)
+    position: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

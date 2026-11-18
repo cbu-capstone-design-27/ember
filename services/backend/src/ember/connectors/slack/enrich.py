@@ -56,6 +56,25 @@ class TokenRefused(Permanent):
     """Slack refused the workspace's bot token: it was revoked, or the app uninstalled."""
 
 
+async def api(limits: SharedRateLimit, exchange: http.Exchange, tenant: str, team: str, token: str, method: str,
+              params: dict) -> dict | None:
+    """One Web API call, waiting on the workspace's `rate_limits` row for that method. The body, or None when
+    Slack found nothing. A refused token is TokenRefused; a rate limit Throttled."""
+    paced = limits.exchange(tenant, f"{team}/{method}", exchange)
+    headers = {"Authorization": f"Bearer {token}", "User-Agent": http.USER_AGENT}
+    response = await asyncio.to_thread(http.exchange_with_retry, paced, "GET", f"{API}/{method}?{urlencode(params)}",
+                                       headers, None, limits=LIMITS)
+    body = http.read_json(response, method, LIMITS)
+    if body.get("ok"):
+        return body
+    error = body.get("error", "no error code")
+    if error in MISSES:
+        return None
+    if error in REFUSED:
+        raise TokenRefused(f"{method}: {error}")
+    raise (Permanent if error == "missing_scope" else Transient)(f"{method}: {error}")
+
+
 def _str(value) -> str | None:
     return value if isinstance(value, str) and value else None
 
@@ -135,19 +154,9 @@ class Job:
 
     async def call(self, method: str, params: dict, field: str):
         """One Web API call's `field`, or None when Slack found nothing."""
-        exchange = self.worker.limits.exchange(self.raw.tenant, f"{self.raw.account_id}/{method}", self.worker.exchange)
-        headers = {"Authorization": f"Bearer {self.token}", "User-Agent": http.USER_AGENT}
-        response = await asyncio.to_thread(http.exchange_with_retry, exchange, "GET",
-                                           f"{API}/{method}?{urlencode(params)}", headers, None, limits=LIMITS)
-        body = http.read_json(response, method, LIMITS)
-        if body.get("ok"):
-            return body.get(field)
-        error = body.get("error", "no error code")
-        if error in MISSES:
-            return None
-        if error in REFUSED:
-            raise TokenRefused(f"{method}: {error}")
-        raise (Permanent if error == "missing_scope" else Transient)(f"{method}: {error}")
+        body = await api(self.worker.limits, self.worker.exchange, self.raw.tenant, self.raw.account_id, self.token,
+                         method, params)
+        return None if body is None else body.get(field)
 
     async def user(self, user_id: str | None, when: datetime, *, fetch: bool = True) -> dict | None:
         if user_id is None:

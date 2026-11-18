@@ -1,6 +1,6 @@
 # services/backend
 
-`ember-backend` is Ember's Python backend in one image and one process (EMBER-160, [ADR 0012](../../docs/adr/0012-one-backend-image.md)). It holds intake (the webhook listener), `enrich:github`, `enrich:jira`, Jira's keep-alive and `enrich:slack` today. GitLab's enrich worker and embed move in one connector at a time, and each old service is deleted once this image does its job.
+`ember-backend` is Ember's Python backend in one image and one process (EMBER-160, [ADR 0012](../../docs/adr/0012-one-backend-image.md)). It holds intake (the webhook listener), `enrich:github`, `enrich:jira`, Jira's keep-alive, `enrich:slack` and `backfill:slack` today. GitLab's enrich worker and embed move in one connector at a time, and each old service is deleted once this image does its job.
 
 The design of each stage is unchanged: [`docs/ingestion/architecture.md`](../../docs/ingestion/architecture.md). What changes is how the stages are packaged: one process runs every component, and one bad source can't take down the rest.
 
@@ -17,6 +17,7 @@ python -m ember run
             ├─ enrich:jira    raw_events -> source_records (connectors/jira/enrich.py)
             ├─ keep-alive:jira  daily at 10:17 UTC: refresh Connect Jira's tokens, extend its webhooks
             ├─ enrich:slack   raw_events -> source_records (connectors/slack/enrich.py)
+            ├─ backfill:slack  connected workspaces' channel history -> raw_events (connectors/slack/backfill.py)
             └─ enrich:<source>, …   as the other connectors move in
 ```
 
@@ -97,6 +98,7 @@ Only `DATABASE_URL` is required. Everything else turns a part on.
 | `JIRA_ENRICH_CONCURRENCY`, `JIRA_ENRICH_BATCH` | `enrich:jira`'s jobs at once (default 4) and rows per job (default 10) |
 | `SOURCE_CREDENTIALS_API_KEYS` (again) | `enrich:slack` opens the bot token Connect Slack stored for each workspace with it, and doesn't start without it. A workspace's rows wait, unclaimed, until it is connected to their tenant |
 | `SLACK_ENRICH_CONCURRENCY`, `SLACK_ENRICH_BATCH` | `enrich:slack`'s jobs at once (default 4) and rows per job (default 10) |
+| `SLACK_BACKFILL_EVERY_HOURS` | How often `backfill:slack` catches each connected workspace up (default 1). A new connection is read within 30 s. Needs the api ring too |
 
 Secrets with leading or trailing whitespace are refused, since no signature would match them. Messages name the variable, never its value.
 
@@ -142,7 +144,7 @@ PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' p
 - `test_runtime.py`: the supervisor (restart, backoff, isolation, shutdown order), the queue worker (wake, catch-up, ordering, concurrency, replicas, failures, stop, reconnect), and the controller with a broken connector beside a working one.
 - `test_intake.py`: intake's contract for every source, carried over from `services/intake`, and `python -m ember` as the container runs it.
 - `test_enrich_github.py`: `enrich:github`'s records, fetches, ordering, bulk skip, rate limits and failure classes against a stubbed GitHub, carried over from `services/github-ingestion/test_enrich.py`, and how `GITHUB_APP_*` become the App's JWT.
-- `test_enrich_slack.py`: `enrich:slack`'s records for messages (replies, edits, deletes), channels, people and membership, fetching only what isn't stored, waiting for a connected workspace, disconnecting on a refused token, an uninstall or our bot's revoked token (but not over a newer reconnect), and rate limits, against a stubbed Slack.
+- `test_enrich_slack.py`: `backfill:slack`'s rows, cursors, catch-up passes, rate-limit waits and disconnects, and `enrich:slack`'s records for messages (replies, edits, deletes), channels, people and membership, fetching only what isn't stored, waiting for a connected workspace, disconnecting on a refused token, an uninstall or our bot's revoked token (but not over a newer reconnect), and rate limits, against a stubbed Slack.
 - `test_migrations.py`: the migrations apply, roll back, and build exactly the schema `docs/ingestion/architecture.md` defines.
 - `test_enrich_jira.py`: `enrich:jira`'s records, issue fetches, token refresh, rate limits and failure classes, and `keep-alive:jira`'s refresh, disconnect, advisory lock and schedule, against a stubbed Atlassian. Carried over from `services/jira-ingestion/test_enrich.py` and `test_keep_alive.py`.
 

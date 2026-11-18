@@ -139,7 +139,7 @@ Workers need the time Slack says the thing happened. EMBER-63 stores it in `raw_
 
 ## Known gaps and catch-up
 
-Catch-up is the Slack reconcile (today's `services/slack-ingestion/pull_test.py`, becoming `Enricher.reconcile`). It runs per channel from a cursor (`cursors`, stream `channel:<id>`). It reads `conversations.history` since the cursor, then `conversations.replies` for each thread that changed.
+Catch-up is `backfill:slack` in `ember-backend` (`connectors/slack/backfill.py`, EMBER-160), which replaces `services/slack-ingestion/pull_test.py`. It reads a workspace within 30 s of its connection, then every `SLACK_BACKFILL_EVERY_HOURS` (default 1): every channel the bot is in, `conversations.history` since the channel's cursor (`cursors`, stream `channel:<id>`) and `conversations.replies` for each thread in it. Each message becomes a `raw_events` row with origin `reconcile`, shaped as its webhook delivery (an edited message as `message_changed`), so `enrich:slack` reads it unchanged. Not covered yet: a new reply to a thread older than the cursor, if its live event was lost.
 
 | Gap | What happens | Catch-up |
 |---|---|---|

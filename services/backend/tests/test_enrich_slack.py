@@ -30,6 +30,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO / "packages" / "source-credentials"))
 
+from ember.connectors.slack.backfill import SlackBackfill, Stopped  # noqa: E402
 from ember.connectors.slack.enrich import SlackEnrich  # noqa: E402
 from ember.core.credentials import Credentials  # noqa: E402
 from ember.core.db import Database  # noqa: E402
@@ -94,13 +95,18 @@ class Slack:
 
     def __init__(self, **answers: list[Response]) -> None:
         self.answers = {method.replace("_", "."): list(responses) for method, responses in answers.items()}
-        self.messages: dict[str, dict] = {}
+        self.messages: dict[str, dict] = {}   # thread parents conversations.replies finds, by ts
+        self.channels: list[dict] = []          # the bot's channels (users.conversations)
+        self.history: dict[str, list[dict]] = {}  # channel id: its messages, newest first
+        self.replies: dict[str, list[dict]] = {}  # thread ts: parent then replies
         self.calls: list[str] = []
+        self.params: list[dict] = []
 
     def __call__(self, method: str, url: str, headers: dict[str, str], body: bytes | None) -> Response:
         parts = urlsplit(url)
         name, query = parts.path.removeprefix("/api/"), {k: v[0] for k, v in parse_qs(parts.query).items()}
         self.calls.append(name)
+        self.params.append(query)
         if self.answers.get(name):
             return self.answers[name].pop(0)
         if headers.get("Authorization") != f"Bearer {TOKEN}":
@@ -109,20 +115,34 @@ class Slack:
             return self.ok(user=ALICE) if query["user"] == "U1" else self.ok(False, error="user_not_found")
         if name == "conversations.info":
             return self.ok(channel=CHANNEL) if query["channel"] == "C1" else self.ok(False, error="channel_not_found")
+        if name == "users.conversations":
+            return self.page(self.channels, query, "channels")
+        if name == "conversations.history":
+            newer = [m for m in self.history.get(query["channel"], []) if float(m["ts"]) > float(query["oldest"])]
+            return self.page(newer, query, "messages")
+        if name == "conversations.replies" and query["ts"] in self.replies:
+            return self.page(self.replies[query["ts"]], query, "messages")
         if name == "conversations.replies":
             found = self.messages.get(query["ts"])
             return self.ok(messages=[found]) if found else self.ok(False, error="thread_not_found")
         return Response(404, {}, b"")
+
+    def page(self, items: list, query: dict, field: str, size: int = 2) -> Response:
+        """Two items a page, with Slack's cursor paging."""
+        start = int(query.get("cursor") or 0)
+        rest = start + size < len(items)
+        return self.ok(**{field: items[start:start + size]},
+                       response_metadata={"next_cursor": str(start + size) if rest else ""})
 
     @staticmethod
     def ok(ok: bool = True, **fields) -> Response:
         return Response(200, {}, json.dumps({"ok": ok, **fields}).encode())
 
 
-class EnrichTest(unittest.IsolatedAsyncioTestCase):
+class SlackTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.db = await asyncpg.connect(database_url())
-        await self.db.execute("truncate raw_events, source_records, rate_limits, installations, source_credentials"
+        await self.db.execute("truncate raw_events, source_records, rate_limits, cursors, installations, source_credentials"
                               " restart identity cascade")
         await self.connect()
         self.running: list[tuple[asyncio.Event, asyncio.Task]] = []
@@ -185,6 +205,8 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
                                    " where $1::text is null or kind = $1 order by occurred_at, id", kind)
         return [(r["kind"], r["object_id"], r["version"], r["occurred_at"], json.loads(r["record"])) for r in rows]
 
+
+class EnrichTest(SlackTest):
     async def test_a_message_fetches_its_author_and_channel_once(self):
         await self.insert(callback(post("1717000100.000100"), "Ev1"), 1717000100.0001)
         await self.insert(callback(post("1717000101.000200", "again"), "Ev2"), 1717000101.0002)
@@ -342,6 +364,99 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         finally:
             await worker.close()
             await credentials.close()
+
+
+
+class BackfillTest(SlackTest):
+    def workspace(self) -> Slack:
+        slack = Slack()
+        slack.channels = [{"id": "C1", "name": "general"}, {"id": "C2", "name": "random"}, {"id": "C3", "name": "ops"}]
+        slack.history["C1"] = [
+            {"type": "message", "user": "U1", "text": "edited", "ts": "1717000300.000100",
+             "edited": {"user": "U1", "ts": "1717000400.000000"}},
+            {"type": "message", "user": "U1", "text": "parent", "ts": "1717000200.000100",
+             "thread_ts": "1717000200.000100", "reply_count": 2},
+            {"type": "message", "user": "U1", "text": "first", "ts": "1717000100.000100"},
+        ]
+        slack.replies["1717000200.000100"] = [
+            slack.history["C1"][1],
+            {"type": "message", "user": "U1", "text": "r1", "ts": "1717000210.000100", "thread_ts": "1717000200.000100"},
+            {"type": "message", "user": "U1", "text": "r2", "ts": "1717000220.000100", "thread_ts": "1717000200.000100"},
+        ]
+        slack.history["C3"] = [{"type": "message", "user": "U1", "text": "ops", "ts": "1717000500.000100"}]
+        return slack
+
+    async def backfill(self, slack: Slack, stopping: asyncio.Event | None = None) -> SlackBackfill:
+        component = SlackBackfill(Database(database_url()), self.credentials, exchange=slack)
+        await component.start()
+        try:
+            await component.run_once(stopping or asyncio.Event())
+        except Stopped:  # run() ends on it
+            pass
+        finally:
+            await component.close()
+        return component
+
+    async def test_a_connected_workspace_is_backfilled_and_enriched_like_webhooks(self):
+        slack = self.workspace()
+        component = await self.backfill(slack)
+        rows = await self.db.fetch("select delivery_id, event_name, origin, occurred_at from raw_events order by id")
+        self.assertEqual({r["delivery_id"] for r in rows}, {
+            "C1/1717000300.000100@1717000400.000000", "C1/1717000200.000100@1717000200.000100",
+            "C1/1717000100.000100@1717000100.000100", "C1/1717000210.000100@1717000210.000100",
+            "C1/1717000220.000100@1717000220.000100", "C3/1717000500.000100@1717000500.000100"})
+        self.assertEqual({r["origin"] for r in rows}, {"reconcile"})
+        edited = [r for r in rows if r["delivery_id"].startswith("C1/1717000300")][0]
+        self.assertEqual((edited["event_name"], edited["occurred_at"]), ("message:message_changed", at(1717000400)))
+        self.assertEqual(component.last["rows"], 6)
+        self.assertEqual(await self.db.fetchval("select position from cursors where stream = 'channel:C1'"),
+                         "1717000300.000100")
+
+        # A webhook copy of one of them is no new record
+        await self.insert(callback(post("1717000100.000100", "first"), "Ev1"), 1717000100.0001)
+        await self.enrich()
+        messages = await self.records("message")
+        self.assertEqual(sorted((m[1], m[2]) for m in messages), [
+            ("C1/1717000100.000100", "1717000100.000100"), ("C1/1717000200.000100", "1717000200.000100"),
+            ("C1/1717000210.000100", "1717000210.000100"), ("C1/1717000220.000100", "1717000220.000100"),
+            ("C1/1717000300.000100", "1717000400.000000"), ("C3/1717000500.000100", "1717000500.000100")])
+        reply = [m for m in messages if m[1] == "C1/1717000210.000100"][0][4]
+        self.assertEqual(reply["thread_parent"]["text"], "parent")
+
+    async def test_the_next_pass_reads_only_what_is_new_and_waits_its_turn(self):
+        slack = self.workspace()
+        await self.backfill(slack)
+        slack.calls.clear()
+        slack.params.clear()
+        await self.backfill(slack)  # read within the hour: not due
+        self.assertEqual(slack.calls, [])
+
+        await self.db.execute("update cursors set updated_at = now() - interval '2 hours' where stream like 'workspace:%'")
+        slack.history["C1"].insert(0, {"type": "message", "user": "U1", "text": "new", "ts": "1717000600.000100"})
+        component = await self.backfill(slack)
+        self.assertEqual(component.last["rows"], 1)
+        oldest = {p["channel"]: p["oldest"] for name, p in zip(slack.calls, slack.params) if name == "conversations.history"}
+        self.assertEqual(oldest["C1"], "1717000300.000100")
+
+    async def test_a_rate_limit_is_waited_out(self):
+        slack = self.workspace()
+        slack.answers["conversations.history"] = [Response(429, {"Retry-After": "1"}, b'{"ok": false}')]
+        started = time.monotonic()
+        component = await self.backfill(slack)
+        self.assertGreaterEqual(time.monotonic() - started, 1)
+        self.assertEqual(component.last["rows"], 6)
+
+    async def test_a_refused_token_disconnects_the_workspace(self):
+        await self.connect(token="xoxb-revoked")
+        await self.backfill(self.workspace())
+        self.assertIsNotNone(await self.db.fetchval("select disconnected_at from installations"))
+        self.assertEqual(await self.db.fetchval("select count(*) from cursors"), 0)
+
+    async def test_stopping_leaves_the_channel_to_the_next_pass(self):
+        stopping = asyncio.Event()
+        stopping.set()
+        await self.backfill(self.workspace(), stopping)
+        self.assertEqual(await self.db.fetchval("select count(*) from cursors"), 0)
 
 
 if __name__ == "__main__":
