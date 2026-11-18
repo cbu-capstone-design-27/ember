@@ -1,7 +1,7 @@
 // EMBER-124 acceptance: organizations are created, joined by invite, switched
 // between, and linked to a tenant only by an Ember admin. EMBER-165: every user
 // has one personal workspace with its own tenant, which can't invite, be left
-// or be linked, and connects sources under its tenant. On SQLite, and on
+// or be linked, and connects GitHub and Slack under its tenant. On SQLite, and on
 // Postgres when TEST_POSTGRES_URL is set (with the ingestion migrations
 // applied, the tenant-data check runs against them too).
 // Run: npm test            (SQLite only)
@@ -14,6 +14,8 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { authOptions, createAuth, migrate, whoami, type Auth } from "../src/lib/auth.ts";
 import { connectAccount } from "../src/lib/connections.ts";
+import { connectWorkspace } from "../src/lib/slack-connect.ts";
+import { KeyRing } from "../src/lib/source-credentials.ts";
 import { closeDatabase, databaseKind, isPostgresDatabase } from "../src/lib/db.ts";
 import {
   activeMembership,
@@ -159,32 +161,39 @@ function suite(label: string, databaseUrl: () => string, cleanup: () => Promise<
       assert.equal(reserved.status, 400);
     });
 
-    test("connecting a source in the personal workspace files it under the personal tenant", async (t) => {
+    test("connecting GitHub or Slack in the personal workspace files it under the personal tenant", async (t) => {
       const db = migrationOptions?.database;
       if (!isPostgresDatabase(db)) return t.skip("SQLite has no installations table");
-      const { rows } = await db.pool.query<{ exists: boolean }>("select to_regclass('public.installations') is not null as exists");
-      if (!rows[0]?.exists) return t.skip("ingestion migrations not applied (dbmate up)");
+      const { rows } = await db.pool.query<{ ready: boolean }>(
+        "select to_regclass('public.installations') is not null and to_regclass('public.source_credentials') is not null as ready",
+      );
+      if (!rows[0]?.ready) return t.skip("ingestion migrations not applied (dbmate up)");
       // What connector() (app/connect/server.ts) does to pick the membership every connect flow files under
       const membership = (await listMemberships(adapter, users.carol.id)).find((m) => m.id === personalTenant(users.carol.id));
       assert.ok(membership && canConnectSources(membership.role), "the owner may connect");
-      const accountId = `personal-${run}`;
+      const github = `personal-${run}`;
+      const slack = `TPERSONAL${run.toUpperCase()}`;
+      const ring = KeyRing.parse("api", `test:${Buffer.alloc(32, 7).toString("base64")}`);
       try {
-        const result = await connectAccount(db.pool, {
-          source: "github",
-          accountId,
-          tenant: membership.tenant,
-          label: "carol",
-          externalId: null,
-          userId: users.carol.id,
-        });
-        assert.equal(result.ok, true, JSON.stringify(result));
-        const { rows: installed } = await db.pool.query<{ tenant: string }>(
-          "select tenant from public.installations where source = 'github' and account_id = $1",
-          [accountId],
+        const connected = [
+          await connectAccount(db.pool, { source: "github", accountId: github, tenant: membership.tenant, label: "carol", externalId: null, userId: users.carol.id }),
+          await connectWorkspace(db.pool, ring, {
+            install: { teamId: slack, teamName: "Carol's", botToken: "xoxb-test", botUserId: "UBOT", appId: "AAPP", scope: "channels:history", installerId: "UCAROL", enterpriseId: null },
+            tenant: membership.tenant,
+            userId: users.carol.id,
+          }),
+        ];
+        for (const result of connected) assert.equal(result.ok, true, JSON.stringify(result));
+        const { rows: installed } = await db.pool.query<{ source: string; tenant: string }>(
+          "select source, tenant from public.installations where (source, account_id) in (('github', $1), ('slack', $2)) order by source",
+          [github, slack],
         );
-        assert.deepEqual(installed, [{ tenant: personalTenant(users.carol.id) }]);
+        const tenant = personalTenant(users.carol.id);
+        assert.deepEqual(installed, [{ source: "github", tenant }, { source: "slack", tenant }]);
       } finally {
-        await db.pool.query("delete from public.installations where source = 'github' and account_id = $1", [accountId]);
+        for (const table of ["source_credentials", "installations"]) {
+          await db.pool.query(`delete from public.${table} where (source, account_id) in (('github', $1), ('slack', $2))`, [github, slack]);
+        }
       }
     });
 
