@@ -176,20 +176,8 @@ command runs from `services/pipeline`; the docker command runs from the repo roo
     docker compose -f infra/docker-compose.yml --env-file .env --profile pipeline run --rm \
       --entrypoint python pipeline -m models smoke
 
-Embed the mapped nodes (a check that the embedding profile works on real text; the vectors stay in memory):
-
-    python -m loader --tenant brandon-dev --input ../../data/raw/brandon-dev --embed
-
-`--profile` only matters with `--embed`; without it the loader exits with a usage error.
-
-Under compose the arguments after the service name replace `command:` entirely, so enabling `--embed`
-means giving the full list:
-
-    docker compose -f infra/docker-compose.yml --env-file .env --profile pipeline run --rm pipeline \
-      --tenant <tenant> --input /data/raw/<tenant> --rejects /data/out/rejects.jsonl --embed
-
-Each node's `embed_text` is embedded unprefixed. A graph holds vectors from one model only (ADR 0001). In Postgres
-the embed worker (`services/embed`) writes them and refuses an endpoint whose dimension differs.
+Node and fact embeddings for the graph are written by the embed worker (`services/embed`), which refuses an
+endpoint whose dimension differs (ADR 0001). The benchmarks' retrieval suite embeds in memory.
 
 With `openai-dev`, embedding a small input costs a few cents; set a spending limit on the provider account
 before the first real run. `local-spark` costs nothing per call.

@@ -114,7 +114,7 @@ Node and edge validity comes from the engine: each fact has `valid_at`, `invalid
 
 ## Embeddings and config
 
-The engine embeds entity names and fact text. The model and its settings are fixed by [ADR 0001](adr/0001-embedding-model.md): the embed worker writes `vector(1024)` columns and checks the endpoint's dimension when it starts. The loader's in-memory `--embed` records the identity from the active model profile (`models.identity.identity_for`), and `ontology/config.py` refuses any different identity afterwards. `ontology.config.EXPECTED` (Qwen3-Embedding-0.6B) is only the identity of the `local-spark` profile.
+The engine embeds entity names and fact text. The model and its settings are fixed by [ADR 0001](adr/0001-embedding-model.md): the embed worker writes `vector(1024)` columns and checks the endpoint's dimension when it starts. The benchmarks' in-memory embedding records the identity from the active model profile (`models.identity.identity_for`), and `ontology/config.py` refuses any different identity afterwards. `ontology.config.EXPECTED` (Qwen3-Embedding-0.6B) is only the identity of the `local-spark` profile.
 
 ## Extending
 
