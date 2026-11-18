@@ -36,6 +36,10 @@ The spike below has not run yet, so Graphiti is still Proposed. Meanwhile the lo
 
 The team decided the direction in [ADR 0011](0011-graph-in-postgres.md). The spike below no longer decides the engine. EMBER-146 runs it to save the reference that informs the fork and the switch.
 
+## Status note (2026-11-18)
+
+Neo4j is removed. Postgres is the only graph store, read through the Graphiti fork: [ADR 0013](0013-postgres-only-graph-store.md). The ontology stays.
+
 ## Spike (required before Accepted)
 
 Run the five fixtures in `packages/ingestion-envelope/fixtures/`, plus a small set of realistic Slack threads and GitHub PRs, through Graphiti with this ontology on the Spark-hosted LLM and embedding service. Accept only if:

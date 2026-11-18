@@ -6,7 +6,7 @@ Every source posts to one parent listener, **intake**, which verifies the delive
 
 1. **enrich** completes the source object, fetching only what the payload lacks.
 2. **extract** maps it to graph episodes.
-3. **load** writes them to Neo4j.
+3. **load** writes them to the graph tables in Postgres (`graph.*`, [ADR 0013](../adr/0013-postgres-only-graph-store.md)).
 
 The stages share nothing but Postgres, so each one can be replayed, scaled or replaced without touching the others.
 
@@ -49,8 +49,8 @@ flowchart TB
   EN --> SR
   SR --> EX["extract<br/>ontology mapping"]
   EX --> EP
-  EP --> LD["load<br/>only code using Neo4j"]
-  LD --> NEO["Neo4j via Graphiti<br/>{tenant}_{source}"]
+  EP --> LD["load<br/>only code writing the graph"]
+  LD --> NEO["Postgres graph.*<br/>one graph per scope"]
   LLM["LLM endpoint<br/>tenant URL + token, or ours"] <--> EX
   LLM -.-> LD
   SCH["scheduler, one CronJob per source"] --> JQ
@@ -144,14 +144,14 @@ Each stage changes for its own reasons: enrich with a source's API, extract with
 
 | Stage | Reads | Writes | Knows | Never touches |
 |---|---|---|---|---|
-| **intake** | HTTP deliveries | `raw_events`, an `enrich` job | Each source's signature or secret | Source APIs, ontology, LLM, Neo4j |
-| **enrich**, one per source | `raw_events` | `source_records`, an `extract` job | That source's API, rate limits, reconcile cursors | Ontology, LLM, Neo4j |
-| **extract**, one service | `source_records` | `episodes`, a `load` job | The ontology (`services/pipeline/ontology`), the LLM when Graphiti is not used | Source APIs, Neo4j |
-| **load**, one replica | `episodes` | Neo4j, `episodes.loaded_at` | Graphiti and the Neo4j driver | Sources, their APIs and credentials |
+| **intake** | HTTP deliveries | `raw_events`, an `enrich` job | Each source's signature or secret | Source APIs, ontology, LLM, the graph |
+| **enrich**, one per source | `raw_events` | `source_records`, an `extract` job | That source's API, rate limits, reconcile cursors | Ontology, LLM, the graph |
+| **extract**, one service | `source_records` | `episodes`, a `load` job | The ontology (`services/pipeline/ontology`), the LLM when Graphiti is not used | Source APIs, the graph |
+| **load**, one replica | `episodes` | `graph.*`, `episodes.loaded_at` | `pg_writer.py`, and Graphiti on the fork's `PostgresDriver` | Sources, their APIs and credentials |
 
 Where the LLM runs depends on ADR 0002's spike:
 - **With Graphiti**, `add_episode` calls the LLM itself, so the LLM runs inside load and extract stays a deterministic mapping to episode text.
-- **With the fallback** (structured mapping), extract calls the LLM for free text and load writes to Neo4j directly. On this path `episodes.attrs` holds the mapped nodes and edges, and `episodes.text` a human-readable summary.
+- **With the fallback** (structured mapping), extract calls the LLM for free text and load writes the graph tables directly. On this path `episodes.attrs` holds the mapped nodes and edges, and `episodes.text` a human-readable summary.
 
 Until the spike runs, extract and load run on the fallback, as a deterministic mapping with no LLM (EMBER-45, EMBER-85; [ADR 0002, Status note](../adr/0002-graph-engine-and-schema-approach.md#status-note-2026-10-27)). How they claim work before the job queue lands: [`services/pipeline/README.md`](../../services/pipeline/README.md#extract-and-load-workers-ember-85).
 
@@ -204,7 +204,7 @@ Until the [job queue](#job-queue) lands, enrich workers claim `raw_events` rows 
 
 ### Concurrency
 
-A worker runs several jobs at once. The work is nearly all waiting on the network (source APIs, the LLM, Neo4j), so one asyncio process can keep several jobs in flight, and that is much cheaper on two 4 GB nodes than more replicas. The queue library runs it: each Deployment sets `CONCURRENCY` in its environment.
+A worker runs several jobs at once. The work is nearly all waiting on the network (source APIs, the LLM, Postgres), so one asyncio process can keep several jobs in flight, and that is much cheaper on two 4 GB nodes than more replicas. The queue library runs it: each Deployment sets `CONCURRENCY` in its environment.
 
 | Stage | Runs at once | Starting `CONCURRENCY` | What limits it |
 |---|---|---|---|
@@ -661,10 +661,10 @@ class Episode:
     text: str
     attrs: dict
 
-class GraphLoader(Protocol):                  # load: the only code that imports Graphiti or Neo4j
+class GraphLoader(Protocol):                  # load: the only code that writes the graph
     def load(self, tenant: str, source: Source, episodes: list[Episode]) -> None: ...
-        # group_id = subgraph_id(tenant, source); replaces an episode already loaded under the same key
-    def delete_tenant(self, tenant: str) -> None: ...   # every tenant_subgraphs(tenant)
+        # one graph per scope (ontology.graph_scope); replays an episode already loaded under the same key
+    def delete_tenant(self, tenant: str) -> None: ...   # every graph.graphs row of the tenant
 ```
 
 Today's backfills (`pull_test.py` in each `services/*-ingestion`) become `Enricher.reconcile`. The ontology in `services/pipeline/ontology` is used by extract only.
@@ -692,7 +692,6 @@ ember-admin map     --source github --account 12345 --tenant acme
 | Postgres down at intake | 503; Slack and Jira retry, reconcile covers GitHub | Intake | No |
 | Source API throttles | Wait `Retry-After` for the whole bucket | That enrich job | No |
 | LLM or Graphiti error | Back off and retry the extract or load job | That stage only | No |
-| Neo4j down | Load jobs back off; episodes wait unloaded | Load only, no API calls | No |
 | Worker killed mid-job | The library sees it stalled; the job runs again | That job | No |
 | Extraction bug fixed | Bump `Extractor.version`, `replay --stage extract` | Extract, then load | No |
 | Graph engine replaced (ADR 0002 fallback) | New `GraphLoader`, `replay --stage load` | Load only | No |
@@ -709,10 +708,9 @@ Everything lives in `k8s/apps` of the infra repo and is deployed by Flux (ADR 00
 | intake | Deployment, 2 replicas, PodDisruptionBudget; nginx routes `/webhook/` to Service `intake` | `ghcr.io/cbu-capstone-design-27/ember/intake` | Webhook secrets, which can verify but not call APIs |
 | enrich:&lt;source&gt; | Deployment per source, 1 replica | `…/ember/pipeline`, `enrich --source <source>` | That source's API credentials |
 | extract | Deployment, 1 replica | `…/ember/pipeline`, `extract` | The LLM URL and token when extract calls it |
-| load | Deployment, 1 replica | `…/ember/pipeline`, `load` | Neo4j password; the LLM URL and token when Graphiti calls it |
+| load | Deployment, 1 replica | `…/ember/pipeline`, `load` | Database only; the LLM URL and token when Graphiti calls it |
 | scheduler:&lt;source&gt; | CronJob per source, on its own schedule | `…/ember/pipeline`, `schedule --source <source>` | Database only |
 | Postgres | CloudNativePG `Cluster`, one instance on `local-path-retain`, pinned to hv-worker-2; Job `postgres-migrate` applies the schema (ADR 0005) | `ghcr.io/cloudnative-pg/postgresql` | The password the operator generates, in Secret `postgres-app`, whose `uri` services read as `DATABASE_URL`. A role per component is still to come |
-| Neo4j | Existing HelmRelease | Chart image | n/a |
 
 ## From today's services
 

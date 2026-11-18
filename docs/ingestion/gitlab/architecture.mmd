@@ -13,7 +13,7 @@ flowchart TD
     subgraph CORE["Downstream of handoff (not this ticket)"]
         ROUTER["Ingestion Router (EMBER-2 queue)"]
         PIPE["GitLab source pipeline (Brandon)"]
-        GRAPH(("Neo4j GitLab subgraph (EMBER-34)"))
+        GRAPH(("Postgres GitLab graph (EMBER-34)"))
     end
 
     WH -->|"HTTPS POST with token headers"| RCV

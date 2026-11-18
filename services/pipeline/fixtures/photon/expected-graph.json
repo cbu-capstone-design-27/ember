@@ -1,6 +1,6 @@
 {
   "tenant": "photon",
-  "derived_by": "fixtures/photon/derive_expected.py, from the intake envelopes",
+  "derived_by": "fixtures/photon/derive_expected.py, from the intake envelopes and the readable transcripts",
   "subgraphs": {
     "jira": {
       "nodes": {
@@ -36,5 +36,106 @@
         "Identity RESOLVES_TO Person": 5
       }
     }
-  }
+  },
+  "queries": [
+    {
+      "id": "comment-authors",
+      "question": "Who commented on PHO-48?",
+      "source": "jira.md, section PHO-48: the '> **Name** date PT:' comment lines",
+      "params": {
+        "issue": "PHO-48"
+      },
+      "expect": [
+        {
+          "person": "Daniel Reyes"
+        },
+        {
+          "person": "Ryan Stoffel"
+        }
+      ]
+    },
+    {
+      "id": "thread-messages",
+      "question": "Which messages are in the #photon-bugs thread that starts '0.3.0 is bad. Photon shows up ...', and who sent them?",
+      "source": "slack.md, section #photon-bugs: the parent line and its indented replies",
+      "params": {
+        "thread": "C08PHOTONBG:1789482000.000100"
+      },
+      "expect": [
+        {
+          "sender": "U08DREYES01",
+          "text": "0.3.0 is bad. Photon shows up in the Dock, the launcher has a title bar with traffic lights, appearance is stuck on light, the panel moves when clicked, and app icons do not render. Dock screenshot is going on the issue."
+        },
+        {
+          "sender": "U08RSTOFFEL",
+          "text": "Filed as GH-107."
+        }
+      ]
+    },
+    {
+      "id": "issues-linked-to",
+      "question": "Which issues are linked to PHO-19 ('relates to')?",
+      "source": "jira.md: '- relates to' lines of PHO-19 and of the issues naming it",
+      "params": {
+        "issue": "PHO-19"
+      },
+      "expect": [
+        {
+          "issue": "PHO-10"
+        },
+        {
+          "issue": "PHO-12"
+        }
+      ]
+    },
+    {
+      "id": "issue-state",
+      "question": "What are PHO-19's type and status, and how many issues are in each status?",
+      "source": "jira.md: the 'Task, To Do' line of PHO-19, and the status line of every issue",
+      "params": {
+        "issue": "PHO-19"
+      },
+      "expect": [
+        {
+          "status": "Done",
+          "issues": 109,
+          "type_of_issue": null
+        },
+        {
+          "status": "In Progress",
+          "issues": 2,
+          "type_of_issue": null
+        },
+        {
+          "status": "To Do",
+          "issues": 1,
+          "type_of_issue": "Task"
+        }
+      ]
+    },
+    {
+      "id": "subgraph-isolation",
+      "question": "Does anything cross from the Jira subgraph into the Slack one?",
+      "source": "the data: Jira and Slack records are loaded into their own subgraphs, so no edge may join them and each node's source must match its subgraph",
+      "params": {},
+      "expect": [
+        {
+          "grp": "{tenant}_jira",
+          "sources": [
+            "jira"
+          ],
+          "nodes": 148,
+          "crossing": 0
+        },
+        {
+          "grp": "{tenant}_slack",
+          "sources": [
+            "slack"
+          ],
+          "nodes": 992,
+          "crossing": 0
+        }
+      ]
+    }
+  ]
 }

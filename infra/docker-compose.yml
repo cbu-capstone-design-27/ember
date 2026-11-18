@@ -5,7 +5,7 @@
 #   docker compose -f infra/docker-compose.yml --env-file .env --profile postgres up -d postgres
 #
 # Every service is behind a profile, so a plain `up` starts nothing. Postgres holds the
-# ingestion tables and the graph (ADR 0012). The other profiles:
+# ingestion tables and the graph (ADR 0013). The other profiles:
 #   # webhook listener on localhost:8080; needs the postgres profile below running
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile intake up --build intake

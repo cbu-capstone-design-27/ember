@@ -1,10 +1,14 @@
 # ADR 0011: Move the graph to Postgres with a Graphiti fork, keeping Neo4j until it's ready
 
-- Status: Accepted
+- Status: Accepted. Its "keep Neo4j until the switch" is superseded by ADR-0013.
 - Date: 2026-11-04
 - Jira: EMBER-118, EMBER-117
 - Decided by the team, recorded by Ryan Stoffel
 - Supersedes: [ADR 0002](0002-graph-engine-and-schema-approach.md)'s engine choice in the long term. Its ontology stays, and Neo4j stays in use until the switch below.
+
+## Status note (2026-11-18)
+
+The switch is done and Neo4j is removed: [ADR 0013](0013-postgres-only-graph-store.md). It supersedes "keep Neo4j until the switch" below.
 
 ## Context
 

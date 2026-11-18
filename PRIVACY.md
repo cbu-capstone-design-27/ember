@@ -25,7 +25,7 @@ Ember doesn't sell data, show advertising, or share data with anyone outside the
 
 ## Where it is kept and processed
 
-- **Storage:** Postgres and Neo4j on the team's own Kubernetes cluster.
+- **Storage:** Postgres on the team's own Kubernetes cluster.
 - **Language models:** text is embedded and summarized by models the team runs on a university DGX Spark. Hosted model APIs aren't used on the cluster.
 - **Monitoring:** the cluster sends metrics and service logs to Grafana Cloud. The ingestion services never write what they ingest into their logs.
 - **Code hosting:** the source code and container images are public on GitHub. No customer data is stored there.
