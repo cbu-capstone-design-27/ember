@@ -88,7 +88,7 @@ Rules worth knowing:
 
 - **Scope.** Jira issues and comments; Slack messages, users and channels; GitHub issues, pull requests
   (with the changed files enrich fetched), reviews, issue / review / commit comments, commits and repositories
-  (EMBER-107; what each becomes: `docs/pipeline/neo4j-load-check.md`, GitHub). GitHub refs, releases, labels
+  (EMBER-107; what each becomes: `docs/pipeline/load-check.md`, GitHub). GitHub refs, releases, labels
   and milestones have no home in the graph schema and are not extracted, nor are GitLab, Teams and other kinds
   (Jira worklogs, Slack memberships); extract logs how many are waiting when it starts.
 - **Order.** Every node and edge stores the source's `occurred_at`. A version older than the stored one
@@ -134,7 +134,7 @@ queries (one for GitHub changes), with no message text, names or keys in the out
     python -m loader e2e-check --tenant photon --seed-photon --reset     # photon, with expected values
     python -m loader e2e-check --tenant ember-development                # real data, counts only
 
-How to read it, the photon results and the gaps found: `docs/pipeline/neo4j-load-check.md`.
+How to read it, the photon results and the gaps found: `docs/pipeline/load-check.md`.
 
 Tests: `test_extract.py` and `test_extract_github.py` (synthetic GitHub rows in `testdata_github.py`) run
 with the unit tests. `test_pg_load.py` needs a Postgres with pgvector and

@@ -50,7 +50,7 @@ def _envelope_problem(envelope) -> str | None:
     return None
 
 
-def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False, embedder=None) -> Report:
+def run(tenant: str, root: Path, writer, rejects_path: Path, embedder=None) -> Report:
     report = Report(rejects_path=str(rejects_path))
     group_ids = tenant_subgraphs(tenant)  # also validates the tenant name
     if not Path(root).is_dir():
@@ -111,18 +111,11 @@ def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False
             if existing is not edge:
                 _merge_props(existing.props, edge.props)
 
-    # Written before the database is touched, so a Neo4j failure still leaves the rejects on disk.
+    # Written before the graph is, so a writer failure still leaves the rejects on disk.
     if rejects:
         Path(rejects_path).parent.mkdir(parents=True, exist_ok=True)
         Path(rejects_path).write_text("\n".join(json.dumps(r) for r in rejects) + "\n", encoding="utf-8")
 
-    if reset and not nodes:
-        raise InputError("--reset refused: no nodes were mapped from the input, so nothing would be "
-                         "loaded after wiping the tenant; the database was not touched")
-
-    writer.ensure_schema()
-    if reset:
-        writer.reset(group_ids)
     report.nodes_written = writer.write_nodes(list(nodes.values()))
     report.edges_sent = len(edges)
     report.edges_written = writer.write_edges(list(edges.values()))  # merge hits only

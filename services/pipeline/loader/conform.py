@@ -20,15 +20,15 @@ _PRIMITIVES = (str, int, float, bool, type(None))
 
 
 def _check_primitive_props(what: str, props: dict) -> None:
-    """Neo4j stores only primitives and lists of primitives as properties; a map (or a list
-    holding one) aborts the whole write with a CypherTypeError, so reject the record instead."""
+    """Graph properties are primitives and lists of primitives, the ontology's contract; a map (or a
+    list holding one) is rejected with the record rather than stored."""
     for key, value in props.items():
         if isinstance(value, _PRIMITIVES):
             continue
         if isinstance(value, list) and all(isinstance(item, _PRIMITIVES) for item in value):
             continue
         raise Reject(f"{what}: property {key!r} is a {type(value).__name__} (or holds a non-primitive); "
-                     "Neo4j properties must be str, int, float, bool or lists of those")
+                     "graph properties must be str, int, float, bool or lists of those")
 
 
 def validate_node(node: NodeRec, source: str) -> None:

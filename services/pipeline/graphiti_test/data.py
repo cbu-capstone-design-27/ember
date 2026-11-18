@@ -170,7 +170,7 @@ def questions(rows=None) -> list[dict]:
 
 
 # "What was true then": the release stack changes, in #photon-dev, from Rust + GPUI (2026-09-14 23:53 PT) back to
-# Swift (2026-09-15 09:05 PT). Photon has no edited records (docs/pipeline/neo4j-load-check.md), so this decision
+# Swift (2026-09-15 09:05 PT). Photon has no edited records (docs/pipeline/load-check.md), so this decision
 # is its one clear change of fact. `before` falls between the two messages, `after` follows the second.
 TEMPORAL = {
     "id": "release-stack",

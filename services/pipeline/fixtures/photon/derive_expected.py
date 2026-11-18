@@ -5,8 +5,7 @@
 
 Stdlib only, and it imports nothing from the loader on purpose: the numbers come from counting the
 intake envelopes (jira-intake.jsonl, slack-intake.jsonl) by the rules in docs/graph-schema.md and
-docs/pipeline/neo4j-load-check.md, and the answers to the sample queries come from the people-readable
-transcripts (jira.md, slack.md). So the loader's output is checked against something it did not produce.
+docs/pipeline/load-check.md. So the loader's output is checked against something it did not produce.
 
 Counting rules (what one Jira issue, Jira comment or Slack message becomes):
 
@@ -28,7 +27,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -111,150 +109,13 @@ def slack_counts() -> dict:
     return {"nodes": nodes, "relationships": rels}
 
 
-# --- sample query answers, from the transcripts ---
-
-def jira_sections() -> dict[str, str]:
-    text = (HERE / "jira.md").read_text(encoding="utf-8")
-    parts = re.split(r"^### (PHO-\d+): .*$", text, flags=re.M)
-    return {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
-
-
-def jira_comment_authors(key: str) -> list[str]:
-    """'> **Daniel Reyes** 2026-09-15 07:33 PT: ...' lines of the issue's section."""
-    return sorted(set(re.findall(r"^> \*\*(.+?)\*\* \d{4}-", jira_sections()[key], flags=re.M)))
-
-
-def jira_status(key: str) -> tuple[str, str]:
-    """(issue type, status) from the 'Bug, Done (Done), priority High.' line."""
-    match = re.search(r"^(\w+), (.+?)(?: \(.+?\))?, priority", jira_sections()[key], flags=re.M)
-    return match.group(1), match.group(2)
-
-
-def jira_created_by(key: str) -> tuple[str, str]:
-    match = re.search(r"^Created .+? PT by (.+?), assigned to (.+?)\.", jira_sections()[key], flags=re.M)
-    return match.group(1), match.group(2)
-
-
-def jira_related(key: str) -> list[str]:
-    """Issues linked 'relates to' either way: the issue's own lines plus other issues' lines naming it."""
-    related = set(re.findall(r"^- relates to (PHO-\d+)$", jira_sections()[key], flags=re.M))
-    for other, section in jira_sections().items():
-        if re.search(rf"^- relates to {key}$", section, flags=re.M):
-            related.add(other)
-    return sorted(related)
-
-
-def jira_status_totals() -> dict[str, int]:
-    totals: Counter = Counter()
-    for key in jira_sections():
-        totals[jira_status(key)[1]] += 1
-    return dict(sorted(totals.items()))
-
-
-def slack_members() -> dict[str, str]:
-    """display name -> Slack user id, from the '## Members' list."""
-    return {name: uid for name, uid in re.findall(r"^- (.+?) \(`(U\w+)`", (HERE / "slack.md").read_text(encoding="utf-8"), flags=re.M)}
-
-
-def slack_thread(channel_name: str, parent_start: str) -> tuple[list[tuple[str, str]], str]:
-    """(author name, text) of a thread's messages in order, and the thread's id (channel id, thread_ts).
-
-    The thread is found in slack.md by its channel and the start of its first message, which is the
-    transcript's reading; the ids are found in the envelopes by the same text.
-    """
-    text = (HERE / "slack.md").read_text(encoding="utf-8")
-    channel_section = re.search(rf"^## #{re.escape(channel_name)}\n(.*?)(?=^## |\Z)", text, flags=re.M | re.S).group(1)
-    lines = channel_section.splitlines()
-    start = next(i for i, line in enumerate(lines) if re.match(r"- \*\*", line) and parent_start in line)
-    thread = [lines[start]]
-    for line in lines[start + 1:]:
-        if not line.startswith("    - "):
-            break
-        thread.append(line)
-    parsed = [re.match(r"\s*- \*\*(.+?)\*\* \d{4}-\d\d-\d\d \d\d:\d\d PT: (.*)$", line).groups() for line in thread]
-    first = next(m for m in slack_messages() if m["text"].startswith(parent_start))
-    return [(name, body) for name, body in parsed], f'{first["channel"]}:{first.get("thread_ts") or first["ts"]}'
-
-
 # --- assembly ---
 
 def build() -> dict:
-    members = slack_members()
-    by_id = {uid: name for name, uid in members.items()}
-    posts, thread_key = slack_thread("photon-bugs", "0.3.0 is bad.")
-    assert len(posts) >= 2
-    comment_issue = "PHO-48"
-    related_to = "PHO-19"
-    status_issue = "PHO-19"
-    type_, status = jira_status(status_issue)
-    created_by, assignee = jira_created_by(comment_issue)
-    queries = [
-        {
-            "id": "comment-authors",
-            "question": f"Who commented on {comment_issue}?",
-            "source": f"jira.md, section {comment_issue}: the '> **Name** date PT:' comment lines",
-            "cypher": "MATCH (p:Person)-[:AUTHORED]->(:Message)-[:REFERENCES]->(w:WorkItem {group_id: $jira, external_id: $issue}) "
-                      "WHERE p.group_id = $jira RETURN DISTINCT p.name AS person ORDER BY person",
-            "params": {"issue": comment_issue},
-            "expect": [{"person": name} for name in jira_comment_authors(comment_issue)],
-        },
-        {
-            "id": "thread-messages",
-            "question": f"Which messages are in the #photon-bugs thread that starts '{posts[0][1][:30]}...', and who sent them?",
-            "source": "slack.md, section #photon-bugs: the parent line and its indented replies",
-            "cypher": "MATCH (m:Message {group_id: $slack})-[:PART_OF]->(c:Conversation {group_id: $slack, external_id: $thread}) "
-                      "MATCH (i:Identity {group_id: $slack})-[:RESOLVES_TO]->(:Person)-[:AUTHORED]->(m) "
-                      "RETURN i.external_id AS sender, m.embed_text AS text ORDER BY m.created_at, m.external_id",
-            "params": {"thread": thread_key},
-            "expect": [{"sender": members[name], "text": body} for name, body in posts],
-            "ordered": True,
-        },
-        {
-            "id": "issues-linked-to",
-            "question": f"Which issues are linked to {related_to} ('relates to')?",
-            "source": f"jira.md: '- relates to' lines of {related_to} and of the issues naming it",
-            "cypher": "MATCH (a:WorkItem {group_id: $jira})-[:RELATES_TO]-(b:WorkItem {group_id: $jira, external_id: $issue}) "
-                      "RETURN DISTINCT a.external_id AS issue ORDER BY issue",
-            "params": {"issue": related_to},
-            "expect": [{"issue": key} for key in jira_related(related_to)],
-        },
-        {
-            "id": "issue-state",
-            "question": f"What are {status_issue}'s type and status, and how many issues are in each status?",
-            "source": f"jira.md: the '{type_}, {status}' line of {status_issue}, and the status line of every issue",
-            "cypher": "MATCH (w:WorkItem {group_id: $jira}) "
-                      "RETURN w.status AS status, count(*) AS issues, "
-                      "collect(CASE WHEN w.external_id = $issue THEN w.item_type END)[0] AS type_of_issue "
-                      "ORDER BY status",
-            "params": {"issue": status_issue},
-            "expect": [{"status": s, "issues": n, "type_of_issue": type_ if s == status else None}
-                       for s, n in jira_status_totals().items()],
-        },
-        {
-            "id": "subgraph-isolation",
-            "question": "Does anything cross from the Jira subgraph into the Slack one?",
-            "source": "the data: Jira and Slack records are loaded into their own subgraphs, so no edge may join them "
-                      "and each node's source must match its subgraph",
-            "cypher": "MATCH (n) WHERE n.group_id IN [$jira, $slack] "
-                      "WITH n.group_id AS grp, collect(DISTINCT n.source) AS sources, count(*) AS nodes "
-                      "CALL { MATCH (a)-[r]->(b) WHERE a.group_id IN [$jira, $slack] AND a.group_id <> b.group_id "
-                      "RETURN count(r) AS crossing } "
-                      "RETURN grp, sources, nodes, crossing ORDER BY grp",
-            "params": {},
-            "expect": [{"grp": "{tenant}_jira", "sources": ["jira"], "nodes": None, "crossing": 0},
-                       {"grp": "{tenant}_slack", "sources": ["slack"], "nodes": None, "crossing": 0}],
-        },
-    ]
-    # the isolation answer's node counts are the counts above, summed (placeholders excluded: there are none)
-    jira, slack = jira_counts(), slack_counts()
-    queries[4]["expect"][0]["nodes"] = sum(jira["nodes"].values())
-    queries[4]["expect"][1]["nodes"] = sum(slack["nodes"].values())
-    _ = (created_by, assignee, by_id)
     return {
         "tenant": "photon",
-        "derived_by": "fixtures/photon/derive_expected.py, from the intake envelopes and the readable transcripts",
-        "subgraphs": {"jira": jira, "slack": slack},
-        "queries": queries,
+        "derived_by": "fixtures/photon/derive_expected.py, from the intake envelopes",
+        "subgraphs": {"jira": jira_counts(), "slack": slack_counts()},
     }
 
 

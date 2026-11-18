@@ -67,42 +67,6 @@ class RunTests(unittest.TestCase):
         self.assertIn("repository", "\n".join(r["reason"] for r in rejects))
         self.assertGreater(report.node_counts["WorkItem"], 0)   # good records still loaded
 
-    def test_reset_removes_the_tenants_stale_nodes_and_keeps_other_tenants(self):
-        write_sample(self.root, include_bad=False)
-        writer = MemoryWriter()
-        run("brandon-dev", self.root, writer, self.rejects)
-        other = Path(self.tmp.name) / "other"
-        write_sample(other, include_bad=False)
-        run("someone-else", other, writer, self.rejects)
-
-        def keys(group_prefix):
-            return {k for k, v in writer.nodes.items() if v["group_id"].startswith(group_prefix)}
-
-        def has_commit(group_prefix):
-            return any(v.get("external_id", "").endswith("abc1234def")
-                       for v in writer.nodes.values() if v["group_id"].startswith(group_prefix))
-
-        self.assertTrue(has_commit("brandon-dev_"))
-        other_nodes = {k: dict(v) for k, v in writer.nodes.items() if v["group_id"].startswith("someone-else_")}
-        other_edges = {k for k, v in writer.edges.items() if v["group_id"].startswith("someone-else_")}
-
-        trimmed = Path(self.tmp.name) / "trimmed"   # the same sample without the commit record
-        write_sample(trimmed, include_bad=False)
-        github = trimmed / "github" / "github.jsonl"
-        kept = [line for line in github.read_text(encoding="utf-8").splitlines() if '"sha"' not in line]
-        self.assertEqual(len(kept), 3)
-        github.write_text("\n".join(kept) + "\n", encoding="utf-8")
-
-        run("brandon-dev", trimmed, writer, self.rejects)                 # no reset: the stale commit stays
-        self.assertTrue(has_commit("brandon-dev_"))
-        run("brandon-dev", trimmed, writer, self.rejects, reset=True)
-        self.assertFalse(has_commit("brandon-dev_"))                       # the stale node is gone
-        self.assertTrue(keys("brandon-dev_"))                              # the rest was reloaded
-        self.assertEqual({k: v for k, v in writer.nodes.items() if v["group_id"].startswith("someone-else_")},
-                         other_nodes)                                      # the other tenant is untouched
-        self.assertEqual({k for k, v in writer.edges.items() if v["group_id"].startswith("someone-else_")},
-                         other_edges)
-
     def test_render_mentions_every_section(self):
         write_sample(self.root, include_bad=True)
         text = run("brandon-dev", self.root, MemoryWriter(), self.rejects).render()
@@ -192,32 +156,12 @@ class RunTests(unittest.TestCase):
         with self.assertRaisesRegex(InputError, r"no \*\.jsonl"):
             run("brandon-dev", self.root, MemoryWriter(), self.rejects)
 
-    def test_reset_with_nothing_mapped_leaves_existing_nodes_untouched(self):
-        other = Path(self.tmp.name) / "loaded"
-        write_sample(other, include_bad=False)
-        writer = MemoryWriter()
-        run("brandon-dev", other, writer, self.rejects)
-        before = (dict(writer.nodes), dict(writer.edges))
-        self.assertTrue(before[0])
-        write_lines(self.root, "github", ["{not json"])  # a *.jsonl exists but maps to nothing
-        with self.assertRaisesRegex(InputError, "--reset refused"):
-            run("brandon-dev", self.root, writer, self.rejects, reset=True)
-        self.assertEqual((writer.nodes, writer.edges), before)
-
-    def test_reset_is_called_only_after_nodes_were_mapped(self):
-        write_sample(self.root, include_bad=False)
-        writer = MemoryWriter()
-        with mock.patch.object(writer, "reset", wraps=writer.reset) as reset:
-            run("brandon-dev", self.root, writer, self.rejects, reset=True)
-        reset.assert_called_once()
-
-
     def test_rejects_file_survives_a_writer_failure(self):
         write_sample(self.root, include_bad=True)
 
         class Boom(MemoryWriter):
             def write_nodes(self, nodes):
-                raise RuntimeError("neo4j went away")
+                raise RuntimeError("the graph went away")
 
         with self.assertRaises(RuntimeError):
             run("brandon-dev", self.root, Boom(), self.rejects)

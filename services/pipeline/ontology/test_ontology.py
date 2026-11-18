@@ -135,13 +135,6 @@ class OntologyTests(unittest.TestCase):
         self.assertIn("full rebuild", str(ctx.exception))
         self.assertIn("dimension", str(ctx.exception))
 
-    def test_cypher_statements_are_idempotent(self):
-        text = (Path(__file__).parent / "schema.cypher").read_text(encoding="utf-8")
-        statements = [s for s in text.split(";") if "CREATE CONSTRAINT" in s and not s.strip().startswith("//")]
-        self.assertGreater(len(statements), 0)
-        for s in statements:
-            self.assertIn("IF NOT EXISTS", s)
-
 
 if __name__ == "__main__":
     unittest.main()

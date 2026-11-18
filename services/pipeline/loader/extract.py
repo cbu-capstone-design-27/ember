@@ -2,7 +2,7 @@
 
 The episode's attrs hold the nodes and edges EMBER-45's mappers produce for the record, already
 checked against the ontology (conform.validate_mapped); its text is a short human-readable summary.
-Nothing here touches Neo4j; load (load.py) writes the attrs.
+Nothing here touches the graph; load (workers.py, pg_writer.py) writes the attrs.
 
 Which records map:
 

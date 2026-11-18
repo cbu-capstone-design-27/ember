@@ -1,6 +1,5 @@
 """Write episodes into the Postgres graph (EMBER-164): graph.nodes, graph.edges and graph.mentions, one graph
-per connected scope (ontology.graph_scope). The counterpart to neo4j_writer.py, chosen with
-GRAPH_STORE=postgres. It runs on load's own connection, inside load's transaction, so the graph and
+per connected scope (ontology.graph_scope). The graph's only writer. It runs on load's own connection, inside load's transaction, so the graph and
 episodes.loaded_at commit together (docs/research/postgres-graph.md, Part 1).
 
 The rules, from Part 1 "Idempotency, versions and deletes":
@@ -30,8 +29,7 @@ from datetime import datetime
 
 from ontology import EDGE_TYPES, ENTITY_TYPES, ensure_graph, graph_scope
 
-from .neo4j_writer import TOMBSTONE_KEYS
-from .records import UUID_NAMESPACE, node_uuid
+from .records import TOMBSTONE_KEYS, UUID_NAMESPACE, node_uuid
 
 LABELS = set(ENTITY_TYPES) | {"Status"}
 TYPES = set(EDGE_TYPES) | {"HAS_STATUS", "SAME_AS"}
@@ -238,7 +236,7 @@ class Graph:
 
 
 class PgWriter:
-    """GRAPH_STORE=postgres. LoadWorker hands write() its connection inside the batch's transaction."""
+    """LoadWorker hands write() its connection inside the batch's transaction."""
 
     async def write(self, conn, tenant: str, source: str, episodes) -> tuple[list[int], dict[int, Exception]]:
         """Apply episodes in order. Each row needs id, kind, occurred_at, attrs, and its source record's
