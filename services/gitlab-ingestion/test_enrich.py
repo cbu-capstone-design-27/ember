@@ -36,7 +36,7 @@ from models import Installation, RateLimit, RawEvent, SourceCredential, SourceRe
 from pull import Response  # noqa: E402
 from source_credentials import KeyRing  # noqa: E402
 
-MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
+MIGRATIONS = REPO / "services" / "backend" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_gitlab_enrich"
 FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "gitlab.json").read_text())

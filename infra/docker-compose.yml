@@ -75,6 +75,52 @@ services:
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
       SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET:-}"
 
+  # EMBER-160 (ADR 0012): intake and the workers in one image, replacing intake and the *-ingestion
+  # services as each connector moves in. With the postgres profile it waits for the migrations:
+  #   docker compose -f infra/docker-compose.yml --env-file .env --profile postgres --profile backend up -d --build
+  # A source whose secret is unset or unusable is disabled, not fatal: GET /status says why.
+  backend:
+    profiles: ["backend"]
+    build:
+      context: ..
+      dockerfile: services/backend/Dockerfile
+    image: ember-backend
+    container_name: ember-backend
+    restart: unless-stopped
+    depends_on:
+      postgres-migrate:
+        condition: service_completed_successfully
+        required: false   # without the postgres profile, DATABASE_URL points elsewhere
+    stop_grace_period: 60s
+    ports:
+      - "${BACKEND_HOST_PORT:-8080}:8080"
+    environment:
+      DATABASE_URL: "${BACKEND_DATABASE_URL:-postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable}"
+      EMBER_COMPONENTS: "${EMBER_COMPONENTS:-*}"
+      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+      SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET:-}"
+      JIRA_WEBHOOK_SECRET: "${JIRA_WEBHOOK_SECRET:-}"
+      JIRA_OAUTH_CLIENT_SECRET: "${JIRA_OAUTH_CLIENT_SECRET:-}"
+      GITLAB_WEBHOOK_SIGNING_TOKEN: "${GITLAB_WEBHOOK_SIGNING_TOKEN:-}"
+      GITLAB_WEBHOOK_SECRET_TOKEN: "${GITLAB_WEBHOOK_SECRET_TOKEN:-}"
+      SOURCE_CREDENTIALS_WEBHOOK_KEYS: "${SOURCE_CREDENTIALS_WEBHOOK_KEYS:-}"
+      # enrich:github's App. The PEM itself: .env's GITHUB_APP_PRIVATE_KEY_PATH is a host path, for the backfill CLI
+      GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
+      GITHUB_APP_PRIVATE_KEY: "${GITHUB_APP_PRIVATE_KEY:-}"
+      GITHUB_ENRICH_CONCURRENCY: "${GITHUB_ENRICH_CONCURRENCY:-4}"
+      GITHUB_ENRICH_BATCH: "${GITHUB_ENRICH_BATCH:-25}"
+      # enrich:jira and keep-alive:jira: Connect Jira's tokens, opened with the api ring and refreshed with
+      # the 3LO app (JIRA_OAUTH_CLIENT_SECRET above). Without them only the events that need no call go
+      JIRA_OAUTH_CLIENT_ID: "${JIRA_OAUTH_CLIENT_ID:-}"
+      SOURCE_CREDENTIALS_API_KEYS: "${SOURCE_CREDENTIALS_API_KEYS:-}"
+      JIRA_ENRICH_CONCURRENCY: "${JIRA_ENRICH_CONCURRENCY:-4}"
+      JIRA_ENRICH_BATCH: "${JIRA_ENRICH_BATCH:-10}"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   # EMBER-36. Not part of the default `up` (see profiles).
   slack-ingestion:
     profiles: ["slack-ingestion"]
@@ -287,7 +333,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # EMBER-75. Applies infra/k8s/apps/postgres/migrations with the dbmate the migrate Job runs, then exits.
+  # EMBER-75. Applies services/backend/migrations with the dbmate the backend image ships, then exits.
   postgres-migrate:
     profiles: ["postgres"]
     image: ghcr.io/amacneil/dbmate:2.36.0
@@ -299,7 +345,7 @@ services:
     environment:
       DATABASE_URL: "postgres://ember:${POSTGRES_PASSWORD:-change-me-locally}@postgres:5432/ember?sslmode=disable"
     volumes:
-      - ./k8s/apps/postgres/migrations:/migrations:ro
+      - ../services/backend/migrations:/migrations:ro
 
   # EMBER-45. Not part of the default `up` (see profiles). Reads connector JSONL from
   # ./data/raw/<tenant>/ (or PIPELINE_INPUT, a path inside the container under /data) and writes

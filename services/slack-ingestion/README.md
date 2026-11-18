@@ -288,7 +288,7 @@ PGTEST_URL='postgresql://ember:change-me-locally@127.0.0.1:5432/postgres?sslmode
 
 `test_pull.py` and `test_enrich.py` answer Slack Web API calls from in-memory fakes. None of the tests call Slack.
 
-`test_enrich_db.py` builds database `ember_test_enrich` from `infra/k8s/apps/postgres/migrations`. The migrations include the NOTIFY trigger (EMBER-75). It checks EMBER-67's acceptance criteria against the real worker:
+`test_enrich_db.py` builds database `ember_test_enrich` from `services/backend/migrations`. The migrations include the NOTIFY trigger (EMBER-75). It checks EMBER-67's acceptance criteria against the real worker:
 - records with context
 - no duplicates
 - a wake within 1 s of an insert

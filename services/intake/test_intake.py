@@ -54,7 +54,7 @@ from models import Installation, RawEvent, SourceCredential  # noqa: E402
 from source_credentials import KeyRing  # noqa: E402
 from validate import assert_valid  # noqa: E402
 
-MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
+MIGRATIONS = REPO / "services" / "backend" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_intake"
 SECRET = "test-webhook-secret"

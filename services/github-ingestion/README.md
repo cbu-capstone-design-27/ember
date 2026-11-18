@@ -158,7 +158,7 @@ These are intentional. The pull stays on Metadata, Contents, Issues, and Pull re
 
 ## Enrich worker
 
-`enrich.py` is `enrich:github` (EMBER-65). It turns GitHub rows in `raw_events` into `source_records`, fetching only what the payload lacks (`docs/ingestion/github-webhooks.md`), and sets `enriched_at` in the same transaction. It wakes on any notification on `RAW_EVENTS_CHANNEL` (default `raw_events`) and ignores the payload, catches up at start, and polls every 30 s. `CONCURRENCY` (default 4) bounds rows in flight. Ctrl+C or SIGTERM finishes the rows in flight, then exits.
+`enrich.py` is `enrich:github` (EMBER-65). It has also moved into `services/backend` (EMBER-160, `connectors/github/enrich.py`), which claims by `occurred_at` and reads it from `raw_events`. This copy stays until the cluster runs the backend image; a change to one goes into both. It turns GitHub rows in `raw_events` into `source_records`, fetching only what the payload lacks (`docs/ingestion/github-webhooks.md`), and sets `enriched_at` in the same transaction. It wakes on any notification on `RAW_EVENTS_CHANNEL` (default `raw_events`) and ignores the payload, catches up at start, and polls every 30 s. `CONCURRENCY` (default 4) bounds rows in flight. Ctrl+C or SIGTERM finishes the rows in flight, then exits.
 
 Against the local Postgres, from the repo root:
 
@@ -170,11 +170,11 @@ DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=
   python3 services/github-ingestion/enrich.py
 ```
 
-Only `pull_request` `opened`/`reopened`/`synchronize` and pushes with a full `commits` array call GitHub. Those need `GITHUB_APP_ID` and the App key from [Credentials](#credentials). Rows with `tenant` null wait until the installation is mapped (on the cluster, `make map-tenant`, [`infra/k8s/README.md`, Mapping a tenant](../../infra/k8s/README.md#mapping-a-tenant)).
+Only `pull_request` `opened`/`reopened`/`synchronize` and pushes with a full `commits` array call GitHub. Those need `GITHUB_APP_ID` and the App key from [Credentials](#credentials). Rows with `tenant` null wait until the installation is mapped (on the cluster, `make map-tenant`, [the infra repo's `k8s/README.md`, Mapping a tenant](https://github.com/cbu-capstone-design-27/infra/blob/main/k8s/README.md#mapping-a-tenant)).
 
-The `Dockerfile` builds image `github-ingestion` with `enrich.py` as its command and `openssl` for the App JWT. On the cluster it runs as Deployment `enrich-github` ([`infra/k8s/README.md`, enrich-github](../../infra/k8s/README.md#enrich-github)).
+The `Dockerfile` builds image `github-ingestion` with `enrich.py` as its command and `openssl` for the App JWT. On the cluster enrich:github runs inside `ember-backend` instead (ADR 0012).
 
-`test_enrich.py` runs the worker against a real Postgres with GitHub stubbed. It needs psql and dbmate, like `infra/k8s/apps/postgres/test_migrations.py`:
+`test_enrich.py` runs the worker against a real Postgres with GitHub stubbed. It needs psql and dbmate, like `services/backend/tests/test_migrations.py`:
 
 ```sh
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \

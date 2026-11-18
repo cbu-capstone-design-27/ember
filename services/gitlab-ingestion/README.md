@@ -176,7 +176,7 @@ DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=
 
 Approvals version on arrival, a deleted branch writes a `ref` tombstone, and confidential issues, internal notes and triggers that stay off make no record. REST objects from the backfill (`origin` `backfill` or `reconcile`) map to the same rows and call nothing. Calls use the `read_api` token Connect GitLab (EMBER-149) stored for the row's group, opened with `SOURCE_CREDENTIALS_API_KEYS`, and only for rows of the tenant that connected it. They go to the instance the owner connected, and only if its host is the one in the row's `account_id`. A group with no such token falls back to `GITLAB_API_TOKEN`, whose calls go only to `GITLAB_BASE_URL`. Without the key ring only the fallback is used. A row that needs a call and has neither fails and is retried after the next poll. They wait on the shared `rate_limits` row for the row's `account_id`, using `pull.py`'s `RateLimit-*` and `Retry-After` handling. Rows with `tenant` null wait until the account is mapped.
 
-`test_enrich.py` runs the worker against a real Postgres with GitLab stubbed. It needs psql and dbmate, like `infra/k8s/apps/postgres/test_migrations.py`:
+`test_enrich.py` runs the worker against a real Postgres with GitLab stubbed. It needs psql and dbmate, like `services/backend/tests/test_migrations.py`:
 
 ```sh
 PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' \

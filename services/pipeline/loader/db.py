@@ -1,7 +1,7 @@
 """SQLAlchemy models for the tables the extract and load workers touch (EMBER-85).
 
 They map docs/ingestion/architecture.md (Storage) and nothing more. The dbmate migrations in
-infra/k8s/apps/postgres/migrations own the schema, so never call create_all on them. Columns the
+services/backend/migrations own the schema, so never call create_all on them. Columns the
 workers never read (source_records' embedding columns) are left out.
 """
 

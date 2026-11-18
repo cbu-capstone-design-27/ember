@@ -1,6 +1,6 @@
 # apps/cli
 
-`ember`, the Ember command-line interface. Epic EMBER-11; the scaffold and `ember status` are EMBER-82, `ember auth` is EMBER-87, the terminal UI is EMBER-120. Written in Rust ([ADR 0007](../../docs/adr/0007-cli-in-rust.md)).
+`ember`, the Ember command-line interface. Epic EMBER-11; the scaffold and `ember status` are EMBER-82, `ember auth` is EMBER-87, the terminal UI is EMBER-120, `ember init` is EMBER-123. Written in Rust ([ADR 0007](../../docs/adr/0007-cli-in-rust.md)).
 
 | Command | What it does |
 | --- | --- |
@@ -9,6 +9,7 @@
 | `ember auth login` | Sign in to the web app through the browser, and store the token. |
 | `ember auth status` | Who you're logged in as, and on which web app. |
 | `ember auth logout` | End the sign-in on the web app and delete the stored token. |
+| `ember init` | Point the project's coding agents at Ember: add an Ember section to `AGENTS.md`, and make `CLAUDE.md` import it. See [Set up a project](#set-up-a-project). |
 
 ## Install
 
@@ -44,10 +45,11 @@ The local Postgres from `infra/docker-compose.yml` (profile `postgres`, migratio
 export DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable'
 ```
 
-The cluster's Postgres, from the tailnet. `make postgres-url` reads the password from the cluster, so it needs the kubeconfig ([`infra/k8s/README.md`](../../infra/k8s/README.md), Postgres):
+The cluster's Postgres, through a port-forward (needs the cluster kubeconfig, context `proxmox`):
 
 ```sh
-export DATABASE_URL="$(make -s -C infra/ansible postgres-url)"
+kubectl -n ember port-forward svc/postgres-rw 5432 &
+export DATABASE_URL="$(kubectl -n ember get secret postgres-app -o jsonpath='{.data.uri}' | base64 -d | sed 's/@[^/]*/@localhost:5432/')"
 ```
 
 `sslmode` works as in `psql`. Without it, `ember` uses TLS when the server offers it, which the cluster's does. `require` insists on TLS. `verify-ca` and `verify-full` also check the certificate against `sslrootcert`.
@@ -108,7 +110,7 @@ Logged out of http://localhost:3000
 EMBER-120 checks this flow against the web app on the cluster, which is tailnet-only (EMBER-112). Run it once that deploy lands, and again after changing sign-in on either side:
 
 1. Join the cluster's tailnet, as in [`apps/web/README.md`](../web/README.md#cluster-postgres) step 1.
-2. Point the CLI at the deployed web app. Its address is in the EMBER-112 deploy docs (`infra/k8s/README.md`): `export EMBER_URL=<web app address>`.
+2. Point the CLI at the deployed web app. `export EMBER_URL=https://ember-web.tail470a31.ts.net` (tailnet only).
 3. `ember auth login`. The browser opens the web app's `/device` page with the same code the terminal shows. Sign in, approve, and the terminal prints `Successfully authenticated as <your email>`.
 4. `ember auth status` prints `Logged in to <web app address> as <your email>`, then your organization. On a fresh cluster you have none until you create one, or an Ember admin adds you to the one linked to `ember-development`.
 5. `ember` opens the terminal UI. The Workspace screen shows the same account and organization.
@@ -131,6 +133,34 @@ On Linux and macOS the file is created with mode `0600` and the directory with `
 | 0 | Done, or (`logout`) nothing to do |
 | 1 | Not logged in; sign-in denied, expired or already used; the token was rejected; the web app couldn't be reached or answered something unexpected. Every request gives up after 10 s. |
 | 2 | Configuration: the web app address isn't an http(s) URL, or there's no config directory. Also bad arguments. |
+
+## Set up a project
+
+`ember init` tells a project's coding agents that Ember exists, so a plain question ("Why does the dev build quit the release app?") sends them to Ember without being asked. Run it inside the project:
+
+```console
+$ ember init
+Writing to the git repository's root, /Users/ada/code/photon
+Added the Ember section to AGENTS.md
+Created CLAUDE.md, importing AGENTS.md
+```
+
+- **Where:** inside a git repository it writes to the repository's root (the nearest directory above with a `.git` directory or file) and says so. Anywhere else it writes to the current directory.
+- **`AGENTS.md`**, which Codex and Cursor read: created if missing. Otherwise the Ember section is appended, after a blank line, between `<!-- ember:start -->` and `<!-- ember:end -->`. Nothing outside the markers is changed, and a file with Windows line endings keeps them.
+- **`CLAUDE.md`**, which Claude Code reads: created as `@AGENTS.md` if missing, so Claude Code loads `AGENTS.md` too. If it exists without that import, `@AGENTS.md` is appended. If it already imports `AGENTS.md` (outside a code block), or is a link to `AGENTS.md`, it's left alone.
+- **The section** says the project's decisions, tickets, PRs and discussions are in Ember, and tells the agent to answer "why" and history questions with the `ember` MCP server's `search` and `get_record` tools ([`apps/mcp`](../mcp/README.md)) and to cite what it uses. If you're signed in (`ember auth login`), it names your organization. If not, `init` still works and says how to sign in.
+- **Running it again** replaces only what is between the markers, which also brings an older section up to date. Run twice, it leaves byte-identical files and says each is already current.
+- **`--dry-run`** prints what would be created or changed, with the lines it would add (`+`) and remove (`-`), and writes nothing.
+
+`init` doesn't set up the MCP server itself in the agent; see [`apps/mcp`](../mcp/README.md#add-it-to-an-agent) for that.
+
+It reads both files before writing either. If `AGENTS.md` has a start marker without an end marker, more than one section, or the markers in the wrong order, it changes neither file and says what to fix.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | The files are set up, or (`--dry-run`) the plan is printed |
+| 1 | A file couldn't be read or written, isn't UTF-8 text, or is a link to nothing |
+| 2 | `AGENTS.md`'s Ember markers are broken. Also bad arguments. |
 
 ## Terminal UI
 
@@ -176,6 +206,7 @@ They use the databases `ember_test_cli_status` and `ember_test_cli_unmigrated`. 
 | `src/db.rs` | `DATABASE_URL`, connecting, and wording errors without the password |
 | `src/status.rs` | `ember status`: the query and the table |
 | `src/auth.rs` | `ember auth`: the device flow, `whoami`, sign-out, and the credentials file |
+| `src/init.rs` | `ember init`: finding the root, the Ember section, and planning the edits to `AGENTS.md` and `CLAUDE.md` |
 | `src/tui/mod.rs` | The terminal UI: taking over the terminal, the event loop, asking for the sign-in in the background |
 | `src/tui/app.rs` | Its state and what each key does |
 | `src/tui/data.rs` | What it shows: the sign-in, and the preview data that stands in for the API |
@@ -183,6 +214,7 @@ They use the databases `ember_test_cli_status` and `ember_test_cli_unmigrated`. 
 | `src/tui/status.rs`, `src/tui/workspace.rs` | The two screens. Their tests draw them on ratatui's test backend and read the text back |
 | `tests/status.rs` | Runs the built binary, against Postgres for the ignored tests |
 | `tests/auth.rs` | Runs the built binary against a fake web app; needs no database |
+| `tests/init.rs` | Runs the built binary in temporary projects; needs no database |
 | `tests/tui.rs` | Plain `ember` without a terminal prints the help instead of opening the UI |
 | `rust-toolchain.toml` | The Rust version everyone and CI build with |
 

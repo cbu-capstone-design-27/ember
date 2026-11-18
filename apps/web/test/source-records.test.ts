@@ -178,7 +178,7 @@ if (!postgresUrl) {
 
     before(async () => {
       const { rows } = await pool.query("select to_regclass('public.source_records') as t");
-      assert.ok(rows[0].t, "apply the ingestion migrations first (infra/k8s/apps/postgres/migrations)");
+      assert.ok(rows[0].t, "apply the ingestion migrations first (services/backend/migrations)");
     });
 
     after(async () => {

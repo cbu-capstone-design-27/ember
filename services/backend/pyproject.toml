@@ -1,0 +1,26 @@
+# ember-backend (EMBER-160, ADR 0012): every Python backend component in one image and one process.
+# Pinned exactly, as the other service images pin theirs; the image installs this with pip.
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ember-backend"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "SQLAlchemy[asyncio]==2.0.54",  # the asyncio extra pulls in greenlet, which async engines need
+  "asyncpg==0.32.0",
+  "pydantic-settings==2.16.3",
+  "starlette==1.7.0",
+  "uvicorn==0.54.0",
+  "prometheus-client==0.26.0",
+  "PyJWT==2.15.1",                # verifies Jira dynamic webhooks
+  "cryptography==50.0.2",         # opens source_credentials rows (packages/source-credentials)
+]
+
+[project.scripts]
+ember-backend = "ember.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -34,7 +34,7 @@ from loader.memory_writer import MemoryWriter
 from loader.workers import ExtractWorker, LoadWorker, serve
 
 REPO = Path(__file__).resolve().parents[3]
-MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
+MIGRATIONS = REPO / "services" / "backend" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_pg_load"
 PGTEST_URL = os.environ.get("PGTEST_URL")

@@ -33,7 +33,7 @@ import enrich  # noqa: E402
 from models import RateLimit, RawEvent, SourceRecord  # noqa: E402
 from pull_test import Response  # noqa: E402
 
-MIGRATIONS = REPO / "infra" / "k8s" / "apps" / "postgres" / "migrations"
+MIGRATIONS = REPO / "services" / "backend" / "migrations"
 DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_enrich"
 FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "github.json").read_text())

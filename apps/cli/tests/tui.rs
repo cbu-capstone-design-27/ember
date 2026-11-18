@@ -16,7 +16,7 @@ fn without_a_terminal_plain_ember_prints_the_help_and_exits_2() {
     let help = String::from_utf8_lossy(&output.stderr);
     assert!(help.contains("Usage: ember"), "{help}");
     assert!(help.contains("terminal UI"), "{help}");
-    for command in ["status", "auth"] {
+    for command in ["status", "auth", "init"] {
         assert!(
             help.contains(command),
             "help should list `{command}`: {help}"

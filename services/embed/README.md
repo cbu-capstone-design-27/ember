@@ -32,11 +32,11 @@ EMBEDDING_URL=http://<spark>:8000 EMBEDDING_API_KEY=... \
 | `EMBED_BATCH` | 32 | Rows per request |
 | `SOURCE_RECORDS_CHANNEL` | `source_records` | NOTIFY channel |
 
-Postgres needs the `vector` extension. Locally, the compose `postgres` profile runs `pgvector/pgvector`; on the cluster, the CloudNativePG image ships it and `infra/k8s/apps/postgres/database.yaml` has the operator create it, since the migrate Job's role isn't a superuser.
+Postgres needs the `vector` extension. Locally, the compose `postgres` profile runs `pgvector/pgvector`; on the cluster, the CloudNativePG image ships it and `k8s/apps/postgres/database.yaml` in the infra repo has the operator create it, since the migrate Job's role isn't a superuser.
 
 ## On the cluster
 
-EMBER-89. Flux runs Deployment `embed` (`infra/k8s/apps/embed`) in namespace `ember`, one replica. `DATABASE_URL` comes from Secret `postgres-app` (`uri`), `EMBEDDING_API_KEY` from Secret `spark-model-keys` (`infra/k8s/apps/llm-tunnel/model-keys.sops.yaml`), and `EMBEDDING_URL` is `http://llm-tunnel.ember:8000`, the Spark's embedding model through the SSH tunnel.
+EMBER-89. Deployment `embed` (`k8s/apps/embed` in the infra repo, not deployed on the current cluster) runs in namespace `ember`, one replica. `DATABASE_URL` comes from Secret `postgres-app` (`uri`), `EMBEDDING_API_KEY` from Secret `spark-model-keys` (`k8s/apps/llm-tunnel/model-keys.sops.yaml`), and `EMBEDDING_URL` is `http://llm-tunnel.ember:8000`, the Spark's embedding model through the SSH tunnel.
 
 ```bash
 kubectl --context homelab -n ember logs deploy/embed        # "embed listening on source_records", then "embedded N of M"
@@ -44,7 +44,7 @@ kubectl --context homelab -n ember exec postgres-1 -c postgres -- \
   psql -U postgres -d ember -Atc "select count(*), count(embedded_at) from source_records"
 ```
 
-To query the cluster's vectors from a laptop on the tailnet (the MCP server, EMBER-79), use the URL `make postgres-url` prints (`infra/k8s/README.md`, Postgres).
+To query the cluster's vectors from a laptop on the tailnet (the MCP server, EMBER-79), port-forward it as in `apps/cli/README.md`.
 
 ## Tests
 

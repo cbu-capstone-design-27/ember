@@ -119,7 +119,7 @@ DATABASE_URL=postgres://ember:change-me-locally@postgres:5432/ember \
 The cluster's Postgres (`ember` on `hv-worker-2`, EMBER-61) is reachable over the cluster's Tailscale tailnet only. It is wiped and recreated now and then, so keep its URL in `.env`, never in code.
 
 1. Join the cluster's tailnet, or one the cluster's nodes are shared into. `getent hosts hv-worker-2.tail470a31.ts.net` should print an address.
-2. Print the URL, with its password: `make -C infra/ansible -s postgres-url` (needs the cluster kubeconfig; see `infra/ansible`). Put it in the root `.env` as `DATABASE_URL`. Postgres answers on port 5432 of every node (`infra/k8s/apps/postgres/service-lb.yaml`), so if `hv-worker-2` isn't shared with you, use a node that is: `make -C infra/ansible -s postgres-url POSTGRES_HOST=hv-worker-1.tail470a31.ts.net`, or change the host in `.env`.
+2. Postgres is reachable only inside the cluster. With the cluster kubeconfig, run `kubectl -n ember port-forward svc/postgres-rw 5432` (context `proxmox`) and `postgres://...@localhost:5432/ember` with the `uri` of Secret `postgres-app`. Put it in the root `.env` as `DATABASE_URL`.
 3. Run the app with that `.env`. `npm run dev` reads only `apps/web/.env*`, so load the root one into the shell first (`node --env-file` doesn't work here: Next passes it on to a worker through `NODE_OPTIONS`, which refuses it):
 
    ```sh
@@ -238,7 +238,7 @@ On `ember-ingest`'s settings page (Settings → Developer settings → GitHub Ap
 1. **Callback URL:** `https://pi-cp.tail470a31.ts.net/connect/github/callback`, which is `BETTER_AUTH_URL` plus the path. It is a browser redirect, so a tailnet address works. The connect routes move a visitor on another node's address to this one first, because the session cookie belongs to one host.
 2. **Request user authorization (OAuth) during installation:** on. GitHub then sends installs to the Callback URL with a `code`, and the Setup URL field is disabled.
 3. **Permissions → Organization → Members:** read. Without it, organization installations can't be picked on the existing-installation path, and the picker says why. Changing a permission asks every installation to accept it.
-4. **Client secrets → Generate a new client secret.** Put the Client ID and the secret in the vault as `vault_web_github_client_id` and `vault_web_github_client_secret`. Then run `make web-secret`, commit `infra/k8s/apps/web/auth.sops.yaml`, and restart the web app.
+4. **Client secrets → Generate a new client secret.** Put the Client ID and the secret in the vault as `vault_web_github_client_id` and `vault_web_github_client_secret`. Then run `make secrets ONLY=web-auth` in the infra repo's `ansible/` and commit `k8s/apps/web/auth.sops.yaml` there.
 
 For local dev, a second GitHub App with Callback URL `http://localhost:3000/connect/github/callback` keeps the shared App's settings alone.
 
@@ -300,7 +300,7 @@ On the Slack app's page at [api.slack.com/apps](https://api.slack.com/apps) (cre
 
 1. **OAuth & Permissions → Redirect URLs:** `https://pi-cp.tail470a31.ts.net/connect/slack/callback`, which is `BETTER_AUTH_URL` plus the path. It is a browser redirect, so a tailnet address works. The manifest's `redirect_urls` has a placeholder to replace.
 2. **Manage Distribution → Activate Public Distribution.** Without it the app installs only into the workspace that created it. Public distribution doesn't list it in the Slack Marketplace, and installs into other workspaces fall under Slack's non-Marketplace limits on `conversations.history` and `conversations.replies` (`docs/ingestion/slack.md`, Rate limits).
-3. **Basic Information → App Credentials:** put the Client ID and Client Secret in the vault as `vault_slack_client_id` and `vault_slack_client_secret`. Then run `make web-secret`, commit `infra/k8s/apps/web/auth.sops.yaml`, and restart the web app. The Signing Secret stays where it is, in intake's Secret: one per app, whatever the workspace.
+3. **Basic Information → App Credentials:** put the Client ID and Client Secret in the vault as `vault_slack_client_id` and `vault_slack_client_secret`. Then run `make secrets ONLY=web-auth` in the infra repo's `ansible/` and commit `k8s/apps/web/auth.sops.yaml` there; Flux restarts the web app. The Signing Secret stays where it is, in intake's Secret: one per app, whatever the workspace.
 
 For local dev, a second Slack app with Redirect URL `http://localhost:3000/connect/slack/callback` keeps the shared app's settings alone. If Slack refuses a plain `http://localhost` URL there, use an HTTPS tunnel to the local app and its address.
 
@@ -357,7 +357,7 @@ BETTER_AUTH_SECRET=dev-secret-change-me BETTER_AUTH_URL=http://localhost:3000 np
 
 ## On the cluster
 
-The cluster runs it at **`https://pi-cp.tail470a31.ts.net`**, reachable from the tailnet only (EMBER-112), against the cluster's Postgres. Any node's name works (`https://hv-worker-1.tail470a31.ts.net`, `https://hv-worker-2.tail470a31.ts.net`), and so does `https://ember-web.tail470a31.ts.net` on devices it's shared with. Point the CLI there to sign in against it: `ember auth login --url https://pi-cp.tail470a31.ts.net`. Flux deploys `infra/k8s/apps/web/`, and `infra/k8s/README.md` (web) covers the image tag, the Secrets and the test accounts (`test-owner@`, `test-admin@` and `test-member@example.com`, in organization Ember Test).
+The cluster runs it at **`https://ember-web.tail470a31.ts.net`**, reachable from the tailnet only, against the cluster's Postgres. Point the CLI there to sign in against it: `ember auth login --url https://ember-web.tail470a31.ts.net`. Flux deploys `k8s/apps/web/` from the infra repo, and its [`k8s/README.md`](https://github.com/cbu-capstone-design-27/infra/blob/main/k8s/README.md) (web) covers the image tag, the Secrets and the test accounts (`test-owner@`, `test-admin@` and `test-member@example.com`, in organization Ember Test).
 
 ## Test
 
