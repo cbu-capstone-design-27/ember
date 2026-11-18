@@ -28,12 +28,21 @@ channel_deleted write the channel; member_joined_channel and member_left_channel
 membership. A channel event, or a topic, purpose or name system message, carries only its change.
 It applies in Slack's order onto the channel as stored before it (Context.change_channel), so a
 payload's few fields don't replace the full channel and a late change doesn't undo a newer one.
-Reactions, app_uninstalled, tokens_revoked and anything else are marked enriched and skipped.
+Reactions and anything else are marked enriched and skipped.
+
+Tokens (EMBER-148, workspaces.py): every Slack call for a row uses the bot token Connect Slack stored
+for the row's workspace (account_id = team_id), and only for rows of the tenant that connected it.
+There is no SLACK_BOT_TOKEN fallback. A row is claimed only while its workspace is connected to its
+tenant with a token; until then it waits, unclaimed, and a reconnect wakes it. When Slack refuses a
+token, or sends app_uninstalled or a tokens_revoked naming our bot, the workspace is disconnected (as
+Disconnect in Settings does, less apps.uninstall), and its rows wait for an owner to reconnect it.
+Those two events are claimed whatever the connection's state, and change nothing once it's gone.
 
 Every Slack call goes through pull_test.SlackClient (EMBER-52's pacing, throttle and backoff), with
-its gates kept in table rate_limits (pg_gates.py).
+its gates kept in table rate_limits (pg_gates.py), one bucket per workspace and method.
 
-    python3 enrich.py                              # run the worker
+    SOURCE_CREDENTIALS_API_KEYS=... PYTHONPATH=../../packages/source-credentials \
+        python3 enrich.py                          # run the worker
     python3 enrich.py seed FILE --tenant TENANT    # store deliveries as raw_events rows
 
 seed stores Events API deliveries as intake's Slack adapter does (services/intake/adapters/slack.py) (a JSON
@@ -64,7 +73,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 from psycopg import sql
-from sqlalchemy import create_engine, func, select, text, update
+from sqlalchemy import create_engine, func, not_, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -77,12 +86,13 @@ from pull_test import (
     SlackApiError,
     SlackClient,
     Throttled,
-    bot_token,
     make_client,
     rate_table,
     resolve_rate_mode,
     urllib_exchange,
 )
+from source_credentials import CredentialError, KeyRing
+from workspaces import TokenUnusable, WorkspaceToken, WorkspaceTokens, row_connected
 
 LOG = logging.getLogger("slack-enrich")
 
@@ -109,8 +119,14 @@ LOOKUP_MISSES = {
     "message_not_found",
     "not_in_channel",
 }
-# Errors no retry can fix. The row is given up on at once.
-PERMANENT_ERRORS = AUTH_ERRORS | {"missing_scope"}
+# Errors no retry can fix. The row is given up on at once. (AUTH_ERRORS mean the workspace's token
+# is gone: TokenRejected, which disconnects the workspace instead.)
+PERMANENT_ERRORS = {"missing_scope"}
+# Events that end a workspace's connection (slack-webhooks.md, Everything else). Claimed whether or
+# not the workspace is still connected, since they need no token.
+LIFECYCLE_EVENTS = ("app_uninstalled", "tokens_revoked")
+# How often the worker logs the rows waiting for their workspace to be connected
+WAITING_REPORT_SECONDS = 300.0
 
 # The ontology's tenant rule (services/pipeline/ontology/sources.py, subgraph_id)
 TENANT = re.compile(r"[a-z0-9][a-z0-9-]*")
@@ -126,6 +142,15 @@ class Permanent(Exception):
 
 class Halted(Exception):
     """The worker is stopping and a Slack wait was cut short. The row stays pending."""
+
+
+class TokenRejected(Exception):
+    """Slack refused the workspace's bot token (AUTH_ERRORS): the app was uninstalled or the token
+    revoked. The workspace is disconnected and the row waits for a reconnect."""
+
+    def __init__(self, error: str) -> None:
+        super().__init__(f"Slack refused the workspace's bot token ({error})")
+        self.error = error
 
 
 # ---- Configuration ----------------------------------------------------------------------------
@@ -160,6 +185,20 @@ def env_number(name: str, default, low, high, kind=int):
     if not low <= value <= high:
         raise ConfigError(f"{name} must be from {low} to {high}")
     return value
+
+
+def api_key_ring(environ=os.environ) -> KeyRing:
+    """The api key ring Connect Slack seals the bot tokens with (packages/source-credentials)."""
+    try:
+        ring = KeyRing.from_env("api", environ)
+    except CredentialError as exc:
+        raise ConfigError(f"SOURCE_CREDENTIALS_API_KEYS: {exc}") from exc
+    if ring is None:
+        raise ConfigError(
+            "Set SOURCE_CREDENTIALS_API_KEYS to the api key ring: enrich reads each workspace's bot token "
+            "from what Connect Slack stored (EMBER-148)"
+        )
+    return ring
 
 
 def env_channel() -> str:
@@ -452,6 +491,8 @@ class Context:
             if exc.error in LOOKUP_MISSES:
                 LOG.info("%s found nothing (%s); that context stays empty", method, exc.error)
                 return None
+            if exc.error in AUTH_ERRORS:
+                raise TokenRejected(exc.error) from exc
             if exc.error in PERMANENT_ERRORS:
                 raise Permanent(str(exc)) from exc
             raise
@@ -651,6 +692,38 @@ async def enrich_membership(body: dict, event: dict, context: Context) -> list[N
     return [*context.fetched, NewRecord("membership", f"{channel_id}/{user_id}", version, occurred, record)]
 
 
+@dataclass(frozen=True)
+class Lifecycle:
+    """app_uninstalled, or tokens_revoked with the bot user ids whose tokens Slack revoked."""
+
+    kind: str
+    revoked_bots: tuple[str, ...] = ()
+
+
+def lifecycle(body) -> Lifecycle | None:
+    """The workspace lifecycle event a delivery is (slack-webhooks.md, Everything else), or None."""
+    event = _dict(body.get("event")) if isinstance(body, dict) and body.get("type") == "event_callback" else None
+    kind = event.get("type") if event else None
+    if kind == "app_uninstalled":
+        return Lifecycle(kind)
+    if kind == "tokens_revoked":
+        tokens = _dict(event.get("tokens")) or {}
+        bots = tokens.get("bot")
+        return Lifecycle(kind, tuple(b for b in bots if isinstance(b, str) and b) if isinstance(bots, list) else ())
+    return None
+
+
+def ends_connection(event: Lifecycle, bot_user: str | None) -> bool:
+    """Whether the event ends the workspace's connection. Our app has one bot user per workspace, so
+    any revoked bot token is ours; when our bot's id is known it must be the one listed. Revoked
+    user tokens alone change nothing: Ember holds none."""
+    if event.kind == "app_uninstalled":
+        return True
+    if not event.revoked_bots:
+        return False
+    return bot_user is None or bot_user in event.revoked_bots
+
+
 OTHER_EVENTS = {
     "user_change": enrich_user,
     "team_join": enrich_user,
@@ -728,7 +801,7 @@ class Worker:
         self,
         database_url: str,
         *,
-        token: str,
+        ring: KeyRing,
         exchange=urllib_exchange,
         rate_mode: str = DEFAULT_RATE_MODE,
         rates: dict[str, float] | None = None,
@@ -737,10 +810,13 @@ class Worker:
         poll_seconds: float = DEFAULT_POLL_SECONDS,
         max_attempts: int = MAX_ATTEMPTS,
         sleep: Callable[[float], None] | None = None,
+        waiting_report_seconds: float = WAITING_REPORT_SECONDS,
     ) -> None:
         self._alchemy_url, self._libpq_url = database_urls(database_url)
-        self._token = token
+        self._tokens = WorkspaceTokens(ring)
         self._exchange = exchange
+        self._waiting_report_seconds = waiting_report_seconds
+        self._waiting_reported: dict[tuple[str | None, str], int] = {}
         self._rate_mode = rate_mode
         self._rates = rate_table(rate_mode) if rates is None else dict(rates)
         self.concurrency = concurrency
@@ -749,7 +825,8 @@ class Worker:
         self.max_attempts = max_attempts
         self._sleep = sleep or self._halting_sleep
         self._halt = threading.Event()  # stop() sets it, for the Slack waits running in threads
-        self._clients: dict[str, SlackClient] = {}
+        # One SlackClient per workspace, keyed by team id, with the token it was made with
+        self._clients: dict[str, tuple[str, SlackClient]] = {}
         self._clients_lock = threading.Lock()
         # Failures are kept in memory, as enrich:github does, until the job queue's retry and dead
         # letter replace this (architecture.md, Job queue). A restart forgets them and tries again.
@@ -774,6 +851,7 @@ class Worker:
         # runner, so asyncio's default pool, which psycopg uses to connect, never waits on them.
         self._executor = ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="slack-call")
         listener = asyncio.create_task(self._listen(), name="listen")
+        reporter = asyncio.create_task(self._report_waiting(), name="report-waiting")
         runners = [asyncio.create_task(self._runner(i), name=f"runner-{i}") for i in range(self.concurrency)]
         LOG.info(
             "enrich:slack started: concurrency %s, LISTEN %s, poll every %ss", self.concurrency, self.channel, self.poll_seconds
@@ -782,7 +860,8 @@ class Worker:
             await asyncio.gather(*runners)
         finally:
             listener.cancel()
-            await asyncio.gather(listener, return_exceptions=True)
+            reporter.cancel()
+            await asyncio.gather(listener, reporter, return_exceptions=True)
             self._executor.shutdown(wait=False)
             await self._engine.dispose()
             self._sync_engine.dispose()
@@ -866,10 +945,14 @@ class Worker:
         now = time.monotonic()
         for row_id in [r for r, until in self._cooldown.items() if until <= now]:
             del self._cooldown[row_id]
-        stmt = select(RawEvent.id, RawEvent.tenant, RawEvent.event_name, RawEvent.envelope).where(
+        stmt = select(
+            RawEvent.id, RawEvent.account_id, RawEvent.tenant, RawEvent.event_name, RawEvent.occurred_at, RawEvent.envelope
+        ).where(
             RawEvent.source == SOURCE,
-            RawEvent.tenant.is_not(None),  # unmapped accounts wait for ember-admin map
+            RawEvent.tenant.is_not(None),  # unmapped accounts wait for Connect Slack
             RawEvent.enriched_at.is_(None),
+            # A workspace's rows wait until it is connected to their tenant with a token (EMBER-148)
+            or_(row_connected(), RawEvent.event_name.in_(LIFECYCLE_EVENTS)),
         )
         skipped = self._cooldown.keys() | self._given_up
         if skipped:
@@ -878,8 +961,44 @@ class Worker:
             # Slack's own order, not arrival order (architecture.md, Source ordering value); ties on id
             stmt.order_by(RawEvent.occurred_at, RawEvent.id)
             .limit(1)
-            .with_for_update(skip_locked=True)
+            .with_for_update(skip_locked=True, of=RawEvent)
         )
+
+    async def waiting(self) -> dict[tuple[str | None, str], int]:
+        """Pending rows that wait for their workspace to be connected to their tenant, by (team, tenant)."""
+        async with self._engine.connect() as conn:
+            rows = await conn.execute(
+                select(RawEvent.account_id, RawEvent.tenant, func.count())
+                .where(
+                    RawEvent.source == SOURCE,
+                    RawEvent.tenant.is_not(None),
+                    RawEvent.enriched_at.is_(None),
+                    not_(or_(row_connected(), RawEvent.event_name.in_(LIFECYCLE_EVENTS))),
+                )
+                .group_by(RawEvent.account_id, RawEvent.tenant)
+            )
+            return {(team, tenant): count for team, tenant, count in rows}
+
+    async def _report_waiting(self) -> None:
+        """Log, now and then, the rows no token can enrich yet, so they don't wait unnoticed. Logs a
+        workspace again only when its count changed."""
+        while not self.stopping.is_set():
+            try:
+                waiting = await self.waiting()
+            except Exception as exc:  # the database; the runners log that too
+                LOG.debug("could not count waiting rows: %s", type(exc).__name__)
+            else:
+                for (team, tenant), count in sorted(waiting.items(), key=lambda item: (item[0][0] or "", item[0][1])):
+                    if self._waiting_reported.get((team, tenant)) != count:
+                        LOG.warning(
+                            "%s Slack rows of workspace %s wait for it to be connected to tenant %s "
+                            "(Connect Slack in Settings)", count, team, tenant,
+                        )
+                self._waiting_reported = waiting
+            try:
+                await asyncio.wait_for(self.stopping.wait(), timeout=self._waiting_report_seconds)
+            except asyncio.TimeoutError:
+                pass
 
     def _give_up(self, row_id: int, exc: BaseException) -> None:
         """Stop claiming the row until a restart. It stays pending in raw_events (enriched_at null)."""
@@ -889,7 +1008,7 @@ class Worker:
         LOG.error("raw_event %s given up on until the worker restarts: %s", row_id, _error_text(exc))
 
     def _backoff(self, row_id: int, attempts: int) -> None:
-        """Leave a failed row alone for 2, 4, 8 … seconds, at most one poll interval."""
+        """Leave a failed row alone for 2, 4, 8 â€¦ seconds, at most one poll interval."""
         self._cooldown[row_id] = time.monotonic() + min(self.poll_seconds, 2.0 ** attempts)
 
     async def run_one(self) -> bool:
@@ -900,11 +1019,21 @@ class Worker:
                 return False
             row_id, tenant = row["id"], row["tenant"]
             envelope = row["envelope"] if isinstance(row["envelope"], dict) else {}
+            body = envelope.get("body")
+            event = lifecycle(body)
+            if event is not None:
+                await self._end_connection(session, row, body, event)
+                await self._finish(session, row, [])
+                return True
+            token: WorkspaceToken | None = None
             try:
+                token = await self._tokens.read(session, row["account_id"], tenant)
+                if token is None:
+                    # Disconnected between the claim and now; the claim won't pick it again until a reconnect
+                    LOG.info("raw_event %s: workspace %s is no longer connected; it waits", row_id, row["account_id"])
+                    return True
                 async with session.begin_nested():
-                    records = await enrich_delivery(
-                        envelope.get("body"), cache=StoredRecords(session, tenant), call=self._caller(tenant)
-                    )
+                    records = await enrich_delivery(body, cache=StoredRecords(session, tenant), call=self._caller(token))
                     for rec in records:
                         insert = pg_insert(SourceRecord).values(
                             source=SOURCE,
@@ -927,6 +1056,22 @@ class Worker:
                                 where=REPLACES_FETCHED_COPY,
                             )
                         )
+            except TokenRejected as exc:
+                # The savepoint rolled back what this row wrote; the disconnect commits with the claim's
+                # transaction and the row stays pending, unclaimable until an owner reconnects
+                if await self._tokens.disconnect_rejected(session, token):
+                    LOG.error(
+                        "raw_event %s: %s; disconnected workspace %s from tenant %s. Its rows wait until an owner "
+                        "connects it again in Settings", row_id, exc, token.team_id, tenant,
+                    )
+                else:
+                    LOG.warning("raw_event %s: %s, but the workspace's connection changed meanwhile; "
+                                "retried if it has a new token", row_id, exc)
+                self._forget_client(token)
+            except TokenUnusable as exc:
+                # A key ring or credential problem: an operator's to fix, so wait without counting attempts
+                self._cooldown[row_id] = time.monotonic() + self.poll_seconds
+                LOG.error("raw_event %s waits: %s", row_id, exc)
             except Permanent as exc:
                 self._give_up(row_id, exc)
             except Halted:
@@ -944,32 +1089,65 @@ class Worker:
                     self._backoff(row_id, attempts)
                     LOG.warning("raw_event %s failed (%s/%s), retried later: %s", row_id, attempts, self.max_attempts, _error_text(exc))
             else:
-                await session.execute(update(RawEvent).where(RawEvent.id == row_id).values(enriched_at=func.clock_timestamp()))
-                self._attempts.pop(row_id, None)
-                self.done += 1
-                if records:
-                    LOG.info("enriched raw_event %s: %s", row_id, ", ".join(f"{r.kind} {r.object_id}" for r in records))
-                else:
-                    LOG.info("skipped raw_event %s (%s): no records for this event type", row_id, row["event_name"])
+                await self._finish(session, row, records)
             return True
 
-    def _caller(self, tenant: str) -> Call:
-        client = self._client(tenant)
+    async def _finish(self, session, row, records: list[NewRecord]) -> None:
+        row_id = row["id"]
+        await session.execute(update(RawEvent).where(RawEvent.id == row_id).values(enriched_at=func.clock_timestamp()))
+        self._attempts.pop(row_id, None)
+        self.done += 1
+        if records:
+            LOG.info("enriched raw_event %s: %s", row_id, ", ".join(f"{r.kind} {r.object_id}" for r in records))
+        else:
+            LOG.info("skipped raw_event %s (%s): no records for this event type", row_id, row["event_name"])
+
+    async def _end_connection(self, session, row, body: dict, event: Lifecycle) -> None:
+        """app_uninstalled, or tokens_revoked naming our bot: disconnect the workspace, unless an
+        owner reconnected it after Slack sent the event (workspaces.py)."""
+        team = row["account_id"] or _str(body.get("team_id"))
+        if team is None:
+            LOG.warning("raw_event %s: %s names no workspace; nothing to disconnect", row["id"], event.kind)
+            return
+        bot_user = await self._tokens.bot_user(session, team, row["tenant"]) or _bot_user(body)
+        if not ends_connection(event, bot_user):
+            LOG.info("raw_event %s: tokens_revoked names no bot token of ours in %s; nothing to do", row["id"], team)
+            return
+        if await self._tokens.disconnect_before(session, team, row["tenant"], row["occurred_at"]):
+            LOG.warning(
+                "raw_event %s: %s: disconnected workspace %s from tenant %s. Its stored records stay; an owner "
+                "can connect it again in Settings", row["id"], event.kind, team, row["tenant"],
+            )
+        else:
+            LOG.info("raw_event %s: %s for workspace %s changes nothing: it is already disconnected, "
+                     "or was connected again since", row["id"], event.kind, team)
+        with self._clients_lock:
+            self._clients.pop(team, None)
+
+    def _caller(self, token: WorkspaceToken) -> Call:
+        client = self._client(token)
 
         async def call(method: str, params: dict) -> dict:
             return await asyncio.get_running_loop().run_in_executor(self._executor, client.call, method, params)
 
         return call
 
-    def _client(self, tenant: str) -> SlackClient:
-        """One SlackClient per workspace, so each one's rate_limits rows are its own."""
+    def _client(self, token: WorkspaceToken) -> SlackClient:
+        """One SlackClient per workspace, so each one's rate_limits rows are its own (bucket
+        "<team_id>/<method>"). A reconnect's new token replaces the client."""
         with self._clients_lock:
-            client = self._clients.get(tenant)
-            if client is None:
-                gates = PgMethodGates(self._sync_engine, tenant, self._rates, sleep=self._sleep)
-                client = make_client(self._token, self._exchange, rate_mode=self._rate_mode, gates=gates)
-                self._clients[tenant] = client
-            return client
+            held = self._clients.get(token.team_id)
+            if held is None or held[0] != token.bot_token:
+                gates = PgMethodGates(self._sync_engine, token.tenant, self._rates, workspace=token.team_id, sleep=self._sleep)
+                held = (token.bot_token, make_client(token.bot_token, self._exchange, rate_mode=self._rate_mode, gates=gates))
+                self._clients[token.team_id] = held
+            return held[1]
+
+    def _forget_client(self, token: WorkspaceToken) -> None:
+        with self._clients_lock:
+            held = self._clients.get(token.team_id)
+            if held is not None and held[0] == token.bot_token:
+                del self._clients[token.team_id]
 
 
 def run_async(coro):
@@ -1134,7 +1312,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         worker = Worker(
             database_url,
-            token=bot_token(),
+            ring=api_key_ring(),
             rate_mode=resolve_rate_mode(None),
             concurrency=env_number("CONCURRENCY", DEFAULT_CONCURRENCY, 1, MAX_CONCURRENCY),
             channel=env_channel(),

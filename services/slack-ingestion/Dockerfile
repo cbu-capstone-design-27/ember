@@ -7,7 +7,10 @@ COPY services/slack-ingestion/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY services/slack-ingestion/envelope.py services/slack-ingestion/receiver.py services/slack-ingestion/pull_test.py \
-     services/slack-ingestion/models.py services/slack-ingestion/pg_gates.py services/slack-ingestion/enrich.py ./
+     services/slack-ingestion/models.py services/slack-ingestion/pg_gates.py services/slack-ingestion/enrich.py \
+     services/slack-ingestion/workspaces.py ./
+# Opens the bot tokens Connect Slack stored (packages/source-credentials/README.md: each consumer copies it in)
+COPY packages/source-credentials/source_credentials.py ./
 
 # Backfill output lands here. Owned by nobody so a named volume mounted on it is writable.
 RUN mkdir /data && chown nobody:nogroup /data
@@ -17,5 +20,6 @@ EXPOSE 8082
 
 USER nobody
 # Default: the always-on receiver. The same image runs the backfill (`python3 pull_test.py ...`,
-# compose service slack-backfill) and the enrich worker (`python3 enrich.py`, compose service slack-enrich).
+# compose service slack-backfill) and the enrich worker (`python3 enrich.py`, compose service slack-enrich),
+# which reads each workspace's bot token from source_credentials (EMBER-148).
 CMD ["python3", "receiver.py"]

@@ -10,6 +10,9 @@
         }
     },
     "oauth_config": {
+        "redirect_urls": [
+            "https://example.invalid/connect/slack/callback"
+        ],
         "scopes": {
             "bot": [
                 "channels:history",

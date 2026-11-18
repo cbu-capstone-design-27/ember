@@ -136,7 +136,7 @@ Slack is where a team argues its way to a decision: "why Neo4j?", "we're droppin
 | Credential | Looks like | Used by | Where it lives |
 | --- | --- | --- | --- |
 | Signing secret | 32 hex chars | receiver: verifies every request | `SLACK_SIGNING_SECRET` → later the deployment's secret store |
-| Bot token | `xoxb-…` | backfill and any later Web API fetch | `SLACK_BOT_TOKEN` → later Application Database integration settings, keyed by `team_id` |
+| Bot token | `xoxb-…` | `enrich:slack`'s lookups; the backfill | `source_credentials`, kind `api`, keyed by `team_id`, sealed by Connect Slack (EMBER-148). The backfill, run by hand, still reads `SLACK_BOT_TOKEN` |
 | App-level token | `xapp-…` | Socket Mode only | not used |
 | User token | `xoxp-…` | per-person access (DMs, search) | not used, and refused by `bot_token()` |
 
@@ -153,9 +153,9 @@ Slack is where a team argues its way to a decision: "why Neo4j?", "we're droppin
 
 **Why a bot token and not user tokens** (the Salesforce Slackbot used user tokens with `search.messages`): a bot sees exactly the channels a team deliberately invites it to, keeps working when the installer leaves the company, and never exposes anyone's DMs. User tokens would read everything one person can see, and the data would vanish with that person.
 
-**Install and multi-workspace.** The proposal puts source OAuth in the CLI and web onboarding (Elijah, EMBER-12), stored as integration settings in the Application Database. The intake worker never runs an OAuth flow. For a hosted multi-workspace deployment, the onboarding app runs Slack's OAuth v2 install (`oauth.v2.access`) and stores `{team_id, bot_token, bot_user_id, scopes}`. `bot_token()` then reads that record instead of the env var. Slack app creation for self-hosting is "create from manifest", which is one paste.
+**Install and multi-workspace (EMBER-148).** Connect Slack in the web app's Settings runs Slack's OAuth v2 install (`oauth.v2.access`). It maps the workspace's `team_id` to the organization's tenant and stores `{bot_token, bot_user_id, scope, app_id, installed_by, enterprise_id}` as its `api` credential, in one transaction ([ADR 0010](../adr/0010-connecting-sources.md#slack-ember-148), `apps/web/README.md`, Connect Slack). Intake never runs an OAuth flow. `enrich:slack` reads each workspace with its own token, for the tenant that connected it only, and keeps one rate-limit bucket per workspace and method. Slack app creation for self-hosting is "create from manifest", which is one paste. To let other workspaces install the app, turn on Manage Distribution and add the redirect URL.
 
-**Rotation and revocation.** Token rotation is off in the manifest (bot tokens do not expire). A `tokens_revoked` or `app_uninstalled` event reaches the pipeline as intake. The integration-settings owner should mark that workspace disconnected and stop backfills.
+**Rotation and revocation.** Token rotation is off in the manifest (bot tokens do not expire). `enrich:slack` disconnects a workspace (`disconnected_at`, credential deleted) on `app_uninstalled`, on a `tokens_revoked` naming our bot, or when Slack refuses its token on a call. Its rows then wait for an owner to connect it again. Disconnect in Settings uninstalls the app with `apps.uninstall`. Stopping a workspace's backfills comes with reconcile.
 
 ## Events
 

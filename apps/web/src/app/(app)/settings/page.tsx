@@ -7,9 +7,9 @@ import { listConnections, type Connection } from "../../../lib/connections.ts";
 import { githubAppConfig, GITHUB_WEB } from "../../../lib/github-connect.ts";
 import { gitlabConnectConfig } from "../../../lib/gitlab-connect.ts";
 import { jiraAppConfig } from "../../../lib/jira-connect.ts";
+import { isTeamId, slackAppConfig } from "../../../lib/slack-connect.ts";
 import { canConnectSources, canInvite, invitationsOf, isEmberAdmin } from "../../../lib/organizations.ts";
-import { apiKeyRing } from "../../connect/jira/server.ts";
-import { ingestionPool, keyRing } from "../../connect/server.ts";
+import { apiKeyRing, ingestionPool, keyRing } from "../../connect/server.ts";
 import { requireOrganization } from "../../../lib/session.ts";
 import { DisconnectForm } from "./connection-forms.tsx";
 import { PasswordForm, PreviewDataForm, ProfileForm } from "./forms.tsx";
@@ -82,6 +82,36 @@ function jiraNotice(params: { jira?: string | string[]; account?: string | strin
   return { error: notice.error, text: notice.text.replace("{account}", host) };
 }
 
+/** What the Connect Slack routes report back (connect/slack, `?slack=`). `{account}` is the workspace's name. */
+const SLACK_NOTICES: Record<string, { error: boolean; text: string }> = {
+  connected: {
+    error: false,
+    text: "Connected {account}. Ember reads the channels its bot is invited to: add it with /invite @Ember in each one. Earlier messages arrive with the backfill.",
+  },
+  reconnected: { error: false, text: "Reconnected {account} with a new bot token." },
+  expired: { error: true, text: "That Slack install expired, or started in another browser. Start again." },
+  cancelled: { error: true, text: "The Slack install was cancelled." },
+  scopes: { error: true, text: "Slack granted Ember fewer permissions than it needs. Ask an Ember operator to check the Slack app's bot scopes." },
+  enterprise: {
+    error: true,
+    text: "That was an install across a whole Enterprise Grid organization, which Ember doesn't support. Install it into one workspace instead.",
+  },
+  "other-tenant": { error: true, text: "That workspace is connected to another Ember organization. A workspace can't move between organizations." },
+  forbidden: { error: true, text: "Only owners and admins of this organization can connect sources." },
+  unavailable: { error: true, text: "Connecting Slack isn't set up on this server." },
+  error: { error: true, text: "Slack didn't answer as expected, so the workspace wasn't connected. Try again." },
+};
+
+/** The workspace's name comes from this tenant's own connections, by the team id in the URL. */
+function slackNotice(params: { slack?: string | string[]; account?: string | string[] }, connections: Connection[]) {
+  const key = typeof params.slack === "string" ? params.slack : undefined;
+  const notice = key ? SLACK_NOTICES[key] : undefined;
+  if (!notice) return null;
+  const teamId = isTeamId(params.account) ? params.account : null;
+  const workspace = connections.find((c) => c.source === "slack" && c.accountId === teamId);
+  return { error: notice.error, text: notice.text.replace("{account}", workspace?.label ?? "the workspace") };
+}
+
 const SOURCE_NAMES: Record<string, string> = { github: "GitHub", jira: "Jira", slack: "Slack", gitlab: "GitLab", teams: "Teams" };
 
 function sourceName(source: string): string {
@@ -131,6 +161,18 @@ function disconnectNotice(params: SettingsParams, connections: Connection[], git
       text: `Disconnected ${name}. Ember stopped ingesting it and deleted its tokens, but couldn't delete its Jira webhook. The webhook stops on its own within 30 days. Until then, Ember stores what it sends without assigning it to an organization.`,
     };
   }
+  if (c.source === "slack" && params.hook === "deleted") {
+    return {
+      error: false,
+      text: `Disconnected ${name}. Ember stopped ingesting it, uninstalled its Slack app from the workspace, and deleted its bot token.`,
+    };
+  }
+  if (c.source === "slack" && params.hook === "failed") {
+    return {
+      error: false,
+      text: `Disconnected ${name}. Ember stopped ingesting it and deleted its bot token, but couldn't uninstall its Slack app. Until a workspace admin removes Ember under Settings & administration, Manage apps, Slack keeps sending events, which Ember stores without assigning them to an organization.`,
+    };
+  }
   if (c.source === "gitlab") {
     return {
       error: false,
@@ -159,7 +201,8 @@ function connectedByName(c: Connection, names: Map<string, string>): string {
 type SettingsParams = {
   github?: string | string[];
   jira?: string | string[];
-  /** After a Jira disconnect: whether its webhook was `deleted`, `failed` to be, or there was `none`. */
+  slack?: string | string[];
+  /** After a Jira or Slack disconnect: whether its webhook (Jira) or the app (Slack) was `deleted`, `failed` to be, or there was `none`. */
   hook?: string | string[];
   account?: string | string[];
   disconnect?: string | string[];
@@ -185,10 +228,11 @@ export default async function SettingsPage({
   const params = await searchParams;
   const githubApp = githubAppConfig();
   const notice: DisconnectNotice | null =
-    githubNotice(params) ?? jiraNotice(params) ?? disconnectNotice(params, connections, githubApp?.slug ?? "ember-ingest");
+    githubNotice(params) ?? jiraNotice(params) ?? slackNotice(params, connections) ?? disconnectNotice(params, connections, githubApp?.slug ?? "ember-ingest");
   const canConnect = canConnectSources(org.role);
   const githubReady = pool !== null && githubApp !== null;
   const jiraReady = pool !== null && jiraAppConfig() !== null && apiKeyRing() !== null;
+  const slackReady = pool !== null && slackAppConfig() !== null && apiKeyRing() !== null;
   const gitlabReady = pool !== null && gitlabConnectConfig() !== null && keyRing("api") !== null && keyRing("webhook") !== null;
   const memberNames = new Map(members.map((m) => [m.user.id, m.user.name]));
   return (
@@ -316,6 +360,28 @@ export default async function SettingsPage({
                 </span>
                 <a className="btn btn-primary" href="/connect/jira">
                   Connect Jira
+                </a>
+              </>
+            )}
+          </div>
+        )}
+        {canConnect && (
+          <div className={styles.connectActions}>
+            {!slackReady ? (
+              <span className="field-hint">
+                Connecting Slack needs{" "}
+                {pool
+                  ? "the Slack app's client ID and secret and the api key ring (SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SOURCE_CREDENTIALS_API_KEYS)"
+                  : "the Postgres database ingestion uses"}
+                .
+              </span>
+            ) : (
+              <>
+                <span className="field-hint">
+                  Installs the Ember app into a Slack workspace you can add apps to. It reads only the channels you invite it to, and never DMs.
+                </span>
+                <a className="btn btn-primary" href="/connect/slack">
+                  Connect Slack
                 </a>
               </>
             )}

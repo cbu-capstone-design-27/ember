@@ -68,6 +68,11 @@ export function keyRing(kind: CredentialKind): KeyRing | null {
   }
 }
 
+/** The api key ring connected credentials are sealed with (Jira, Slack, GitLab), or null while it isn't set. */
+export function apiKeyRing(): KeyRing | null {
+  return keyRing("api");
+}
+
 /** The key the state and picker cookies are signed with: Better Auth's secret. */
 export async function cookieSecret(): Promise<string> {
   return (await getAuth().$context).secret;

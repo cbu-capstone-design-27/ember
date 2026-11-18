@@ -5,7 +5,6 @@
 import type { NextRequest, NextResponse } from "next/server";
 import { getAuth } from "../../../lib/auth.ts";
 import { CALLBACK_PATH, COOKIE_PATH, type VerificationStore } from "../../../lib/jira-connect.ts";
-import { KeyRing } from "../../../lib/source-credentials.ts";
 import * as connect from "../server.ts";
 
 export function callbackUrl(request: NextRequest): string {
@@ -25,15 +24,8 @@ export function clearCookie(response: NextResponse, name: string) {
   connect.clearCookie(response, name, COOKIE_PATH);
 }
 
-/** The api key ring the token pair is sealed with, or null while it isn't set. */
-export function apiKeyRing(): KeyRing | null {
-  try {
-    return KeyRing.fromEnv("api");
-  } catch (error) {
-    console.warn(`[connect] SOURCE_CREDENTIALS_API_KEYS can't be read: ${(error as Error).message}`);
-    return null;
-  }
-}
+/** The api key ring the token pair is sealed with (shared with Connect Slack). */
+export { apiKeyRing } from "../server.ts";
 
 /** Where a consent waits for the picker: Better Auth's verification table. */
 export async function verificationStore(): Promise<VerificationStore> {
