@@ -16,10 +16,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from ember.core import http
+from ember.core.credentials import disconnect, live
 from ember.core.errors import Permanent, Transient
 from ember.core.models import Installation, SourceCredential
 from source_credentials import KeyRing
@@ -146,15 +147,8 @@ class SiteCredentials:
     def _expiring(self, credential: dict) -> bool:
         return credential["expires_at"] - REFRESH_MARGIN_SECONDS <= self.clock()
 
-    def _connected(self):
-        return (select(SourceCredential.account_id, SourceCredential.key_id, SourceCredential.ciphertext)
-                .join(Installation, (Installation.source == SourceCredential.source)
-                      & (Installation.account_id == SourceCredential.account_id))
-                .where(SourceCredential.source == SOURCE, SourceCredential.kind == "api",
-                       Installation.disconnected_at.is_(None)))
-
     async def _read(self, conn: AsyncConnection, account_id: str, tenant: str | None, *, lock: bool) -> dict | None:
-        query = self._connected().where(SourceCredential.account_id == account_id)
+        query = live(SOURCE).where(SourceCredential.account_id == account_id)
         if tenant is not None:
             query = query.where(Installation.tenant == tenant)
         if lock:
@@ -165,19 +159,10 @@ class SiteCredentials:
     async def connected_sites(self) -> list[str]:
         """Every connected site with an api credential."""
         async with self.engine.connect() as conn:
-            rows = await conn.execute(self._connected().order_by(SourceCredential.account_id))
+            rows = await conn.execute(live(SOURCE).order_by(SourceCredential.account_id))
             return [row.account_id for row in rows]
 
     async def disconnect(self, account_id: str) -> None:
-        """What the web app's Disconnect does, without deleting the webhooks: no token can any more.
-        Settings then shows the site as disconnected, to reconnect."""
+        """Settings then shows the site as disconnected, to reconnect. Its webhooks stay: no token can delete them."""
         async with self.engine.begin() as conn:
-            await conn.execute(
-                update(Installation)
-                .where(Installation.source == SOURCE, Installation.account_id == account_id,
-                       Installation.disconnected_at.is_(None))
-                .values(disconnected_at=func.now())
-            )
-            await conn.execute(
-                delete(SourceCredential).where(SourceCredential.source == SOURCE, SourceCredential.account_id == account_id)
-            )
+            await disconnect(conn, SOURCE, account_id)

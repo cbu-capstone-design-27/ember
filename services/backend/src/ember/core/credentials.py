@@ -12,14 +12,58 @@ so a split deployment (EMBER_COMPONENTS) keeps them in different containers.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy import ColumnElement, Select, delete, exists, func, select, update
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
 from ember.core.db import Database
 from ember.core.errors import ConfigError
-from ember.core.models import SourceCredential
+from ember.core.models import Installation, SourceCredential
 from source_credentials import ENV, CredentialError, KeyRing
+
+
+def live(source: str, kind: str = "api") -> Select:
+    """The source's credentials of that kind whose account is connected (not disconnected), with the
+    account's tenant: what a worker may use. `Installation.tenant ==` narrows it to one tenant's rows."""
+    return (select(SourceCredential.account_id, SourceCredential.key_id, SourceCredential.ciphertext,
+                   SourceCredential.updated_at, Installation.tenant)
+            .join(Installation, (Installation.source == SourceCredential.source)
+                  & (Installation.account_id == SourceCredential.account_id))
+            .where(SourceCredential.source == source, SourceCredential.kind == kind,
+                   Installation.disconnected_at.is_(None)))
+
+
+def connected(source: str, account_id, tenant, kind: str = "api") -> ColumnElement[bool]:
+    """True while the account is connected to the tenant with a credential of that kind. The arguments
+    may be columns, so a claim can wait for the connection instead of retrying without it."""
+    return exists(live(source, kind).where(SourceCredential.account_id == account_id,
+                                           Installation.tenant == tenant))
+
+
+async def disconnect(conn: AsyncConnection | AsyncSession, source: str, account_id: str, *,
+                     stored_before: datetime | None = None) -> bool:
+    """What the web app's Disconnect does, less the source's own uninstall: mark the account
+    disconnected and delete its credentials, so Settings asks for a reconnect.
+
+    With stored_before, only when the account's api credential was stored before then: a token the
+    source refused, or an uninstall it announced, never undoes a reconnect made since. True when it
+    disconnected the account.
+    """
+    if stored_before is not None:
+        newer = await conn.scalar(select(exists().where(
+            SourceCredential.source == source, SourceCredential.account_id == account_id,
+            SourceCredential.kind == "api", SourceCredential.updated_at >= stored_before)))
+        if newer:
+            return False
+    result = await conn.execute(
+        update(Installation)
+        .where(Installation.source == source, Installation.account_id == account_id,
+               Installation.disconnected_at.is_(None))
+        .values(disconnected_at=func.now()))
+    await conn.execute(delete(SourceCredential).where(SourceCredential.source == source,
+                                                      SourceCredential.account_id == account_id))
+    return bool(result.rowcount)
 
 
 class Credentials:
@@ -44,15 +88,18 @@ class Credentials:
             raise ConfigError(self._errors[kind])
         return self._rings[kind]
 
-    async def open(self, source: str, account_id: str, kind: str) -> dict | None:
-        """The account's credential of that kind, opened, or None when it has none."""
+    async def open(self, source: str, account_id: str, kind: str, *, tenant: str | None = None) -> dict | None:
+        """The account's credential of that kind, opened, or None when it has none. With tenant, only
+        while the account is connected to that tenant: a token is used only for its own tenant's rows."""
         ring = self.ring(kind)
         if ring is None:
             raise ConfigError(f"{ENV[kind]} is not set")
-        query = select(SourceCredential.key_id, SourceCredential.ciphertext).where(
-            SourceCredential.source == source, SourceCredential.account_id == account_id,
-            SourceCredential.kind == kind,
-        )
+        if tenant is None:
+            query = select(SourceCredential.key_id, SourceCredential.ciphertext)
+        else:
+            query = live(source, kind).where(Installation.tenant == tenant)
+        query = query.where(SourceCredential.source == source, SourceCredential.account_id == account_id,
+                            SourceCredential.kind == kind)
         async with self._engine.connect() as conn:
             row = (await conn.execute(query)).first()
         return None if row is None else ring.open(source, account_id, row.key_id, row.ciphertext)
