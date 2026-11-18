@@ -36,7 +36,7 @@ Slack posts JSON to `/webhook/slack`. Intake checks the signature (`X-Slack-Sign
 | `api_app_id` | Our app | Sanity check |
 | `event_id` | "Globally unique across all workspaces" (Slack) | `delivery_id` |
 | `event_time` | When Slack dispatched it, whole epoch seconds | Last-resort ordering value |
-| `authorizations`, `event_context` | One installation the event is visible to, and a handle to list the rest | Not needed while one bot token serves a workspace |
+| `authorizations`, `event_context` | One installation the event is visible to, and a handle to list the rest | Our bot's user id, for `tokens_revoked` when the workspace's stored credential doesn't name it. Enrich reads with the one bot token Connect Slack stored for the workspace (EMBER-148) |
 | `is_ext_shared_channel` | The channel is shared with another organization | Kept in the record. Extract decides what to do with it |
 | `event` | The event itself | Everything below |
 
@@ -95,8 +95,8 @@ Both subscriptions deliver `event.type == "message"`: public and private channel
 | `member_left_channel` | `user`, `channel`, `channel_type`, `team`. No `event_ts` | Nothing. **If `user` is our bot:** stop reconciling the channel. Stored data is kept (EMBER-53) | `membership`, tombstone, version `<event_time>:<event_id>` |
 | `user_change` | The whole user object (`profile`; `profile.email` with `users:read.email`; `updated`), `cache_ts`, `event_ts` | Nothing | `user`, `<user id>`, version `user.updated` |
 | `team_join` | `user` (Slack's reference elides its fields). No `event_ts` | `users.info` if `user` has no `profile` | `user`, `<user id>`, version `user.updated` |
-| `app_uninstalled` | Nothing but `type`. No `event_ts` | Nothing | No record. Marks the workspace disconnected in `installations` and stops its reconcile |
-| `tokens_revoked` | `tokens` = `{oauth: [user ids], bot: [user ids]}`. No `event_ts` | Nothing | No record. If our bot's id is listed, same as `app_uninstalled`. Slack doesn't guarantee which of the two arrives first |
+| `app_uninstalled` | Nothing but `type`. No `event_ts` | Nothing | No record. Sets the workspace's `disconnected_at` in `installations` and deletes its bot token, unless the token stored now is newer than the event's `event_time` (reconnected since). Stopping its reconcile comes with reconcile |
+| `tokens_revoked` | `tokens` = `{oauth: [user ids], bot: [user ids]}`. No `event_ts` | Nothing | No record. If a bot id is listed, and it is ours when the stored credential (or `authorizations`) names our bot, same as `app_uninstalled`. User tokens alone change nothing. Slack doesn't guarantee which of the two arrives first, and either one ends the connection |
 
 ## `delivery_id`
 
@@ -151,7 +151,8 @@ Catch-up is the Slack reconcile (today's `services/slack-ingestion/pull_test.py`
 | **Thread replies** | Each reply is its own `message` event with `thread_ts`. `message_replied` arrives without its `subtype`, so replies are detected by `thread_ts != ts`. A reply can arrive before its parent is stored | Enrich fetches the missing parent. `conversations.history` returns parents but not replies, so reconcile finds threads whose `latest_reply` is past the cursor and reads them with `conversations.replies` |
 | **Out of order** (an edit before the original, a reply before its parent, an edit after a delete) | Each one is still written as its own versioned row | The [ordering value](#ordering-value-ember-63) decides which is current |
 | **Bot not in the channel** | No events (the bot only reads channels it's invited to) | When the bot is invited (`member_joined_channel` with our bot as `user`), reconcile that channel from the start or its cursor. When it's removed, stop. Data is kept (EMBER-53) |
-| **Workspace not mapped to a tenant** | Stored with `tenant = null`, not processed | `ember-admin map` assigns the tenant and enqueues what was stored |
+| **Workspace not mapped to a tenant** | Stored with `tenant = null`, not processed | Connect Slack (EMBER-148) maps it, stores its token and hands over what was stored. `make map-tenant` maps it too, but without a token |
+| **Mapped, but no token** (mapped by hand, disconnected, or Slack refused the token) | Stored with its tenant, not claimed: enrich reads a workspace only with the token Connect Slack stored, for the tenant that connected it. The worker logs how many rows wait per workspace | Connecting (or reconnecting) the workspace in Settings wakes them |
 | **Hosted, non-Marketplace app** | Live events are unaffected | Catch-up is slow: `history`/`replies` allow 1 call per minute, 15 messages per page. See [`slack.md`](slack.md#non-marketplace-apps-the-2025-limit-confirmed) |
 
 ## Open questions

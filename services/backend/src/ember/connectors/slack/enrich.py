@@ -5,8 +5,8 @@ backend's runtime (EMBER-160) rather than moved from services/slack-ingestion/en
 
 - QueueWorker claims in Slack's order, `occurred_at` then `id`, which intake set by the doc's rule.
 - Every call uses the bot token Connect Slack stored for the row's workspace (EMBER-148), and only for
-  rows of the tenant that connected it. A row waits, unclaimed, until its workspace is connected, and
-  the next poll picks it up. Slack refusing a token, app_uninstalled, or a tokens_revoked naming our
+  rows of the tenant that connected it. A row waits, unclaimed, until its workspace is connected; the
+  web app's NOTIFY raw_events on connect wakes the worker (apps/web/src/lib/connections.ts). Slack refusing a token, app_uninstalled, or a tokens_revoked naming our
   bot disconnects the workspace, unless an owner reconnected it since.
 - Calls go through core/http (retries, a 429's Retry-After) and wait on one shared `rate_limits` row
   per workspace and method.

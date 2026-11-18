@@ -2,6 +2,7 @@
 
 mod auth;
 mod db;
+mod init;
 mod status;
 mod tui;
 
@@ -33,6 +34,13 @@ enum Command {
         #[command(subcommand)]
         command: AuthCommand,
     },
+    /// Point this project's coding agents at Ember: add an Ember section to AGENTS.md, and make
+    /// CLAUDE.md import AGENTS.md
+    Init {
+        /// Show what would change, and write nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -63,13 +71,17 @@ pub enum Error {
     Auth(String),
     /// The terminal UI could not take over the terminal. Exits 1.
     Terminal(String),
+    /// `ember init` could not read or write one of the project's files. Exits 1.
+    Files(String),
 }
 
 impl Error {
     fn exit_code(&self) -> ExitCode {
         match self {
             Error::Config(_) => ExitCode::from(2),
-            Error::Database(_) | Error::Auth(_) | Error::Terminal(_) => ExitCode::from(1),
+            Error::Database(_) | Error::Auth(_) | Error::Terminal(_) | Error::Files(_) => {
+                ExitCode::from(1)
+            }
         }
     }
 }
@@ -80,7 +92,8 @@ impl fmt::Display for Error {
             Error::Config(message)
             | Error::Database(message)
             | Error::Auth(message)
-            | Error::Terminal(message) => f.write_str(message),
+            | Error::Terminal(message)
+            | Error::Files(message) => f.write_str(message),
         }
     }
 }
@@ -104,6 +117,7 @@ async fn main() -> ExitCode {
             AuthCommand::Status => auth::status().await,
             AuthCommand::Logout => auth::logout().await,
         },
+        Some(Command::Init { dry_run }) => init::run(dry_run).await,
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

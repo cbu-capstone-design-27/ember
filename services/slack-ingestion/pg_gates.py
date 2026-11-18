@@ -5,7 +5,7 @@ pull_test.SlackClient sends every Web API call through a gate (EMBER-52):
 - extend(seconds) pushes the gate back on a 429, a "ratelimited" body or a transient error.
 
 RateLimitGate keeps that state in one process. These gates have the same interface but keep it
-in rate_limits, one row per (source, tenant, bucket) with bucket = the Web API method, so every
+in rate_limits, one row per (source, tenant, bucket) with bucket = "<team_id>/<Web API method>", so every
 worker process and replica spends one workspace's quota together (docs/ingestion/architecture.md,
 RateLimiter). SlackClient's retry, throttle and backoff rules are unchanged.
 
@@ -94,10 +94,13 @@ class PgMethodGates:
         rates: dict[str, float] | None = None,
         *,
         source: str = SOURCE,
+        workspace: str | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._engine = engine
         self._tenant = tenant
+        # A tenant can connect several workspaces, each with its own quota (EMBER-148)
+        self._prefix = f"{workspace}/" if workspace else ""
         self._rates = dict(rates or {})
         self._source = source
         self._sleep = sleep
@@ -111,7 +114,7 @@ class PgMethodGates:
                 rate = self._rates.get(api_method)
                 interval = 60.0 / rate if rate else 0.0
                 gate = PgRateGate(
-                    self._engine, self._tenant, api_method, interval, source=self._source, sleep=self._sleep
+                    self._engine, self._tenant, self._prefix + api_method, interval, source=self._source, sleep=self._sleep
                 )
                 self._gates[api_method] = gate
             return gate
