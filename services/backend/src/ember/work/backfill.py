@@ -22,7 +22,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar, TypeVar
 
-from sqlalchemy import func, select, text
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
@@ -65,6 +65,14 @@ class Backfill(Component):
         self.current: str | None = None
         self.last: dict[str, Any] | None = None
 
+    def accounts(self) -> Select:
+        """The connected accounts, with account_id and tenant columns: those with an api credential by default."""
+        return live(self.source)
+
+    async def secret(self, account_id: str, tenant: str) -> dict | None:
+        """What `account` calls the source with, or None once the account is disconnected."""
+        return await self.credentials.open(self.source, account_id, "api", tenant=tenant)
+
     @abstractmethod
     async def account(self, account_id: str, tenant: str, secret: dict, stopping: asyncio.Event) -> dict[str, Any]:
         """Read one account since its cursors and store what is new. A summary for /status, with "rows"."""
@@ -94,7 +102,7 @@ class Backfill(Component):
     async def due(self) -> list[tuple[str, str]]:
         """(account_id, tenant) of every connected account not read within `every`."""
         assert self.engine is not None
-        accounts = live(self.source).subquery()
+        accounts = self.accounts().subquery()
         last = (select(Cursor.updated_at)
                 .where(Cursor.source == self.source, Cursor.tenant == accounts.c.tenant,
                        Cursor.stream == f"{self.account_stream}:" + accounts.c.account_id)
@@ -132,8 +140,8 @@ class Backfill(Component):
 
     async def pass_over(self, account_id: str, tenant: str, stopping: asyncio.Event) -> None:
         read_at = await self.now()
-        secret = await self.credentials.open(self.source, account_id, "api", tenant=tenant)
-        if not secret:
+        secret = await self.secret(account_id, tenant)
+        if secret is None:
             return  # disconnected since due() read it
         try:
             summary = await self.account(account_id, tenant, secret, stopping)

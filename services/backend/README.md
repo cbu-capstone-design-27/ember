@@ -1,6 +1,6 @@
 # services/backend
 
-`ember-backend` is Ember's Python backend in one image and one process (EMBER-160, [ADR 0012](../../docs/adr/0012-one-backend-image.md)). It holds intake (the webhook listener), `enrich:github`, `enrich:gitlab`, `backfill:gitlab`, `enrich:jira`, Jira's keep-alive, `enrich:slack` and `backfill:slack` today. Embed moves in one connector at a time, and each old service is deleted once this image does its job.
+`ember-backend` is Ember's Python backend in one image and one process (EMBER-160, [ADR 0012](../../docs/adr/0012-one-backend-image.md)). It holds intake (the webhook listener), `enrich:github`, `backfill:github`, `enrich:gitlab`, `backfill:gitlab`, `enrich:jira`, Jira's keep-alive, `backfill:jira`, `enrich:slack` and `backfill:slack` today. Embed moves in one connector at a time, and each old service is deleted once this image does its job.
 
 The design of each stage is unchanged: [`docs/ingestion/architecture.md`](../../docs/ingestion/architecture.md). What changes is how the stages are packaged: one process runs every component, and one bad source can't take down the rest.
 
@@ -14,10 +14,12 @@ python -m ember run
             ├─ intake         stores every verified delivery in raw_events
             ├─ loop           watches event-loop lag
             ├─ enrich:github  raw_events -> source_records (connectors/github/enrich.py)
+            ├─ backfill:github  connected installations' issues, pull requests and comments -> raw_events (connectors/github/backfill.py)
             ├─ enrich:gitlab  raw_events -> source_records (connectors/gitlab/enrich.py)
             ├─ backfill:gitlab connected groups' projects -> raw_events (connectors/gitlab/backfill.py)
             ├─ enrich:jira    raw_events -> source_records (connectors/jira/enrich.py)
             ├─ keep-alive:jira  daily at 10:17 UTC: refresh Connect Jira's tokens, extend its webhooks
+            ├─ backfill:jira  connected sites' issues, changelogs and comments -> raw_events (connectors/jira/backfill.py)
             ├─ enrich:slack   raw_events -> source_records (connectors/slack/enrich.py)
             ├─ backfill:slack  connected workspaces' channel history -> raw_events (connectors/slack/backfill.py)
             └─ enrich:<source>, …   as the other connectors move in
@@ -27,7 +29,7 @@ python -m ember run
 - **Connector** (`connectors/base.py`): one per source. It loads that source's settings and builds its parts: the webhook adapter intake serves, its enrich worker, and its scheduled jobs (Jira's keep-alive). Each part is built on its own, so a source with a webhook secret but no API credentials still receives deliveries.
 - **QueueWorker** (`work/queue_worker.py`): the base of every worker that claims rows from Postgres. It wakes on `LISTEN/NOTIFY`, catches up on start, claims with `for update skip locked` in the source's order (EMBER-63), runs up to `concurrency` jobs at once, and sets failed rows aside by failure class (`core/errors.py`).
 - **Deps** (`runtime/deps.py`): the shared dependencies, built once and passed to constructors: the database, the credential key rings, the metrics registry. No DI framework.
-- **Backfill** (`work/backfill.py`): the base of every backfill. It finds connected accounts that are due (new, or not read within the hour), takes an advisory lock, keeps cursors, stores rows as webhook-shaped `raw_events` with origin `reconcile`, waits out rate limits and disconnects an account whose token the source refuses. `connectors/slack/backfill.py` and `connectors/gitlab/backfill.py` say only what to read.
+- **Backfill** (`work/backfill.py`): the base of every backfill. It finds connected accounts that are due (new, or not read within the hour), takes an advisory lock, keeps cursors, stores rows as webhook-shaped `raw_events` with origin `reconcile`, waits out rate limits and disconnects an account whose token the source refuses. `connectors/<source>/backfill.py` says only what to read, for Slack, GitLab, GitHub and Jira. GitHub's accounts are its connected installations, which store no token (`accounts`, `secret`).
 - **Shared source plumbing**: `core/http.py` (retries, rate-limit headers, failure classes), `work/rate_limits.py` (the `rate_limits` row every replica waits on) and `core/credentials.py` (a connected account's sealed token, used only for its own tenant's rows; disconnecting an account whose token the source refused). A connector adds only its own rules: `connectors/slack/enrich.py` is what each Slack event becomes and three lookups.
 
 ### When something fails
@@ -97,11 +99,14 @@ Only `DATABASE_URL` is required. Everything else turns a part on.
 | `GITLAB_WEBHOOK_SIGNING_TOKEN`, `GITLAB_WEBHOOK_SECRET_TOKEN` | Shared GitLab tokens for webhooks set up by hand. Either serves `/webhook/gitlab` |
 | `GITHUB_APP_ID`, and `GITHUB_APP_PRIVATE_KEY_PATH` (a mounted `.pem`) or `GITHUB_APP_PRIVATE_KEY` (the PEM itself) | The App `enrich:github` calls the API as, for the two events that fetch (pull request files, the commits of a full push). Without them it still enriches every other event; those two are set aside until the App is configured |
 | `GITHUB_ENRICH_CONCURRENCY`, `GITHUB_ENRICH_BATCH` | `enrich:github`'s jobs at once (default 4) and rows per job (default 25) |
+| `GITHUB_BACKFILL_EVERY_HOURS` | How often `backfill:github` catches each connected installation up (default 1). A new connection is read within 30 s. Disabled without the App |
 | `SOURCE_CREDENTIALS_API_KEYS` (api ring) | `enrich:gitlab` opens the read_api token Connect GitLab stored for each group with it, and doesn't start without it. Only merge request diffs and pushes over 20 commits call GitLab; such a row whose group isn't connected to its tenant is set aside and retried hourly, and every other row is enriched regardless. `GITLAB_API_TOKEN` is no longer read |
 | `GITLAB_ENRICH_CONCURRENCY`, `GITLAB_ENRICH_BATCH` | `enrich:gitlab`'s jobs at once (default 4) and rows per job (default 25) |
 | `GITLAB_BACKFILL_EVERY_HOURS` | How often `backfill:gitlab` catches each connected group up (default 1). A new connection is read within 30 s. Needs the api ring too |
 | `SOURCE_CREDENTIALS_API_KEYS`, `JIRA_OAUTH_CLIENT_ID`, `JIRA_OAUTH_CLIENT_SECRET` | The api key ring opens the token Connect Jira stored for each site; the Atlassian 3LO app refreshes it. `enrich:jira` needs them for the events that fetch an issue it hasn't stored (comments, worklogs, links); without them it still enriches every other event. `keep-alive:jira` is disabled without them |
 | `JIRA_ENRICH_CONCURRENCY`, `JIRA_ENRICH_BATCH` | `enrich:jira`'s jobs at once (default 4) and rows per job (default 10) |
+| `JIRA_BACKFILL_EVERY_HOURS` | How often `backfill:jira` catches each connected site up (default 1). A new connection is read within 30 s. Disabled without the api ring and the OAuth client |
+| `RECONCILE_SINCE` | An ISO date, e.g. `2026-01-01`: where `backfill:github` and `backfill:jira` start an account they haven't read yet. Unset reads all history |
 | `SOURCE_CREDENTIALS_API_KEYS` (again) | `enrich:slack` opens the bot token Connect Slack stored for each workspace with it, and doesn't start without it. A workspace's rows wait, unclaimed, until it is connected to their tenant |
 | `SLACK_ENRICH_CONCURRENCY`, `SLACK_ENRICH_BATCH` | `enrich:slack`'s jobs at once (default 4) and rows per job (default 10) |
 | `SLACK_BACKFILL_EVERY_HOURS` | How often `backfill:slack` catches each connected workspace up (default 1). A new connection is read within 30 s. Needs the api ring too |
@@ -150,10 +155,10 @@ PGTEST_URL='postgresql://postgres:pw@127.0.0.1:55432/postgres?sslmode=disable' p
 
 - `test_runtime.py`: the supervisor (restart, backoff, isolation, shutdown order), the queue worker (wake, catch-up, ordering, concurrency, replicas, failures, stop, reconnect), and the controller with a broken connector beside a working one.
 - `test_intake.py`: intake's contract for every source, carried over from `services/intake`, and `python -m ember` as the container runs it.
-- `test_enrich_github.py`: `enrich:github`'s records, fetches, ordering, bulk skip, rate limits and failure classes against a stubbed GitHub, carried over from `services/github-ingestion/test_enrich.py`, and how `GITHUB_APP_*` become the App's JWT.
+- `test_enrich_github.py`: `enrich:github`'s records, fetches, ordering, bulk skip, rate limits and failure classes against a stubbed GitHub, carried over from `services/github-ingestion/test_enrich.py`, and how `GITHUB_APP_*` become the App's JWT. `backfill:github`'s rows, enriched like webhooks, its cursors and next passes, resuming after a kill, rate-limit waits, disconnects and `RECONCILE_SINCE`.
 - `test_enrich_gitlab.py`: `backfill:gitlab`'s rows, cursors, catch-up passes, rate-limit waits and disconnects, and `enrich:gitlab`'s records (carried over from `services/gitlab-ingestion/test_enrich.py`), diff and compare fetches with the group's own token on its own instance only, waiting for a connected group, disconnecting on a refused token, and rate limits, against a stubbed GitLab.
 - `test_enrich_slack.py`: `backfill:slack`'s rows, cursors, catch-up passes, rate-limit waits and disconnects, and `enrich:slack`'s records for messages (replies, edits, deletes), channels, people and membership, fetching only what isn't stored, waiting for a connected workspace, disconnecting on a refused token, an uninstall or our bot's revoked token (but not over a newer reconnect), and rate limits, against a stubbed Slack.
 - `test_migrations.py`: the migrations apply, roll back, and build exactly the schema `docs/ingestion/architecture.md` defines.
-- `test_enrich_jira.py`: `enrich:jira`'s records, issue fetches, token refresh, rate limits and failure classes, and `keep-alive:jira`'s refresh, disconnect, advisory lock and schedule, against a stubbed Atlassian. Carried over from `services/jira-ingestion/test_enrich.py` and `test_keep_alive.py`.
+- `test_enrich_jira.py`: `enrich:jira`'s records, issue fetches, token refresh, rate limits and failure classes, `keep-alive:jira`'s refresh, disconnect, advisory lock and schedule, and `backfill:jira`'s rows, cursors, next passes, resuming after a kill, rate-limit waits, disconnects and `RECONCILE_SINCE`, against a stubbed Atlassian. Carried over from `services/jira-ingestion/test_enrich.py` and `test_keep_alive.py`.
 
 CI runs them in the `sanity` job on the `pgvector/pgvector:0.8.7-pg18-trixie` container, and builds the image.
