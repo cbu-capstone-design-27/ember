@@ -122,6 +122,7 @@ services:
       # enrich:gitlab: the read_api token Connect GitLab stored per group, opened with the api ring
       GITLAB_ENRICH_CONCURRENCY: "${GITLAB_ENRICH_CONCURRENCY:-4}"
       GITLAB_ENRICH_BATCH: "${GITLAB_ENRICH_BATCH:-25}"
+      GITLAB_BACKFILL_EVERY_HOURS: "${GITLAB_BACKFILL_EVERY_HOURS:-1}"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
       interval: 10s

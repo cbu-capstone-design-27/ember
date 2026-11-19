@@ -66,7 +66,8 @@ DBMATE = os.environ.get("DBMATE", "dbmate")
 DB = "ember_test_intake"
 SECRET = "test-webhook-secret"
 # Every connector's workers and scheduled jobs: planned even without their API settings (EMBER-160)
-WORKERS = ["enrich:github", "enrich:gitlab", "enrich:jira", "keep-alive:jira", "enrich:slack", "backfill:slack"]
+WORKERS = ["enrich:github", "enrich:gitlab", "backfill:gitlab", "enrich:jira", "keep-alive:jira", "enrich:slack",
+           "backfill:slack"]
 FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "github.json").read_text())["body"]
 SLACK_SECRET = "test-signing-secret"
 SLACK_FIXTURE = json.loads((REPO / "packages" / "ingestion-envelope" / "fixtures" / "slack.json").read_text())["body"]

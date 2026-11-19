@@ -30,11 +30,13 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO / "packages" / "source-credentials"))
 
+from ember.connectors.gitlab.backfill import GitLabBackfill  # noqa: E402
 from ember.connectors.gitlab.enrich import GitLabEnrich, stamp  # noqa: E402
 from ember.core.credentials import Credentials  # noqa: E402
 from ember.core.db import Database  # noqa: E402
 from ember.core.errors import ConfigError  # noqa: E402
 from ember.core.http import Response  # noqa: E402
+from ember.work.backfill import Stopped  # noqa: E402
 from source_credentials import KeyRing  # noqa: E402
 
 MIGRATIONS = REPO / "services" / "backend" / "migrations"
@@ -145,11 +147,11 @@ class FakeGitLab:
         raise AssertionError(f"unexpected call {method} {url}")
 
 
-class EnrichTest(unittest.IsolatedAsyncioTestCase):
+class GitLabTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.db = await asyncpg.connect(database_url())
-        await self.db.execute("truncate raw_events, source_records, rate_limits, installations, source_credentials"
-                              " restart identity cascade")
+        await self.db.execute("truncate raw_events, source_records, rate_limits, installations, source_credentials,"
+                              " cursors restart identity cascade")
         self.credentials = Credentials(Database(database_url()), ENV)
         self.running: list[tuple[asyncio.Event, asyncio.Task]] = []
 
@@ -223,6 +225,8 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
     async def received_at(self, raw_id: int):
         return await self.db.fetchval("select received_at from raw_events where id = $1", raw_id)
 
+
+class EnrichTest(GitLabTest):
     async def test_merge_request_issue_work_item_and_note_become_source_records(self):
         await self.connect()
         gitlab = FakeGitLab()
@@ -409,6 +413,131 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         worker = GitLabEnrich(Database(database_url()), Credentials(Database(database_url()), {}))
         with self.assertRaisesRegex(ConfigError, "SOURCE_CREDENTIALS_API_KEYS"):
             await worker.start()
+
+
+class FakeGroup:
+    """The REST API for group acme: project 42, its merge requests and issues (filtered by updated_after),
+    and their notes. Serves one object a page, so every list pages. `refuse` answers 401; `throttle` answers
+    the first call 429."""
+
+    def __init__(self, *, refuse: bool = False, throttle: bool = False) -> None:
+        self.refuse, self.throttle = refuse, throttle
+        self.project = {"id": 42, "path_with_namespace": "acme/widget", "last_activity_at": "2026-10-02T08:00:00.000Z"}
+        self.merge_requests = [{"id": 700, "iid": 7, "project_id": 42, "source_branch": "feature/intake",
+                                "title": "Intake", "updated_at": UPDATED}]
+        self.issues = [{"id": 303, "iid": 3, "project_id": 42, "issue_type": "issue", "confidential": False,
+                        "title": "Retries", "updated_at": "2026-10-01T09:00:00.000Z"},
+                       {"id": 304, "iid": 4, "project_id": 42, "issue_type": "issue", "confidential": True,
+                        "title": "Secret", "updated_at": "2026-10-01T09:00:00.000Z"}]
+        self.notes = {"merge_requests/7": [{"id": 901, "body": "LGTM", "noteable_type": "MergeRequest",
+                                            "noteable_iid": 7, "internal": False, "updated_at": UPDATED},
+                                           {"id": 902, "body": "internal", "noteable_type": "MergeRequest",
+                                            "noteable_iid": 7, "internal": True, "updated_at": UPDATED}],
+                      "issues/3": []}
+        self.calls: list[str] = []
+        self.queries: list[dict] = []
+
+    def __call__(self, method: str, url: str, headers: dict, body: bytes | None) -> Response:
+        parts = urlsplit(url)
+        query = {k: v[0] for k, v in parse_qs(parts.query).items()}
+        path = parts.path.removeprefix("/api/v4")
+        self.calls.append(path)
+        self.queries.append(query)
+        if self.refuse or headers["PRIVATE-TOKEN"] != TOKEN:
+            return Response(401, {}, b"{}")
+        if self.throttle:
+            self.throttle = False
+            return Response(429, {"Retry-After": "1"}, b"{}")
+        after = query.get("updated_after")
+        listing = {"/groups/acme/projects": [self.project], "/projects/42/merge_requests": self.merge_requests,
+                   "/projects/42/issues": self.issues}.get(path)
+        if listing is not None:
+            listing = [item for item in listing if not after or item.get("updated_at", "") > after
+                       or "path_with_namespace" in item]
+        else:
+            listing = self.notes.get(path.removeprefix("/projects/42/").removesuffix("/notes"))
+        if listing is None:
+            raise AssertionError(f"unexpected call {url}")
+        page = int(query.get("page", "1"))
+        headers = {}
+        if page < len(listing):
+            headers["Link"] = f'<https://gitlab.com/api/v4{path}?{parts.query}&page={page + 1}>; rel="next"'
+        return ok(listing[page - 1 : page], **headers)
+
+
+class BackfillTest(GitLabTest):
+    async def backfill(self, gitlab: FakeGroup, stopping: asyncio.Event | None = None) -> GitLabBackfill:
+        component = GitLabBackfill(Database(database_url()), self.credentials, exchange=gitlab)
+        await component.start()
+        try:
+            await component.run_once(stopping or asyncio.Event())
+        except Stopped:
+            pass
+        finally:
+            await component.close()
+        return component
+
+    async def test_a_connected_group_is_backfilled_and_enriched_like_webhooks(self):
+        await self.connect()
+        gitlab = FakeGroup()
+        component = await self.backfill(gitlab)
+        rows = await self.db.fetch("select delivery_id, event_name, origin, occurred_at from raw_events order by id")
+        self.assertEqual([(r["delivery_id"], r["event_name"]) for r in rows], [
+            ("42@2026-10-02T08:00:00.000Z", "project"), ("42!7@" + UPDATED, "merge_request"),
+            ("42/note/901@" + UPDATED, "note"), ("42#3@2026-10-01T09:00:00.000Z", "issue")])
+        self.assertEqual({r["origin"] for r in rows}, {"reconcile"})
+        self.assertEqual(rows[1]["occurred_at"].isoformat(), "2026-10-01T09:30:00+00:00")
+        self.assertEqual(component.last["projects"], 1)
+        self.assertEqual(component.last["rows"], 4)
+
+        # A webhook copy of the merge request's version folds into the backfill's record
+        await self.insert("merge_request:update", merge_request("update"))
+        await self.process(FakeGitLab(), *[r["id"] for r in await self.db.fetch("select id from raw_events")])
+        self.assertEqual([(r["kind"], r["object_id"], r["version"]) for r in await self.records()], [
+            ("issue", "42#3", "2026-10-01T09:00:00.000Z"), ("merge_request", "42!7", UPDATED),
+            ("note", "42/note/901", UPDATED), ("project", "42", "2026-10-02T08:00:00.000Z")])
+
+    async def test_the_next_pass_reads_only_what_changed_and_only_when_due(self):
+        await self.connect()
+        gitlab = FakeGroup()
+        await self.backfill(gitlab)
+        cursor = await self.db.fetchval("select position from cursors where stream = 'project:42'")
+        gitlab.calls.clear()
+        await self.backfill(gitlab)
+        self.assertEqual(gitlab.calls, [], "read within the hour: not due")
+
+        await self.db.execute("update cursors set updated_at = now() - interval '2 hours'"
+                              " where stream = 'group:gitlab.com/acme'")
+        gitlab.issues[0] = {**gitlab.issues[0], "title": "Retries, again", "updated_at": "2099-01-01T00:00:00.000Z"}
+        gitlab.queries.clear()
+        await self.backfill(gitlab)
+        self.assertEqual({q.get("updated_after") for q in gitlab.queries if "state" in q}, {cursor})
+        self.assertEqual(await self.db.fetchval("select count(*) from raw_events where delivery_id like '42#3@%'"), 2)
+
+    async def test_a_rate_limit_is_waited_out(self):
+        await self.connect()
+        gitlab = FakeGroup(throttle=True)
+        await self.backfill(gitlab)
+        self.assertEqual(await self.db.fetchval("select count(*) from raw_events"), 4)
+
+    async def test_a_refused_token_disconnects_the_group(self):
+        await self.connect()
+        await self.backfill(FakeGroup(refuse=True))
+        self.assertIsNotNone(await self.db.fetchval("select disconnected_at from installations"))
+        self.assertEqual(await self.db.fetchval("select count(*) from cursors"), 0)
+
+    async def test_a_group_connected_elsewhere_or_not_at_all_is_not_read(self):
+        await self.connect(tenant="globex", disconnected=True)
+        gitlab = FakeGroup()
+        await self.backfill(gitlab)
+        self.assertEqual(gitlab.calls, [])
+
+    async def test_stopping_leaves_no_cursor(self):
+        await self.connect()
+        stopping = asyncio.Event()
+        stopping.set()
+        await self.backfill(FakeGroup(), stopping)
+        self.assertEqual(await self.db.fetchval("select count(*) from cursors"), 0)
 
 
 if __name__ == "__main__":
