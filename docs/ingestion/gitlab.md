@@ -1,7 +1,7 @@
 # GitLab ingestion: requirements and architecture
 
 - Jira: EMBER-38 (drop-first), epic EMBER-20 (GitLab Ingestion)
-- Status: built in [`services/gitlab-ingestion`](../../services/gitlab-ingestion/README.md) (EMBER-54, rate limits EMBER-55). Backfill and reconciliation run against a live GitLab.com project (EMBER-47, see [Test project](#test-project)). Live webhooks not yet tested.
+- Status: built in `ember-backend` (EMBER-160): intake's GitLab adapter, `enrich:gitlab` and `backfill:gitlab`, on the tokens Connect GitLab stores (EMBER-149). `services/gitlab-ingestion` (EMBER-54, rate limits EMBER-55), which this doc describes in places (its receiver, `pull.py`, `GITLAB_API_TOKEN`), was removed. [`gitlab-webhooks.md`](gitlab-webhooks.md) is current.
 - GitLab facts were checked against docs.gitlab.com on 2026-09-23; webhook signing and rate limits re-checked on 2026-10-01 (see [Sources](#sources)).
 - Related: EMBER-39 intake contract, EMBER-34 graph schema, EMBER-12 auth and multi-tenancy, EMBER-35 GitHub (closest sibling)
 - Diagram source for Excalidraw or any Mermaid renderer: [`gitlab/architecture.mmd`](gitlab/architecture.mmd). Word copies: [`gitlab/`](gitlab/).
@@ -79,7 +79,7 @@ Delivery rules that shape the design:
 
 - Self-managed instances set their own numbers. GitLab has proposed lower per-plan hourly limits for GitLab.com, not in effect as of 2026-10-01.
 - Every API response carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Observed` and `RateLimit-Reset` (a Unix time). A throttled `429` adds `Retry-After` (seconds) and `RateLimit-ResetTime`.
-- The backfill pauses every worker when `RateLimit-Remaining` drops to 50 or fewer, honors `Retry-After` on a `429`, and backs off 1s, 2s, 4s on a `429`/`5xx` with no header. Details: [`services/gitlab-ingestion`](../../services/gitlab-ingestion/README.md#rate-limits).
+- The backfill pauses every worker when `RateLimit-Remaining` drops to 50 or fewer, honors `Retry-After` on a `429`, and backs off 1s, 2s, 4s on a `429`/`5xx` with no header. `backfill:gitlab` and `enrich:gitlab` in `services/backend` keep the same rules on the shared `rate_limits` rows.
 
 ## Data shapes
 

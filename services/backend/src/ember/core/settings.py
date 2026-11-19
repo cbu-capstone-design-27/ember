@@ -7,6 +7,7 @@ its own, so a bad value in one source's settings disables that source and nothin
 
 from __future__ import annotations
 
+from datetime import date, datetime, time, timezone
 from fnmatch import fnmatchcase
 
 from pydantic import Field, SecretStr, ValidationError, field_validator
@@ -65,6 +66,18 @@ class ConnectorSettings(EnvSettings):
     """A connector's own settings. Every field is optional here; the part that needs one raises ConfigError."""
 
 
+class BackfillSettings(ConnectorSettings):
+    """What a connector with a backfill:<source> also reads."""
+
+    # Where a first backfill starts (an ISO date); unset, or empty as compose passes it, reads all history
+    reconcile_since: date | None = None
+
+    @field_validator("reconcile_since", mode="before")
+    @classmethod
+    def _empty_is_unset(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+
 def require(value: SecretStr | str | None, name: str) -> str:
     """The value of a setting a part cannot run without, or ConfigError naming it."""
     text = value.get_secret_value() if isinstance(value, SecretStr) else value
@@ -75,3 +88,8 @@ def require(value: SecretStr | str | None, name: str) -> str:
 
 def secret(value: SecretStr | None) -> str:
     return value.get_secret_value() if value is not None else ""
+
+
+def start_of(day: date | None) -> datetime | None:
+    """A date setting such as RECONCILE_SINCE as the start of that day, UTC."""
+    return None if day is None else datetime.combine(day, time(), timezone.utc)

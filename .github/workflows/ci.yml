@@ -90,7 +90,7 @@ jobs:
       - name: Repo layout present
         run: |
           set -euo pipefail
-          for p in apps/web apps/cli apps/mcp services/backend services/pipeline services/github-ingestion services/jira-ingestion services/slack-ingestion services/gitlab-ingestion apps/web/package.json apps/web/Dockerfile packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
+          for p in apps/web apps/cli apps/mcp services/backend services/pipeline services/github-ingestion services/jira-ingestion apps/web/package.json apps/web/Dockerfile packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
             test -e "$p" || { echo "missing: $p"; exit 1; }
           done
           echo "layout ok"
@@ -165,6 +165,7 @@ jobs:
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_enrich_github.py
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_enrich_jira.py
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_enrich_slack.py
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_enrich_gitlab.py
       # The image: as nobody, exiting 2 without DATABASE_URL, healthy against the pg container, a source
       # with no secret disabled rather than fatal, and the migrations it ships apply (the migrate Job)
       - name: Backend container
@@ -220,26 +221,6 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/pipeline-venv"
           "$RUNNER_TEMP/pipeline-venv/bin/pip" install -q -r requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/pipeline-venv/bin/python3" -m unittest loader.test_pg_load loader.test_pg_writer -v
-      - name: Slack ingestion webhook contract
-        run: python3 services/slack-ingestion/test_webhook.py
-      - name: Slack ingestion local pull contract
-        run: python3 services/slack-ingestion/test_pull.py
-      - name: Slack ingestion webhook smoke
-        env:
-          SLACK_SIGNING_SECRET: ci-local-smoke
-        run: python3 services/slack-ingestion/smoke_webhook.py
-      # EMBER-67: on the pg container and dbmate from "Postgres migrations match the ingestion doc".
-      # EMBER-148: with the bot tokens Connect Slack stores, sealed as packages/source-credentials does
-      - name: Slack enrich worker
-        env:
-          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
-        run: |
-          set -euo pipefail
-          # A venv per service, so each one's pinned requirements stay apart
-          python3 -m venv "$RUNNER_TEMP/slack-enrich-venv"
-          "$RUNNER_TEMP/slack-enrich-venv/bin/pip" install -q -r services/slack-ingestion/requirements.txt
-          "$RUNNER_TEMP/slack-enrich-venv/bin/python3" services/slack-ingestion/test_enrich.py
-          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/slack-enrich-venv/bin/python3" services/slack-ingestion/test_enrich_db.py
       - name: Jira ingestion webhook contract
         run: python3 services/jira-ingestion/test_webhook.py
       - name: Jira ingestion local pull contract
@@ -262,25 +243,6 @@ jobs:
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/enrich-venv/bin/python3" services/jira-ingestion/test_keep_alive.py
       - name: Photon synthetic Slack and Jira fixtures
         run: python3 services/pipeline/fixtures/photon/test_fixtures.py
-      - name: GitLab ingestion webhook contract
-        run: python3 services/gitlab-ingestion/test_webhook.py
-      - name: GitLab ingestion pull contract
-        run: python3 services/gitlab-ingestion/test_pull.py
-      - name: GitLab ingestion webhook smoke
-        env:
-          # whsec_ + base64("ci-local-smoke-key"). Throwaway, not a real token.
-          GITLAB_WEBHOOK_SIGNING_TOKEN: whsec_Y2ktbG9jYWwtc21va2Uta2V5
-        run: python3 services/gitlab-ingestion/smoke_webhook.py
-      # EMBER-68: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
-      - name: GitLab enrich worker
-        env:
-          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
-        run: |
-          set -euo pipefail
-          # A venv per service, so each one's pinned requirements stay apart
-          python3 -m venv "$RUNNER_TEMP/gitlab-enrich-venv"
-          "$RUNNER_TEMP/gitlab-enrich-venv/bin/pip" install -q -r services/gitlab-ingestion/requirements.txt
-          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/gitlab-enrich-venv/bin/python3" services/gitlab-ingestion/test_enrich.py
       # EMBER-79: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
       - name: MCP server against Postgres
         env:
@@ -291,22 +253,6 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/mcp-venv"
           "$RUNNER_TEMP/mcp-venv/bin/pip" install -q -r apps/mcp/requirements.txt -r services/embed/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/mcp-venv/bin/python3" apps/mcp/test_mcp.py
-      - name: GitLab ingestion container
-        run: |
-          set -euo pipefail
-          docker build -f services/gitlab-ingestion/Dockerfile -t ember-gitlab-ingestion:ci .
-          docker run --rm --entrypoint python3 ember-gitlab-ingestion:ci pull.py --help > /dev/null
-          # The cluster runs enrich.py from this image (EMBER-83). Without DATABASE_URL it exits 2 after
-          # its imports, so a missing file or library fails here rather than on the cluster.
-          status=0
-          docker run --rm --entrypoint python3 ember-gitlab-ingestion:ci enrich.py 2> "$RUNNER_TEMP/gitlab-enrich.err" || status=$?
-          cat "$RUNNER_TEMP/gitlab-enrich.err"
-          test "$status" -eq 2 && grep -q "Set DATABASE_URL" "$RUNNER_TEMP/gitlab-enrich.err"
-          cid=$(docker run -d -p 127.0.0.1:18083:8083 ember-gitlab-ingestion:ci)
-          trap 'docker logs "$cid"; docker rm -f "$cid" > /dev/null' EXIT
-          curl -fsS --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:18083/health
-          echo
-          test "$(docker inspect -f '{{.Config.User}}' ember-gitlab-ingestion:ci)" = nobody
 
   pipeline:
     name: pipeline

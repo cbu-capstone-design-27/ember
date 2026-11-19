@@ -283,7 +283,7 @@ An organization's owners and admins connect a Slack workspace in Settings → Co
    - an answer without a bot token, or without every scope in `BOT_SCOPES` (the app's configured scopes drifted from the manifest);
    - an organization-wide Enterprise Grid install, which it uninstalls again with the token Slack gave. A workspace inside a Grid organization is a normal install;
    - a workspace another organization holds. Its token there is unchanged.
-3. **In one transaction** (`connectWorkspace`, through `connectAccount`), it maps the workspace's `team_id` to the tenant in `installations`, with the workspace name as `label`, and seals the bot token as the workspace's `api` credential: `{bot_token, bot_user_id, scope, app_id, installed_by, enterprise_id}`. `enrich:slack` reads it (`services/slack-ingestion/workspaces.py`), and claims a workspace's rows only once both exist, so it never sees the mapping without the token.
+3. **In one transaction** (`connectWorkspace`, through `connectAccount`), it maps the workspace's `team_id` to the tenant in `installations`, with the workspace name as `label`, and seals the bot token as the workspace's `api` credential: `{bot_token, bot_user_id, scope, app_id, installed_by, enterprise_id}`. `enrich:slack` and `backfill:slack` read it (`services/backend`), and claims a workspace's rows only once both exist, so it never sees the mapping without the token.
 4. **It hands off** the workspace's stored deliveries, now and once more 10 s later, as Connect GitHub does.
 
 Reconnecting a workspace to the same organization (after a Disconnect, or after Slack disconnected it) clears `disconnected_at` and replaces the token. Slack bot tokens don't expire (token rotation is off), so there is nothing to refresh and no keep-alive.
@@ -296,7 +296,7 @@ It needs Postgres with the ingestion migrations, the Slack app's OAuth client in
 
 ### Slack app settings
 
-On the Slack app's page at [api.slack.com/apps](https://api.slack.com/apps) (created from [`services/slack-ingestion/slack-app-manifest.json`](../../services/slack-ingestion/slack-app-manifest.json)):
+On the Slack app's page at [api.slack.com/apps](https://api.slack.com/apps) (created from [`docs/ingestion/slack-app-manifest.json`](../../docs/ingestion/slack-app-manifest.json)):
 
 1. **OAuth & Permissions → Redirect URLs:** `https://pi-cp.tail470a31.ts.net/connect/slack/callback`, which is `BETTER_AUTH_URL` plus the path. It is a browser redirect, so a tailnet address works. The manifest's `redirect_urls` has a placeholder to replace.
 2. **Manage Distribution → Activate Public Distribution.** Without it the app installs only into the workspace that created it. Public distribution doesn't list it in the Slack Marketplace, and installs into other workspaces fall under Slack's non-Marketplace limits on `conversations.history` and `conversations.replies` (`docs/ingestion/slack.md`, Rate limits).

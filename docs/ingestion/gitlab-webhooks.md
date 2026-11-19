@@ -2,7 +2,7 @@
 
 - Jira: EMBER-71 (drop-first), epic EMBER-20 (GitLab Ingestion).
 - Status: proposed, for team review. Headers, payloads and API endpoints were checked against GitLab's docs (docs.gitlab.com) on 2026-10-14. Links are in [Sources](#sources).
-- This is the spec for the `enrich:gitlab` worker (EMBER-68). [`architecture.md`](architecture.md) covers the pipeline as a whole. [`gitlab.md`](gitlab.md) covers auth, rate limits and the connector in `services/gitlab-ingestion`.
+- This is the spec for the `enrich:gitlab` worker (EMBER-68). [`architecture.md`](architecture.md) covers the pipeline as a whole. [`gitlab.md`](gitlab.md) covers auth and rate limits. The connector is `connectors/gitlab` in `services/backend`.
 - Related: EMBER-62 (intake), EMBER-63 (source ordering column), EMBER-54 and EMBER-55 (GitLab connector and rate limits), EMBER-47 (test project)
 
 GitLab sends the data itself (`architecture.md`, [Webhooks per source](architecture.md#webhooks-per-source-data-or-signal)). Intake stores each delivery in `raw_events` as it arrived. `enrich:gitlab` adds only what the payload lacks, then writes `source_records`.
@@ -18,7 +18,7 @@ GitLab sends the data itself (`architecture.md`, [Webhooks per source](architect
 
 ## How a delivery arrives
 
-A project or group webhook posts JSON to `/webhook/gitlab`. Intake checks the signing token (`webhook-signature`, an HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`), stores the body, and answers. The token is one Connect GitLab stored for the delivery's `account_id` (EMBER-149): GitLab generates one per webhook and the owner pastes each into the web app. A group with none is checked with the shared tokens for webhooks set up by hand (signing token, or legacy secret token in `X-Gitlab-Token`), and is refused when there are none. There is no handshake. Intake's `gitlab` adapter (`services/intake/adapters/gitlab.py`, EMBER-83) does this, with the checks `services/gitlab-ingestion/receiver.py` makes.
+A project or group webhook posts JSON to `/webhook/gitlab`. Intake checks the signing token (`webhook-signature`, an HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`), stores the body, and answers. The token is one Connect GitLab stored for the delivery's `account_id` (EMBER-149): GitLab generates one per webhook and the owner pastes each into the web app. A group with none is checked with the shared tokens for webhooks set up by hand (signing token, or legacy secret token in `X-Gitlab-Token`), and is refused when there are none. There is no handshake. Intake's `gitlab` adapter (`services/backend`, `connectors/gitlab/webhook.py`) does this.
 
 GitLab sends deliveries "asynchronously from Sidekiq nodes" and documents no order. It wants a 200 or 201 within 10 seconds on GitLab.com. A 4xx, a 5xx or a timeout is a failure. After 4 failures in a row the webhook is temporarily disabled, for 1 minute at first and up to 24 hours. After 40 it is disabled for good, until someone re-enables it. GitLab says to "prepare for duplicate events if a webhook times out".
 
@@ -52,7 +52,7 @@ GitLab sends deliveries "asynchronously from Sidekiq nodes" and documents no ord
 
 ## Event types: payload and what enrich fetches
 
-The webhook's triggers are `RECOMMENDED_WEBHOOK_TRIGGERS` in `services/gitlab-ingestion/receiver.py`. Intake doesn't filter on them. EMBER-68's acceptance criteria include push events, which the first cut left off, so this doc proposes adding **Push events**.
+The webhook's triggers are `WEBHOOK_TRIGGERS` in `apps/web/src/lib/gitlab-connect.ts`, which Connect GitLab asks the owner to tick. Intake doesn't filter on them. EMBER-68's acceptance criteria include push events, which the first cut left off, so this doc proposes adding **Push events**.
 
 | Trigger | `X-Gitlab-Event` | `object_kind` | Status |
 |---|---|---|---|
@@ -65,7 +65,7 @@ The webhook's triggers are `RECOMMENDED_WEBHOOK_TRIGGERS` in `services/gitlab-in
 
 **Rules enrich follows:**
 - **Fetch only what's missing.** The payload is the record of that moment and is kept as it is. Fetched data is added beside it. `source_records.record` has the same shape as `enrich:github`'s: `{"payload": ..., "fetched": ..., "tombstone": true}`, with `fetched` and `tombstone` only when they apply.
-- **Every call uses the tenant's `read_api` token** (`PRIVATE-TOKEN`) and **goes through the shared limiter** (`rate_limits`, bucket = `account_id`, i.e. one bucket per token). Throttling works as in `pull.py`: when `RateLimit-Remaining` drops to 50 or fewer, wait until `RateLimit-Reset`. A 429 waits out `Retry-After`. Neither counts as a failure.
+- **Every call uses the tenant's `read_api` token** (`PRIVATE-TOKEN`): the one Connect GitLab stored for the group, on the instance it was connected on. `enrich:gitlab` in `ember-backend` (`connectors/gitlab/enrich.py`, EMBER-160) sets a row that needs a call aside while its group isn't connected to the row's tenant, and disconnects the group if GitLab refuses the token (401). The shared `GITLAB_API_TOKEN` fallback of `services/gitlab-ingestion/enrich.py` is gone. Every call **goes through the shared limiter** (`rate_limits`, bucket = `account_id`, i.e. one bucket per token). Throttling works as in `pull.py`: when `RateLimit-Remaining` drops to 50 or fewer, wait until `RateLimit-Reset`. A 429 waits out `Retry-After`. Neither counts as a failure.
 - **`read_api` is enough** for every call below.
 - **Confidential and internal objects make no record.** Enrich drops an issue with `confidential: true` and a note with `internal: true`, as `pull.py` does, in case a webhook is set up with the confidential triggers on.
 
@@ -130,7 +130,7 @@ GitLab's arrival order isn't its own order. Sidekiq sends deliveries in parallel
 Catch-up has two steps, both run by `scheduler:gitlab` and done by `enrich:gitlab`:
 
 1. **Resend failed deliveries.** `GET /projects/:id/hooks/:hook_id/events?status=client_failure` (and `server_failure`) lists the last 7 days of deliveries. `POST /projects/:id/hooks/:hook_id/events/:hook_event_id/resend` sends one again, with the same `Idempotency-Key`, so it lands in intake as the original event, snapshot and all. GitLab allows 5 resends a minute per user per project. Both calls need the Maintainer or Owner role (see [open questions](#open-questions)).
-2. **Reconcile from REST.** Today's `services/gitlab-ingestion/pull.py --updated-after`, becoming `Enricher.reconcile`, per project from `cursors` (stream `project:<id>`). It lists merge requests and issues updated since the cursor, with all their notes. A new note bumps its parent's `updated_at`, so new comments are covered. It doesn't list commits or branches yet.
+2. **Reconcile from REST.** `backfill:gitlab` in `ember-backend` (`connectors/gitlab/backfill.py`, EMBER-160), which replaces `services/gitlab-ingestion/pull.py`. It reads a group within 30 s of its connection, then every `GITLAB_BACKFILL_EVERY_HOURS` (default 1), with the token Connect GitLab stored: every project in the group and its subgroups, per project from `cursors` (stream `project:<id>`). It stores the project, and the merge requests and issues updated since the cursor with all their notes, as `raw_events` rows with origin `reconcile` (delivery_id `<object_id>@<version>`), which `enrich:gitlab` reads like webhooks. The first pass reads everything. Step 1 (resending) isn't built. A new note bumps its parent's `updated_at`, so new comments are covered. It doesn't list commits or branches yet.
 
 | Gap | What happens | Catch-up |
 |---|---|---|

@@ -58,7 +58,7 @@ Subscribe the App to these. Intake does not filter on them, and with the App's c
 
 ## Slack adapter
 
-[`docs/ingestion/slack-webhooks.md`](../../docs/ingestion/slack-webhooks.md) is the spec. `enrich:slack` (`services/slack-ingestion/enrich.py`) reads the rows.
+[`docs/ingestion/slack-webhooks.md`](../../docs/ingestion/slack-webhooks.md) is the spec. `enrich:slack` in `services/backend` reads the rows.
 
 - **Verification:** `X-Slack-Signature`, `v0=` and the HMAC-SHA256 of `v0:<X-Slack-Request-Timestamp>:<raw body>` with the signing secret. A timestamp more than 5 minutes from now is refused, so a captured request can't be replayed.
 - **Handshake:** the Request URL check (`url_verification`) is signed too. Intake verifies it, answers `{"challenge": …}` and stores nothing.
@@ -67,7 +67,7 @@ Subscribe the App to these. Intake does not filter on them, and with the App's c
 - **`event_name`:** the inner `event.type`, plus `:<subtype>` when there is one, e.g. `message:message_deleted`; `app_rate_limited` for the notice.
 - **`occurred_at`:** the [ordering value](../../docs/ingestion/slack-webhooks.md#ordering-value-ember-63): `event.event_ts`, then `event.ts`, then the wrapper's `event_time`, to the microsecond; `minute_rate_limited` for the notice. One that is unreadable gets `received_at`.
 
-The app's scopes and events are in `services/slack-ingestion/slack-app-manifest.json`. Set its Event Subscriptions Request URL to `https://ember.tail470a31.ts.net/webhook/slack` once intake has the secret: Slack sends the URL check straight away.
+The app's scopes and events are in `docs/ingestion/slack-app-manifest.json`. Set its Event Subscriptions Request URL to `https://ember.tail470a31.ts.net/webhook/slack` once intake has the secret: Slack sends the URL check straight away.
 
 ## Jira adapter
 
@@ -87,7 +87,7 @@ Jira counts any answer but 200 as a failure and retries; intake answers 200 for 
 
 ## GitLab adapter
 
-[`docs/ingestion/gitlab-webhooks.md`](../../docs/ingestion/gitlab-webhooks.md) is the spec. `enrich:gitlab` (`services/gitlab-ingestion/enrich.py`) reads the rows. The checks are the ones `services/gitlab-ingestion/receiver.py` makes, which stays as a local stub.
+[`docs/ingestion/gitlab-webhooks.md`](../../docs/ingestion/gitlab-webhooks.md) is the spec. `enrich:gitlab` in `services/backend` reads the rows.
 
 - **Verification:** `webhook-signature` must hold a `v1,` HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`, and `webhook-timestamp` must be within 5 minutes. The keys are the signing tokens Connect GitLab stored for the delivery's `account_id` (a `webhook` row in `source_credentials`, `{"signing_tokens": [...]}`, EMBER-149, [ADR 0010](../../docs/adr/0010-connecting-sources.md#gitlab)): GitLab generates one per webhook, so a group on Free has one per project, and any of them verifies. The account is read from the body before it is trusted, only to pick the token: a body that names another group fails that group's signature. An account with no stored tokens is checked with the shared tokens, each that is set (with a secret token, `X-Gitlab-Token` must equal it), and gets a 401 when none is. Disconnect deletes the stored token, so a disconnected group's webhook gets 401s until the owner removes it; GitLab disables it after 40.
 - **`delivery_id`:** `webhook-id`, else `Idempotency-Key` (the same value), at most 255 characters. GitLab keeps it across retries and a manual Resend. Not `X-Gitlab-Event-UUID`, which a webhook triggered by another webhook shares.
@@ -95,7 +95,7 @@ Jira counts any answer but 200 as a failure and retries; intake answers 200 for 
 - **`event_name`:** `object_kind`, plus `:<action>` when there is one, e.g. `merge_request:update`, `work_item:close`, `push`. The body decides because `Issue Hook` covers issues and work items. A body without `object_kind` is a 400.
 - **`occurred_at`:** the [ordering value](../../docs/ingestion/gitlab-webhooks.md#ordering-value-ember-63): `object_attributes.updated_at` for merge requests, issues, work items and notes, in either of GitLab's time formats. Pushes, branch deletes, the four approval actions, other kinds and an unreadable time get `received_at`.
 
-GitLab wants a 2xx within 10 seconds and disables a webhook after 4 failures in a row. Intake answers 200 for stored and duplicate deliveries. Connect GitLab in the web app's Settings shows the webhook URL; the owner adds the webhook to the group (Premium) or to each project (Free) with **Generate signing token** and the triggers in `RECOMMENDED_WEBHOOK_TRIGGERS` (`services/gitlab-ingestion/receiver.py`), then pastes each signing token back.
+GitLab wants a 2xx within 10 seconds and disables a webhook after 4 failures in a row. Intake answers 200 for stored and duplicate deliveries. Connect GitLab in the web app's Settings shows the webhook URL; the owner adds the webhook to the group (Premium) or to each project (Free) with **Generate signing token** and the triggers in `WEBHOOK_TRIGGERS` (`apps/web/src/lib/gitlab-connect.ts`), then pastes each signing token back.
 
 ## Run
 

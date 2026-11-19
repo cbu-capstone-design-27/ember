@@ -12,13 +12,15 @@ A fake Slack workspace and a fake Jira board for [ryan-stoffel/photon](https://g
 | `jira-intake.jsonl` | Same for the Jira pull |
 | `slack.md`, `jira.md` | Full-text transcripts for people: every message and thread, every issue with its description, comments, links, and history |
 | `*.jsonl.readable.md` | The connectors' own glance summaries, as `pull_test.py --output` writes them |
+
+The three Slack files are frozen: the Slack pull that produced them (`services/slack-ingestion/pull_test.py`) was removed in EMBER-160, when Slack moved into `ember-backend`. `generate.py` rebuilds the Jira files only.
 | `photon-source.json` | Snapshot of the photon GitHub data the generator reads |
-| `generate.py` | Builds everything above. Stdlib only |
+| `generate.py` | Builds the Jira files. Stdlib only |
 | `test_fixtures.py` | Schema, freshness, and consistency checks |
 
 ## How the JSONL is made
 
-`generate.py` does not write envelopes itself. It answers the Slack Web API and the Jira REST API from memory and runs the real pull code in `services/slack-ingestion/pull_test.py` and `services/jira-ingestion/pull_test.py` against those fakes. The JSONL is what the connectors would emit for this workspace and board: same object shapes, same order, same `channel` field added to history messages, same changelog page beans.
+`generate.py` does not write envelopes itself. It answers the Jira REST API from memory and runs the real pull code in `services/jira-ingestion/pull_test.py` against that fake, so the JSONL is what the connector would emit for this board: same object shapes, same order, same changelog page beans. The Slack JSONL was made the same way, against a fake Slack Web API, before that pull was removed. It still lines up with the Jira board, because the generator still builds the same Slack world for Jira to link to.
 
 ```sh
 python3 services/pipeline/fixtures/photon/generate.py
