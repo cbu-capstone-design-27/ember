@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from pydantic import Field, SecretStr
 
 from ember.connectors.base import Connector
 from ember.connectors.jira.atlassian import OAuthClient
+from ember.connectors.jira.backfill import JiraBackfill
 from ember.connectors.jira.enrich import JiraEnrich
 from ember.connectors.jira.keep_alive import JiraKeepAlive
 from ember.connectors.jira.webhook import JiraAdapter
-from ember.core.settings import ConnectorSettings, secret
+from ember.core.settings import BackfillSettings, secret, start_of
 from ember.runtime.component import Component
 from source_credentials import ENV
 
 
-class JiraSettings(ConnectorSettings):
+class JiraSettings(BackfillSettings):
     jira_webhook_secret: SecretStr | None = None       # admin webhooks
     # The Atlassian 3LO app of Connect Jira (EMBER-131). The secret also verifies dynamic webhooks; with
     # the id, it refreshes the sites' tokens for enrich and the keep-alive
@@ -22,6 +25,8 @@ class JiraSettings(ConnectorSettings):
     jira_oauth_client_secret: SecretStr | None = None
     jira_enrich_concurrency: int = Field(4, ge=1, le=32)
     jira_enrich_batch: int = Field(10, ge=1, le=500)
+    # How often backfill:jira catches every connected site up; a new connection is read within 30 s
+    jira_backfill_every_hours: float = Field(1.0, gt=0)
 
 
 class JiraConnector(Connector):
@@ -34,7 +39,8 @@ class JiraConnector(Connector):
 
     def components(self) -> list[Component]:
         """A ring that is set but unreadable is a ConfigError for both. Without the ring or the client, enrich
-        sets aside the rows that need a call and the keep-alive is disabled, each saying which is missing."""
+        sets aside the rows that need a call, and the keep-alive and the backfill are disabled, each saying which
+        is missing."""
         ring = self.deps.credentials.ring("api")
         client_id = (self.settings.jira_oauth_client_id or "").strip()
         client_secret = secret(self.settings.jira_oauth_client_secret).strip()
@@ -46,4 +52,7 @@ class JiraConnector(Connector):
             JiraEnrich(self.deps.db, ring=ring, client=client, missing=missing,
                        concurrency=self.settings.jira_enrich_concurrency, batch=self.settings.jira_enrich_batch),
             JiraKeepAlive(self.deps.db, ring=ring, client=client, missing=missing),
+            JiraBackfill(self.deps.db, self.deps.credentials, client=client, missing=missing,
+                         every=timedelta(hours=self.settings.jira_backfill_every_hours),
+                         since=start_of(self.settings.reconcile_since)),
         ]

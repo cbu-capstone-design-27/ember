@@ -161,6 +161,8 @@ Out of scope here. Its account is the Microsoft 365 `tenantId`, through Entra ad
 - **History before that comes from reconcile,** not from stored deliveries. A first connect of an account enqueues that source's reconcile from the beginning, as the onboarding backfill. Until the job queue and `Enricher.reconcile` land, an operator runs the source's `pull_test.py` backfill.
 - **Overlap is harmless.** A replayed delivery and a reconcile copy of the same object fold into one `source_records` row on `(source, tenant, object_id, version)`. Enrich applies changes by `occurred_at`, so arrival order does not matter.
 
+**As built (EMBER-160, EMBER-167, 2026-11-18):** there is no job queue yet. `ember-backend` runs a `backfill:<source>` component per source for Slack, GitHub and Jira. Each reads a newly connected account within 30 s, then catches every connected account up hourly. It writes `raw_events` with `origin = 'reconcile'` and keeps its progress in `cursors`, so a restart or a reconnect carries on, and a disconnect stops it. No schema change. Details: `github-webhooks.md` and `jira-webhooks.md`, "Known gaps and catch-up", and `slack-webhooks.md`.
+
 ### `make map-tenant`
 
 `make map-tenant` stays as the operator override: for accounts connected before this flow (installation `164866568`), and for an Ember admin connecting an account on a customer's behalf. It follows the same rules as the web app:

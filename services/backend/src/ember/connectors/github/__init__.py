@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from functools import partial
 from pathlib import Path
 
@@ -10,14 +11,15 @@ from pydantic import Field, SecretStr
 
 from ember.connectors.base import Connector
 from ember.connectors.github import api
+from ember.connectors.github.backfill import GitHubBackfill
 from ember.connectors.github.enrich import GitHubEnrich, missing_app
 from ember.connectors.github.webhook import GitHubAdapter
 from ember.core.errors import ConfigError
-from ember.core.settings import ConnectorSettings, require
+from ember.core.settings import BackfillSettings, require, start_of
 from ember.runtime.component import Component
 
 
-class GitHubSettings(ConnectorSettings):
+class GitHubSettings(BackfillSettings):
     github_webhook_secret: SecretStr | None = None
     # The App enrich calls the API as. Without it, events that need a call are set aside and the rest still go
     github_app_id: str | None = None
@@ -25,6 +27,8 @@ class GitHubSettings(ConnectorSettings):
     github_app_private_key: SecretStr | None = None  # or the PEM itself
     github_enrich_concurrency: int = Field(4, ge=1, le=32)
     github_enrich_batch: int = Field(25, ge=1, le=500)
+    # How often backfill:github catches every connected installation up; a new connection is read within 30 s
+    github_backfill_every_hours: float = Field(1.0, gt=0)
 
 
 class GitHubConnector(Connector):
@@ -36,8 +40,13 @@ class GitHubConnector(Connector):
         return GitHubAdapter(require(self.settings.github_webhook_secret, "GITHUB_WEBHOOK_SECRET"))
 
     def components(self) -> list[Component]:
-        return [GitHubEnrich(self.deps.db, app_jwt=self.app_jwt(), concurrency=self.settings.github_enrich_concurrency,
-                             batch=self.settings.github_enrich_batch)]
+        app_jwt = self.app_jwt()
+        return [GitHubEnrich(self.deps.db, app_jwt=app_jwt, concurrency=self.settings.github_enrich_concurrency,
+                             batch=self.settings.github_enrich_batch),
+                GitHubBackfill(self.deps.db, self.deps.credentials, app_jwt=app_jwt,
+                               missing=getattr(app_jwt, "missing", ""),
+                               every=timedelta(hours=self.settings.github_backfill_every_hours),
+                               since=start_of(self.settings.reconcile_since))]
 
     def app_jwt(self):
         """Mints the App's JWT. A key that is set but unusable is a ConfigError, which disables the worker."""
