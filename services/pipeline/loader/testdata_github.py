@@ -1,6 +1,6 @@
 """Synthetic enrich:github source_records rows for the GitHub extract and load tests (EMBER-107).
 
-Every row has the shape services/github-ingestion/enrich.py's to_records writes, and every payload the
+Every row has the shape enrich:github's to_records (services/backend) writes, and every payload the
 key structure of real GitHub deliveries (the key paths and types were taken from the team's real records;
 no value was). Everything here is made up: the organisation, the people, the text, the ids and the SHAs.
 

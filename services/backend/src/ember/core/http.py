@@ -1,6 +1,6 @@
 """Calling a source's REST API: one exchange, retries, rate limits, and what a final response means.
 
-The rules are the backfill CLIs' (services/<source>-ingestion/pull_test.py; github-webhooks.md and
+The rules are the old backfill CLIs' (services/<source>-ingestion/pull_test.py, removed in EMBER-160; github-webhooks.md and
 jira-webhooks.md, "Rate limits"). Requests are blocking urllib calls run in a thread, so the exchange
 is one plain function tests replace. `Limits` is how an API says "slow down": a 429 by default, which
 is Jira's rule; GitHub's subclass adds its 403 limits. A final response becomes the runtime's failure

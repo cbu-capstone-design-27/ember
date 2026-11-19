@@ -7,7 +7,7 @@ Jira: EMBER-39. Shape is `{type, body}`: a source name and opaque raw connector 
 ## Consumers
 
 - `services/pipeline` and each source connector (GitHub, Jira, Slack, Teams, GitLab) emit this shape.
-- `services/intake` wraps every webhook delivery as `{"type":"<source>","body":<raw object>}` in `raw_events.envelope` (EMBER-62). `services/github-ingestion`'s backfill wraps each REST object as `{"type":"github","body":<raw object>}` (EMBER-35).
+- `services/intake` wraps every webhook delivery as `{"type":"<source>","body":<raw object>}` in `raw_events.envelope` (EMBER-62). `backfill:github` in `services/backend` stores each REST object shaped as its webhook delivery, as `{"type":"github","body":<body>}` (EMBER-35, EMBER-167).
 - `services/backend` (intake and `backfill:slack`) stores a Slack Events API delivery as `{"type":"slack","body":<raw object>}`; the backfill shapes each message as its webhook delivery (EMBER-36, EMBER-160).
 - `services/backend` (intake and `backfill:jira`) stores `{"type":"jira","body":<raw object>}`; the backfill shapes each issue and comment as its webhook delivery (EMBER-31, EMBER-167).
 - `services/backend` (intake and `backfill:gitlab`) stores a GitLab webhook, or a backfilled REST object, as `{"type":"gitlab","body":<raw object>}` (EMBER-54, EMBER-160).

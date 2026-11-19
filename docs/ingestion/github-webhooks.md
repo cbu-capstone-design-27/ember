@@ -2,7 +2,7 @@
 
 - Jira: EMBER-69 (floor). Jira's half is [`jira-webhooks.md`](jira-webhooks.md).
 - Status: proposed, for team review. Headers and limits were checked against GitHub's docs (docs.github.com) on 2026-10-13. Links are in [Sources](#sources).
-- This is the spec for the `enrich:github` worker (EMBER-65). [`architecture.md`](architecture.md) covers the pipeline as a whole. `services/github-ingestion/README.md` covers the App, its credentials and the backfill.
+- This is the spec for the `enrich:github` worker (EMBER-65). [`architecture.md`](architecture.md) covers the pipeline as a whole. The connector is `connectors/github` in `services/backend`; its settings (`GITHUB_APP_ID`, the private key) are in `services/backend/README.md`.
 - Related: EMBER-62 (intake), EMBER-63 (source ordering column), EMBER-35 (GitHub connector)
 
 GitHub sends the data itself (`architecture.md`, [Webhooks per source](architecture.md#webhooks-per-source-data-or-signal)). Intake stores each delivery in `raw_events` as it arrived. `enrich:github` adds only what the payload lacks, then writes `source_records`.
@@ -62,7 +62,9 @@ The subscription list is `RECOMMENDED_WEBHOOK_EVENTS` in `services/intake/adapte
 | `deployment`, `deployment_status` | Deployments | Yes, skipped by enrich (not mapped) |
 | `discussion`, `discussion_comment` | Discussions | Yes, skipped by enrich (not mapped) |
 
-**Recommended subscriptions** (EMBER-92). Subscribe the App to the events enrich maps (`MAPPED` in `services/github-ingestion/enrich.py`):
+**App permissions** (read only; moved from the removed `services/github-ingestion/README.md`, EMBER-160): repository Metadata, Contents, Issues and Pull requests. No organization permissions. `enrich:github` and `backfill:github` call the API as the App's installation.
+
+**Recommended subscriptions** (EMBER-92). Subscribe the App to the events enrich maps (`MAPPED` in `services/backend`, `connectors/github/enrich.py`):
 
 - `issues`, `issue_comment`, `milestone`, `label`
 - `pull_request`, `pull_request_review`, `pull_request_review_comment`

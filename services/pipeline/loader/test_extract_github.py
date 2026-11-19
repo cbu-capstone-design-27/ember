@@ -15,7 +15,7 @@ from loader.mappers.github import RECORD_KINDS, github_tombstone, map_github_rec
 from loader.memory_writer import MemoryWriter
 from loader.records import node_uuid, ordering_time
 
-ENRICH = Path(__file__).resolve().parents[3] / "services" / "github-ingestion" / "enrich.py"
+ENRICH = Path(__file__).resolve().parents[3] / "services" / "backend" / "src" / "ember" / "connectors" / "github" / "enrich.py"
 TENANT = "photon"
 GID = f"{TENANT}_github"
 # Kinds enrich:github writes that have no home in docs/graph-schema.md (docs/pipeline/neo4j-load-check.md)

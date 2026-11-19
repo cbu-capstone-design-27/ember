@@ -21,7 +21,7 @@ The `image targets` and `image (<name>)` jobs in `.github/workflows/ci.yml` hand
 
 Publishing uses the workflow's `GITHUB_TOKEN`, so no secrets need to be set up.
 
-Today's targets are `backend`, `embed`, `github-ingestion`, `intake`, `llm-tunnel`, `pipeline` and `web`.
+Today's targets are `backend`, `embed`, `intake`, `llm-tunnel`, `pipeline` and `web`.
 
 ## Adding a new service
 
