@@ -85,7 +85,7 @@ TITLE_TEXT = f"""coalesce(
 TITLE = f"left({TITLE_TEXT}, 120)"
 
 # Slack mrkdwn, the pattern loader/pg_writer.py (EMBER-164) cleans facts with. Copied, not imported: that
-# module needs services/pipeline (ontology, the Neo4j writer) on the path, which the MCP server doesn't ship.
+# module needs services/pipeline (ontology, the loader) on the path, which the MCP server doesn't ship.
 SLACK_MARKUP = re.compile(r"<([^<>|]*)(?:\|([^<>]*))?>")  # <url|label>, <url>, <@U123>, <#C123|name>, <!here>
 MENTION = re.compile(r"<@([A-Z0-9]+)")
 

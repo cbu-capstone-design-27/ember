@@ -140,7 +140,8 @@ def tenant_subgraphs(tenant: str) -> list[str]:
 # --- One graph per connected scope (EMBER-164) ---
 #
 # The Postgres graph splits a tenant's source into one graph per scope: a GitHub repo, a GitLab
-# project, a Jira project or a Slack workspace. subgraph_id above stays the Neo4j path's group_id.
+# project, a Jira project or a Slack workspace. subgraph_id above ({tenant}_{source}) still names a tenant's
+# source in the in-memory graph and in load's per-source batches.
 
 _REPO = re.compile(r"[^/#@:]+/[^/#@:]+")  # the owner/repo every GitHub object_id starts with
 _JIRA_KEY = re.compile(r"([A-Z][A-Z0-9]+)-\d+")

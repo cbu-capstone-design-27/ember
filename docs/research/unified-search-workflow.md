@@ -1,5 +1,7 @@
 # Unified search experiment workflow
 
+> Note (2026-11-18): Neo4j is removed ([ADR 0013](../adr/0013-postgres-only-graph-store.md)), so there is no Neo4j reference to keep; the EMBER-146 harness runs on Postgres.
+
 EMBER-132; implementation starts with EMBER-133/134/135 and the fixed variants of EMBER-137/138/139/140.
 This follows [ADR 0011](../adr/0011-graph-in-postgres.md): keep the Neo4j reference until the
 Postgres Graphiti fork demonstrates parity. Vertex AI replaces the tunnel for models (EMBER-155/116).

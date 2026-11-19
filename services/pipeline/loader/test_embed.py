@@ -1,12 +1,8 @@
-import tempfile
 import unittest
-from pathlib import Path
 
 from loader.embed import MAX_EMBED_CHARS, embed_graph, text_hash
 from loader.memory_writer import MemoryWriter
 from loader.records import NodeRec
-from loader.run import run
-from loader.testdata import write_sample
 from models.client import ModelError
 from ontology.config import EmbeddingIdentity, EmbeddingMismatch
 
@@ -136,40 +132,6 @@ class EmbedGraphTests(unittest.TestCase):
         (cand,) = w.embed_candidates([G])
         self.assertEqual((cand["label"], cand["group_id"], cand["key"], cand["text"], cand["vector"]),
                          ("WorkItem", G, "a#1", "hello", [1.0, 5.0]))
-
-
-class RunWithEmbedderTests(unittest.TestCase):
-    def test_run_reports_the_count_and_turns_embedding_errors_into_problems(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "raw"
-            write_sample(root, include_bad=False)
-            w, c = MemoryWriter(), FakeClient()
-            report = run("brandon-dev", root, w, Path(tmp) / "r.jsonl",
-                         embedder=lambda wr, gids: embed_graph(wr, c, IDENTITY, gids))
-            self.assertEqual(report.exit_code, 0, report.render())
-            # the sample's text-bearing nodes: GitHub issue, PR and commit, Jira issue and comment, two Slack messages
-            self.assertEqual(report.embedded, 7)
-            self.assertIn("embedded:", report.render())
-
-            other = EmbeddingIdentity("m2", "r1", 2, "{query}")
-            bad = run("brandon-dev", root, w, Path(tmp) / "r.jsonl",
-                      embedder=lambda wr, gids: embed_graph(wr, c, other, gids))
-        self.assertEqual(bad.exit_code, 1)
-        self.assertTrue(any("embedding step failed" in p for p in bad.problems))
-        self.assertEqual(bad.nodes_written, report.nodes_written)  # the graph was still written
-
-    def test_a_model_error_in_the_embed_phase_is_a_problem_and_leaves_no_identity(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "raw"
-            write_sample(root, include_bad=False)
-            w = MemoryWriter()
-            report = run("brandon-dev", root, w, Path(tmp) / "r.jsonl",
-                         embedder=lambda wr, gids: embed_graph(wr, FailingClient(ok=0), IDENTITY, gids))
-        self.assertEqual(report.exit_code, 1)
-        self.assertIn("HTTP 400", report.embedding_error)
-        self.assertTrue(any("embedding step failed" in p for p in report.problems))
-        self.assertIsNone(w.read_embedding_identity())
-        self.assertGreater(report.nodes_written, 0)
 
 
 if __name__ == "__main__":

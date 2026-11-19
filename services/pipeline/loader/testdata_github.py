@@ -7,7 +7,7 @@ no value was). Everything here is made up: the organisation, the people, the tex
 rows() returns (source, kind, object_id, version, occurred_at, record) tuples in the order a test inserts
 them; occurred_at is the ordering value enrich sets (docs/ingestion/github-webhooks.md, Ordering value).
 EXPECTED holds the graph they load to, counted by hand from the rows below by the rules in
-docs/pipeline/neo4j-load-check.md (GitHub), not by running the mapper.
+docs/pipeline/load-check.md (GitHub), not by running the mapper.
 """
 
 from __future__ import annotations

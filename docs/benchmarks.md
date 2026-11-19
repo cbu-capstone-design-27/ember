@@ -16,9 +16,7 @@ cd services/pipeline
 python -m benchmarks run --tenant brandon-dev --input ../../data/raw/brandon-dev                       # both suites, in memory
 python -m benchmarks run --suite loading --tenant brandon-dev --input ../../data/raw/brandon-dev      # no model calls, no key
 python -m benchmarks run --suite retrieval --tenant brandon-dev --input ../../data/raw/brandon-dev    # retrieval only
-python -m benchmarks run --tenant brandon-dev --input ../../data/raw/brandon-dev --neo4j               # reset and reload the tenant in Neo4j first
 python -m benchmarks docs --tenant brandon-dev --input ../../data/raw/brandon-dev                      # list nodes to help write questions
-python -m benchmarks docs --tenant brandon-dev --neo4j                                                 # same, from an already loaded tenant
 ```
 
 What each command does:
@@ -26,14 +24,9 @@ What each command does:
 - `run` loads the raw connector JSONL with the loader (the same code as `python -m loader`), runs the
   chosen suites, prints a summary and saves one JSON file per suite. `--suite` is `loading`,
   `retrieval` or `all` (the default).
-- `run` without `--neo4j` works in memory: no database is needed. With `--neo4j` it **resets that
-  tenant's subgraphs and reloads them** through the loader (other tenants are not touched). It reads
-  `NEO4J_URI` (default `bolt://localhost:7687`), `NEO4J_USER` (default `neo4j`) and `NEO4J_PASSWORD`
-  (required) from the environment or `.env`.
+- `run` works in memory: no database is needed.
 - `docs` prints one line per embeddable node: its ref, a tab, and the first 100 characters of its
-  text. It makes no model calls and needs no key. Without `--neo4j` it loads `--input` in memory.
-  With `--neo4j` it is **read-only**: it lists the nodes of a tenant that is already loaded, never
-  resets or writes anything, and `--input` is optional (it is only required in the other modes).
+  text. It makes no model calls and needs no key. It loads `--input` in memory.
 - `--spec` and `--questions` point at other expectation or question files. The defaults are
   `benchmarks/data/loading_<tenant>.json` and `benchmarks/data/questions_<tenant>.json`.
 - `--profile` picks the model profile (default: `MODEL_PROFILE`, which is `local-spark` in
@@ -47,8 +40,8 @@ Spark's embedding service (`docs/adr/0008-local-llm-on-the-spark.md`); with `ope
 a few hundred nodes and needs `OPENAI_API_KEY` (`docs/adr/0007-cloud-llm-and-embedding.md`). With a missing key the
 command stops before loading anything. The loading suite makes no model calls.
 
-Search runs in memory over the nodes' text and the vectors the embed step produced. Neo4j's own
-full-text and vector indexes are not used yet (see Gaps).
+Search runs in memory over the nodes' text and the vectors the embed step produced. The Postgres
+graph's full-text and vector indexes are not used yet (see Gaps).
 
 ### Results and exit codes
 
@@ -194,9 +187,6 @@ quote `all` as an overall percent.
 
 Also:
 
-- Optionally rerun with `--neo4j` to confirm the numbers match the in-memory run. This is the only
-  real test of the Neo4j snapshot query. The benchmark reads the `NEO4J_*` environment variables, so
-  a run against the cluster needs them set in the shell (Tailscale up, the password from `.env`).
 - Never delete failing checks or questions to reach 100%. Record them as gaps.
 
 | Suite | Result | Date | Data version | Models |
@@ -226,8 +216,9 @@ Not measured yet, in rough order of value:
    example `openai-dev`). Scores from different models are shown side by side, never merged.
    Note that a graph holds vectors from one embedding model only, so a different embedding model
    means re-embedding the tenant.
-5. **Neo4j-native search.** Rerun hybrid retrieval with Neo4j's full-text and vector indexes and
-   compare with the in-memory numbers, to check the product path and not only the method.
+5. **Postgres-native search.** Rerun hybrid retrieval with the graph tables' full-text and HNSW
+   indexes (through the Graphiti fork, as the MCP server searches) and compare with the in-memory
+   numbers, to check the product path and not only the method.
 6. **A bigger question set.** The first set is small and written by the team. Synthetic data from
    EMBER-43, and a list of true Slack-thread-to-issue links from Ryan, would widen it and add
    cross-source questions.

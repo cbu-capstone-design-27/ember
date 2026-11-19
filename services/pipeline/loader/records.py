@@ -12,6 +12,10 @@ from typing import Any
 UUID_NAMESPACE = uuid.UUID("6f1c2b4e-0a1d-4c53-9d57-3f4f0f8c2a10")
 
 
+# What a deleted node keeps: its keys and the delete flag (plus occurred_at). Every writer clears the rest.
+TOMBSTONE_KEYS = ("group_id", "uuid", "source", "external_id", "kind", "deleted")
+
+
 def node_uuid(group_id: str, label: str, key: str) -> str:
     return str(uuid.uuid5(UUID_NAMESPACE, f"{group_id}|{label}|{key}"))
 
@@ -23,7 +27,7 @@ def episode_uuid(key: str) -> str:
 
 def ordering_time(value: datetime) -> str:
     """A source time as the fixed-width UTC string stored on nodes and edges, so that comparing two
-    of them as strings, which Neo4j does, orders them by time."""
+    of them as strings orders them by time."""
     if value.tzinfo is None:
         raise ValueError("ordering times must be timezone-aware")
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")

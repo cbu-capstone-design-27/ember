@@ -123,8 +123,7 @@ def render_summary(reference: dict) -> str:
         + (", **stopped early**" if ingest["stopped_early"] else "") + ".",
         f"- Indexes: {compat['indexes_online']} online, {compat['indexes_not_online']} not online."
         + (f" Build error: {compat['index_build_error']}" if compat["index_build_error"] else ""),
-        f"- Server notifications: {len(compat['notifications'])}. Subgraph-crossing edges: "
-        f"{comparable['isolation']['crossing_edges']}.", "",
+        f"- Graph-crossing edges: {comparable['isolation']['crossing_edges']}.", "",
         "## Cost per episode", "",
         "| Measure | median | min | max | total |", "| --- | ---: | ---: | ---: | ---: |"]
     for key in ("wall_s", "llm_calls", "llm_requests", "llm_input_tokens", "llm_output_tokens",

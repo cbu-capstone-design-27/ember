@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from ontology import EDGE_TYPE_MAP, EDGE_TYPES, ENTITY_TYPES, subgraph_id
+from ontology import EDGE_TYPE_MAP, EDGE_TYPES, ENTITY_TYPES
 
 from .data import Row, render
 from .metrics import Counters, delta
@@ -64,7 +64,7 @@ def classify(exc: BaseException) -> str:
         return "structured_output"
     if names & {"APITimeoutError", "APIConnectionError", "InternalServerError", "TimeoutError", "ConnectionError"}:
         return "transient"
-    if module == "neo4j":
+    if module == "asyncpg" or "CypherNotSupportedError" in names:  # the fork's sign of a missing Postgres hook
         return "graph_database"
     return "other"
 
@@ -85,14 +85,15 @@ def describe_error(exc: BaseException, secrets: tuple[str, ...] = ()) -> str:
     return redact(str(exc), secrets)[:500]
 
 
-async def ingest(graphiti, rows: list[Row], tenant: str, ledger: Ledger, counters: Counters,
+async def ingest(graphiti, rows: list[Row], groups: dict[str, str], ledger: Ledger, counters: Counters,
                  episode_type: Callable[[str], object], existing: set[str], secrets: tuple[str, ...] = ()) -> dict:
-    """Adds every row the ledger and the graph do not already hold. Failed rows are retried on the next run."""
+    """Adds every row the ledger and the graph do not already hold, into its source's graph (`groups`: source to
+    Graphiti group_id). Failed rows are retried on the next run."""
     newest: dict[str, str] = {}
     for row in rows:
         entry = ledger.entries.get(row.name)
         if entry and entry["status"] in DONE:
-            group = subgraph_id(tenant, row.source)
+            group = groups[row.source]
             newest[group] = max(newest.get(group, ""), row.occurred_at.isoformat())
 
     summary = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "out_of_order": 0, "stopped_early": False}
@@ -108,10 +109,10 @@ async def ingest(graphiti, rows: list[Row], tenant: str, ledger: Ledger, counter
             summary["skipped"] += 1
             continue
 
-        group = subgraph_id(tenant, row.source)
+        group = groups[row.source]
         if row.occurred_at.isoformat() < newest.get(group, ""):
             summary["out_of_order"] += 1
-            log.warning("%s is older than what this subgraph already holds: a grown --limit on an existing graph "
+            log.warning("%s is older than what this graph already holds: a grown --limit on an existing graph "
                         "applies changes out of the source's order. Use a fresh graph for a reference.", row.name)
         newest[group] = max(newest.get(group, ""), row.occurred_at.isoformat())
 

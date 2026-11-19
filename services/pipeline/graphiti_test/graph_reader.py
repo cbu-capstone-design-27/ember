@@ -1,11 +1,13 @@
-"""Everything the harness reads straight from the graph. All its Cypher is here.
+"""Everything the harness reads straight from the graph, in SQL over Ember's graph tables. Search goes through Graphiti.
 
-Search goes through Graphiti, so the Postgres fork runs that part unchanged. These reads do not: the fork needs its
-own reader with the same methods, returning the same shapes.
+The fork maps Graphiti's models onto the tables (graphiti_core/driver/postgres/sql.py): an Entity is a graph.nodes row
+whose label is its one declared type and whose props are its attributes, a RELATES_TO edge is a graph.edges row whose
+type is its name, an Episodic node is an episodes row, and MENTIONS is graph.mentions. group_id is graph.graphs.group_id.
 """
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 
 from ontology import EDGE_TYPE_MAP, ENTITY_TYPES
@@ -15,65 +17,79 @@ from .data import record_of
 RESEND_SUFFIX = "#resend"  # the resend check's episode; never counted as a record
 REQUIRED_SOURCE_REF = ("source", "kind", "external_id")
 
+# The graph ids behind a list of group_ids ($1)
+GRAPH_IDS = "(select id from graph.graphs where group_id = any($1::text[]))"
+
 
 def _iso(value) -> str | None:
-    return value.iso_format() if hasattr(value, "iso_format") else (value.isoformat() if value else None)
+    return value.isoformat() if value else None
 
 
 class GraphReader:
     def __init__(self, driver) -> None:
         self.driver = driver
 
-    async def _rows(self, cypher: str, **params) -> list[dict]:
-        records, _, _ = await self.driver.execute_query(cypher, params=params)
-        return [dict(r) for r in records]
+    async def _rows(self, sql: str, *params) -> list[dict]:
+        async with self.driver.connection() as conn:
+            return [dict(r) for r in await conn.fetch(sql, *params)]
 
     async def server(self) -> dict:
-        rows = await self._rows("CALL dbms.components() YIELD name, versions, edition "
-                                "RETURN name, versions[0] AS version, edition")
-        # 5.26 has one row. 2026.x has more (the Cypher versions too).
-        return next((r for r in rows if r["name"] == "Neo4j Kernel"), rows[0])
+        [row] = await self._rows(
+            "select 'PostgreSQL' as name, current_setting('server_version') as version, "
+            "'pgvector ' || (select extversion from pg_extension where extname = 'vector') as edition")
+        return row
 
     async def indexes(self) -> list[dict]:
-        rows = await self._rows("SHOW INDEXES YIELD name, type, state RETURN name, type, state ORDER BY name")
-        return rows
+        """The graph tables' indexes. The migrations own them; ONLINE means valid and ready."""
+        return await self._rows(
+            "select c.relname as name, am.amname as type, "
+            "case when i.indisvalid and i.indisready then 'ONLINE' else 'NOT ONLINE' end as state "
+            "from pg_index i join pg_class c on c.oid = i.indexrelid join pg_am am on am.oid = c.relam "
+            "join pg_class t on t.oid = i.indrelid join pg_namespace n on n.oid = t.relnamespace "
+            "where n.nspname = 'graph' or (n.nspname = 'public' and t.relname = 'episodes') order by name")
 
     async def reset(self, groups: list[str]) -> None:
-        await self._rows("MATCH (n) WHERE n.group_id IN $groups DETACH DELETE n", groups=groups)
+        """Empty the harness's graphs and keep their rows, so group_ids stay the same. Edges and mentions cascade."""
+        async with self.driver.connection() as conn:
+            await conn.execute(f"delete from graph.nodes where graph_id in {GRAPH_IDS}", groups)
+            await conn.execute(f"delete from graph.edges where graph_id in {GRAPH_IDS}", groups)
+            await conn.execute(f"delete from episodes where graph_id in {GRAPH_IDS}", groups)
 
     async def episode_names(self, groups: list[str]) -> set[str]:
-        rows = await self._rows("MATCH (e:Episodic) WHERE e.group_id IN $groups RETURN e.name AS name", groups=groups)
+        rows = await self._rows(f"select name from episodes where graph_id in {GRAPH_IDS}", groups)
         return {r["name"] for r in rows}
 
     async def node_names(self, uuids: list[str]) -> dict[str, str]:
-        rows = await self._rows("MATCH (n:Entity) WHERE n.uuid IN $uuids RETURN n.uuid AS uuid, n.name AS name",
-                                uuids=uuids)
+        rows = await self._rows("select uuid::text as uuid, name from graph.nodes where uuid = any($1::uuid[])", uuids)
         return {r["uuid"]: r["name"] for r in rows}
 
     async def records_of_episodes(self, uuids: list[str]) -> dict[str, str]:
-        rows = await self._rows("MATCH (e:Episodic) WHERE e.uuid IN $uuids RETURN e.uuid AS uuid, e.name AS name",
-                                uuids=uuids)
+        rows = await self._rows("select uuid::text as uuid, name from episodes where uuid = any($1::uuid[])", uuids)
         return {r["uuid"]: record_of(r["name"].removesuffix(RESEND_SUFFIX)) for r in rows}
 
     async def records_mentioning(self, node_uuids: list[str]) -> dict[str, list[str]]:
         rows = await self._rows(
-            "MATCH (e:Episodic)-[:MENTIONS]->(n:Entity) WHERE n.uuid IN $uuids "
-            "WITH n, e ORDER BY e.valid_at, e.name "
-            "RETURN n.uuid AS uuid, collect(e.name) AS names", uuids=node_uuids)
+            "select n.uuid::text as uuid, array_agg(e.name order by e.occurred_at, e.name) as names "
+            "from graph.mentions m join graph.nodes n on n.id = m.node_id join episodes e on e.id = m.episode_id "
+            "where n.uuid = any($1::uuid[]) group by n.uuid", node_uuids)
         return {r["uuid"]: [record_of(n.removesuffix(RESEND_SUFFIX)) for n in r["names"]] for r in rows}
 
     async def group_report(self, group: str) -> dict:
-        """What landed in one subgraph, and how well it fits the ontology (ADR 0002 criteria 1 and 5)."""
-        nodes = await self._rows("MATCH (n:Entity {group_id: $g}) RETURN labels(n) AS labels, keys(n) AS keys", g=group)
+        """What landed in one graph, and how well it fits the ontology (ADR 0002 criteria 1 and 5)."""
+        graph = "(select id from graph.graphs where group_id = $1)"
+        nodes = await self._rows(
+            "select array['Entity', label] as labels, array(select jsonb_object_keys(props)) as keys "
+            f"from graph.nodes where graph_id = {graph}", group)
         edges = await self._rows(
-            "MATCH (a:Entity)-[r:RELATES_TO {group_id: $g}]->(b:Entity) "
-            "RETURN r.name AS name, labels(a) AS source, labels(b) AS target", g=group)
+            "select e.type as name, array['Entity', a.label] as source, array['Entity', b.label] as target "
+            "from graph.edges e join graph.nodes a on a.id = e.src join graph.nodes b on b.id = e.dst "
+            f"where e.graph_id = {graph}", group)
         [episodes] = await self._rows(
-            "MATCH (e:Episodic {group_id: $g}) WHERE NOT e.name ENDS WITH $suffix RETURN count(e) AS n",
-            g=group, suffix=RESEND_SUFFIX)
+            f"select count(*) as n from episodes where graph_id = {graph} and name not like '%' || $2", group,
+            RESEND_SUFFIX)
         [mentions] = await self._rows(
-            "MATCH (e:Episodic {group_id: $g})-[r:MENTIONS]->() WHERE NOT e.name ENDS WITH $suffix RETURN count(r) AS n",
-            g=group, suffix=RESEND_SUFFIX)
+            "select count(*) as n from graph.mentions m join episodes e on e.id = m.episode_id "
+            f"where e.graph_id = {graph} and e.name not like '%' || $2", group, RESEND_SUFFIX)
 
         by_label, missing_source_ref = Counter(), Counter()
         for node in nodes:
@@ -99,22 +115,26 @@ class GraphReader:
         }
 
     async def crossing_edges(self, groups: list[str]) -> int:
-        """EMBER-86's subgraph-isolation shape: edges joining two subgraphs. Must be 0."""
+        """EMBER-86's subgraph-isolation shape: edges joining two graphs. Must be 0."""
         [row] = await self._rows(
-            "MATCH (a)-[r]->(b) WHERE a.group_id IN $groups AND b.group_id IS NOT NULL AND a.group_id <> b.group_id "
-            "RETURN count(r) AS n", groups=groups)
+            "select count(*) as n from graph.edges e join graph.nodes a on a.id = e.src "
+            f"join graph.nodes b on b.id = e.dst where a.graph_id in {GRAPH_IDS} and a.graph_id <> b.graph_id",
+            groups)
         return row["n"]
 
     async def invalidated(self, groups: list[str]) -> list[dict]:
         """Every fact Graphiti has ended, oldest first."""
         rows = await self._rows(
-            "MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity) WHERE r.group_id IN $groups "
-            "AND (r.invalid_at IS NOT NULL OR r.expired_at IS NOT NULL) "
-            "RETURN a.name AS source, r.name AS type, b.name AS target, r.fact AS fact, r.group_id AS group_id, "
-            "r.valid_at AS valid_at, r.invalid_at AS invalid_at, r.episodes AS episodes "
-            "ORDER BY r.valid_at, r.fact", groups=groups)
+            "select a.name as source, e.type, b.name as target, e.fact, g.group_id, e.valid_at, e.invalid_at, "
+            "coalesce(e.props->'episodes', jsonb_build_array(ep.uuid::text)) as episodes "
+            "from graph.edges e join graph.graphs g on g.id = e.graph_id "
+            "join graph.nodes a on a.id = e.src join graph.nodes b on b.id = e.dst "
+            "left join episodes ep on ep.id = e.episode_id "
+            "where g.group_id = any($1::text[]) and (e.invalid_at is not null or e.expired_at is not null) "
+            "order by e.valid_at, e.fact", groups)
         for row in rows:
             row["valid_at"], row["invalid_at"] = _iso(row["valid_at"]), _iso(row["invalid_at"])
-            names = await self.records_of_episodes(row.pop("episodes") or [])
+            episodes = [u for u in json.loads(row.pop("episodes") or "[]") if u]
+            names = await self.records_of_episodes(episodes)
             row["records"] = sorted(names.values())
         return rows

@@ -5,7 +5,6 @@ import json
 import os
 import tempfile
 import unittest
-from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from unittest import mock
@@ -18,8 +17,7 @@ from loader.embed import embed_graph
 from loader.memory_writer import MemoryWriter
 from loader.run import run
 from loader.testdata import write_sample
-from models.config import Profile, load_profile
-from models.identity import identity_for
+from models.config import Profile
 from ontology import tenant_subgraphs
 
 DATA = Path(__file__).parent / "data"
@@ -243,34 +241,6 @@ class CliTests(unittest.TestCase):
                         self.assertNotIn("Traceback", err)
                 loader.assert_not_called()
 
-    def test_neo4j_embedding_mismatch_exits_one_before_the_tenant_is_reset(self):
-        calls = []
-
-        class RecordingWriter(MemoryWriter):
-            def read_embedding_identity(self):
-                return replace(identity_for(load_profile("openai-dev")), model="some-other-model")
-
-            def reset(self, *args, **kwargs):
-                calls.append("reset")
-                return super().reset(*args, **kwargs)
-
-        class ForbiddenClient:
-            def __init__(self, profile):
-                pass
-
-            def embed(self, texts, **kwargs):
-                raise AssertionError("nothing may be embedded")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            write_sample(Path(tmp) / "raw", include_bad=False)
-            with mock.patch("benchmarks.__main__._writer", return_value=RecordingWriter()), \
-                    mock.patch("benchmarks.__main__.run_loader") as loader:
-                code, _, err = self._run_cli(tmp, "--neo4j", suite="retrieval", client=ForbiddenClient, env=KEY_ENV)
-        self.assertEqual(code, 1, err)
-        self.assertIn("embedding identity mismatch", err)
-        loader.assert_not_called()
-        self.assertEqual(calls, [])
-
     def test_unknown_answer_refs_exit_two_before_any_embedding(self):
         calls = []
 
@@ -293,40 +263,6 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("github:acme/widget#9999", err)
         self.assertEqual(calls, [])
-
-    def test_docs_with_neo4j_only_reads_and_never_resets_or_loads(self):
-        class ReadOnlyWriter:
-            closed = False
-
-            def embed_candidates(self, group_ids):
-                return [{"label": "WorkItem", "uuid": "u", "group_id": group_ids[0], "key": "acme/widget#1",
-                         "text": "Existing  node", "hash": None, "vector": None}]
-
-            def close(self):
-                self.closed = True
-
-            def __getattr__(self, name):  # reset, write_nodes, ensure_schema, ...
-                raise AssertionError(f"docs must not call {name}")
-
-        writer = ReadOnlyWriter()
-        out = io.StringIO()
-        with mock.patch.dict(os.environ, {}, clear=True), \
-                mock.patch("benchmarks.__main__._writer", return_value=writer), \
-                mock.patch("benchmarks.__main__.run_loader") as loader, contextlib.redirect_stdout(out):
-            code = main(["docs", "--tenant", "brandon-dev", "--neo4j", "--no-dotenv"])
-        self.assertEqual(code, 0)
-        loader.assert_not_called()
-        self.assertTrue(writer.closed)
-        self.assertIn("github:acme/widget#1\tExisting node", out.getvalue())
-
-    def test_run_with_neo4j_resets_the_tenant_through_the_loader(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            write_sample(Path(tmp) / "raw", include_bad=False)
-            with mock.patch("benchmarks.__main__._writer", return_value=MemoryWriter()), \
-                    mock.patch("benchmarks.__main__.run_loader", wraps=run) as loader:
-                code, _, err = self._run_cli(tmp, "--neo4j")
-        self.assertEqual(code, 0, err)
-        self.assertIs(loader.call_args.kwargs["reset"], True)
 
     def test_failed_loading_check_exits_one_after_saving_the_result(self):
         with tempfile.TemporaryDirectory() as tmp:

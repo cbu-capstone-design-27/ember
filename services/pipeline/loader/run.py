@@ -5,10 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from models.client import ModelError
-from models.config import ConfigError
 from ontology import tenant_subgraphs
-from ontology.config import EmbeddingMismatch
 
 from .check import check_graph
 from .conform import validate_mapped
@@ -50,7 +47,7 @@ def _envelope_problem(envelope) -> str | None:
     return None
 
 
-def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False, embedder=None) -> Report:
+def run(tenant: str, root: Path, writer, rejects_path: Path) -> Report:
     report = Report(rejects_path=str(rejects_path))
     group_ids = tenant_subgraphs(tenant)  # also validates the tenant name
     if not Path(root).is_dir():
@@ -111,18 +108,11 @@ def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False
             if existing is not edge:
                 _merge_props(existing.props, edge.props)
 
-    # Written before the database is touched, so a Neo4j failure still leaves the rejects on disk.
+    # Written before the graph is, so a writer failure still leaves the rejects on disk.
     if rejects:
         Path(rejects_path).parent.mkdir(parents=True, exist_ok=True)
         Path(rejects_path).write_text("\n".join(json.dumps(r) for r in rejects) + "\n", encoding="utf-8")
 
-    if reset and not nodes:
-        raise InputError("--reset refused: no nodes were mapped from the input, so nothing would be "
-                         "loaded after wiping the tenant; the database was not touched")
-
-    writer.ensure_schema()
-    if reset:
-        writer.reset(group_ids)
     report.nodes_written = writer.write_nodes(list(nodes.values()))
     report.edges_sent = len(edges)
     report.edges_written = writer.write_edges(list(edges.values()))  # merge hits only
@@ -131,14 +121,6 @@ def run(tenant: str, root: Path, writer, rejects_path: Path, reset: bool = False
             f"{report.edges_sent - report.edges_written} edges were not written because an endpoint "
             "is not in the graph (for example a link to a ticket outside the input)")
     report.warnings += sorted(set(ctx.warnings))
-
-    if embedder is not None:
-        # An embedding failure is reported, not raised: the graph above is already written and stays.
-        try:
-            report.embedded = embedder(writer, group_ids)
-        except (EmbeddingMismatch, ModelError, ConfigError) as exc:
-            report.embedding_error = f"embedding step failed: {exc}"
-            report.problems.append(report.embedding_error)
 
     facts = writer.read_facts(group_ids)
     report.node_counts = dict(facts.node_counts)

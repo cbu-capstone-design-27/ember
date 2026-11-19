@@ -60,7 +60,7 @@ Backfill / resync ──list channels, messages, replies, members──┘
                                                    ▼
                                   {"type":"teams","body":<raw Graph object>}
                                                    ▼
-                     Ingestion Router ──▶ Teams Source Pipeline ──▶ Neo4j Teams subgraph
+                     Ingestion Router ──▶ Teams Source Pipeline ──▶ Postgres Teams graph
 ```
 
 Teams needs one component Slack doesn't: a **subscription manager**. Slack keeps delivering events once the app is installed. Graph subscriptions expire after 3 days and can be removed at any time, so something must keep creating and renewing them for every channel. Details: [Architecture](#architecture).
@@ -273,7 +273,7 @@ flowchart LR
         RT["Ingestion Router"]
         SP["Teams Source Pipeline<br/>threads, filtering, attribution"]
     end
-    KG[(Neo4j<br/>Teams subgraph)]
+    KG[(Postgres graph<br/>Teams graph)]
     CFG[(Application DB<br/>tenant id, teams,<br/>subscriptions, clientState)]
 
     G -- "notification (ids)" --> RX

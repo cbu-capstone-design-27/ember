@@ -25,7 +25,7 @@ In the repo, `services/pipeline/loader` already has both later stages, on ADR 00
 - `extract` wakes on `NOTIFY source_records`, maps each row with EMBER-45's mappers, validates against the ontology, and writes one `episodes` row whose `attrs` holds the nodes and edges.
 - `load` wakes on `NOTIFY episodes`, takes one subgraph under `pg_try_advisory_xact_lock(hashtext('{tenant}_{source}'))`, applies up to 100 episodes in `occurred_at` order to Neo4j, and stamps `loaded_at`.
 
-It has run on photon and on a copy of the Parallax GitHub data ([`neo4j-load-check.md`](../pipeline/neo4j-load-check.md)). So "map `source_records` to the 9 node and 16 edge types" is written and tested. What is missing is a graph store that fits the rest of the system, time on edges, cross-source links, and retrieval over the graph.
+It has run on photon and on a copy of the Parallax GitHub data ([`load-check.md`](../pipeline/load-check.md)). So "map `source_records` to the 9 node and 16 edge types" is written and tested. What is missing is a graph store that fits the rest of the system, time on edges, cross-source links, and retrieval over the graph.
 
 ## Options
 
@@ -46,7 +46,7 @@ Graphiti as shipped has no Postgres backend, which is why Part 2 forks it: graph
 
 ### Benchmark
 
-Photon as `extract` maps it (1,140 nodes, 2,327 edges, 666 messages with vectors), copied once per tenant. The Parallax GitHub load had 2,391 nodes and about 11,000 edges ([`neo4j-load-check.md`](../pipeline/neo4j-load-check.md#github-the-parallax-repository-ember-107)), so one tenant is photon-to-Parallax size and 100 tenants is 114,000 nodes, 232,700 edges and 66,600 random 1024-dim vectors. Postgres 18.6 with pgvector 0.8.7 and AGE 1.8.0-rc0 in one scratch container, Neo4j 5.26.32 Community (the compose image) in another, on an Apple M3 Pro under Docker Desktop. Each query runs 30 times after one warm-up, from Python on the same host, with a random tenant and start node. All engines returned the same answers. Median / p95 ms:
+Photon as `extract` maps it (1,140 nodes, 2,327 edges, 666 messages with vectors), copied once per tenant. The Parallax GitHub load had 2,391 nodes and about 11,000 edges ([`load-check.md`](../pipeline/load-check.md#github-the-parallax-repository-ember-107)), so one tenant is photon-to-Parallax size and 100 tenants is 114,000 nodes, 232,700 edges and 66,600 random 1024-dim vectors. Postgres 18.6 with pgvector 0.8.7 and AGE 1.8.0-rc0 in one scratch container, Neo4j 5.26.32 Community (the compose image) in another, on an Apple M3 Pro under Docker Desktop. Each query runs 30 times after one warm-up, from Python on the same host, with a random tenant and start node. All engines returned the same answers. Median / p95 ms:
 
 | Query | Postgres tables, 1 / 100 tenants | AGE 1.8, 1 / 100 | Neo4j 5.26, 1 / 100 |
 |---|---|---|---|
@@ -151,7 +151,7 @@ These are the rules `neo4j_writer.py` already enforces, moved to SQL.
 - **Newest wins.** A node takes an episode's props only if `episode.occurred_at >= node.occurred_at`. An older episode only fills props the node lacks (`props = excluded.props || nodes.props`), and never touches a deleted node.
 - **Deletes.** A tombstone episode not older than the node sets `deleted = true`, clears `props`, `name`, `embed_text` and `embedding`, and sets `invalid_at` on every current edge of that node, with `invalidated_by` = the tombstone's episode. The node row stays, so a late older edit cannot bring it back.
 - **Placeholders.** An edge to a node not loaded yet creates the node with `placeholder = true` on its key. The node's own episode fills it in. Reads skip placeholders.
-- **Edges that disappear** ([gap 10](../pipeline/neo4j-load-check.md#gaps-in-the-ontology-and-mapping-with-suggested-tickets)). Each mapper declares which edge types around its record's main node the record lists in full, for example a PR's `TOUCHES` and `RESOLVES`, or an issue's `ASSIGNED_TO`. When a newer version of that object loads, current edges of those types missing from the new episode get `invalid_at = episode.occurred_at` and `invalidated_by = episode.id`. An older version never invalidates. Its fact is stored as already ended, at the `valid_at` of the newer fact that replaced it, which is what Graphiti's `_apply_temporal_invalidation` does. Edge `uuid`s are deterministic, so applying an episode twice changes nothing.
+- **Edges that disappear** ([gap 10](../pipeline/load-check.md#gaps-in-the-ontology-and-mapping-with-suggested-tickets)). Each mapper declares which edge types around its record's main node the record lists in full, for example a PR's `TOUCHES` and `RESOLVES`, or an issue's `ASSIGNED_TO`. When a newer version of that object loads, current edges of those types missing from the new episode get `invalid_at = episode.occurred_at` and `invalidated_by = episode.id`. An older version never invalidates. Its fact is stored as already ended, at the `valid_at` of the newer fact that replaced it, which is what Graphiti's `_apply_temporal_invalidation` does. Edge `uuid`s are deterministic, so applying an episode twice changes nothing.
 - **Re-extraction.** Bumping `EXTRACTOR_VERSION` re-extracts and clears `loaded_at`. Load then sets `expired_at = now()` on the edges whose `episode_id` it replaces and inserts the new ones, so a corrected mapping is visible as a correction and not as a change in the source.
 
 ### Time: what was true when, and why it changed
@@ -402,9 +402,9 @@ seed + extract 0.51 s (1289 records, 0 skipped), load 7.39 s (1289 episodes), st
 **Also learned:**
 
 - The late-arrival rule was too weak. See [Backfill and replay](#backfill-and-replay).
-- Remote links need a mapper too ([gap 2](../pipeline/neo4j-load-check.md#gaps-in-the-ontology-and-mapping-with-suggested-tickets)), or nothing joins a ticket to Slack. `gap_episode` adds this as well. The 145 `Change` nodes stay placeholders because photon has no GitHub subgraph.
+- Remote links need a mapper too ([gap 2](../pipeline/load-check.md#gaps-in-the-ontology-and-mapping-with-suggested-tickets)), or nothing joins a ticket to Slack. `gap_episode` adds this as well. The 145 `Change` nodes stay placeholders because photon has no GitHub subgraph.
 - Jira comment nodes carry no URL and photon's Slack messages have no permalink. The comment's URL came from its `source_records` row through the episode, which shows provenance works. The Slack row can only give its channel and timestamp.
-- `SAME_AS` produced 0 edges. Photon's Slack people have no email ([gap 4](../pipeline/neo4j-load-check.md#gaps-in-the-ontology-and-mapping-with-suggested-tickets)), so people matching is still untested on real data.
+- `SAME_AS` produced 0 edges. Photon's Slack people have no email ([gap 4](../pipeline/load-check.md#gaps-in-the-ontology-and-mapping-with-suggested-tickets)), so people matching is still untested on real data.
 - The DDL ran as written, including the generated `tsvector` columns and the partial unique index.
 
 **What it did not test:** search, the Graphiti fork or its driver, LLM extraction, and concurrent writers. The load took 7.4 s for 1,289 episodes, one statement per row, so it says nothing about batched write speed.

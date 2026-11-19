@@ -1,7 +1,7 @@
 import unittest
 
 from loader.check import check_graph
-from loader.facts import GraphFacts, expected_constraint_names, parse_schema_statements, SCHEMA_PATH
+from loader.facts import GraphFacts
 from loader.memory_writer import MemoryWriter
 from loader.records import EdgeRec, NodeRec
 
@@ -13,19 +13,10 @@ def item(key="a#1"):
 
 
 def facts(**overrides):
-    base = dict(labels={"WorkItem"}, relationships={}, constraints=expected_constraint_names(),
+    base = dict(labels={"WorkItem"}, relationships={},
                 missing_required={}, node_counts={"WorkItem": 1})
     base.update(overrides)
     return GraphFacts(**base)
-
-
-class SchemaParsingTests(unittest.TestCase):
-    def test_statements_and_names_come_from_schema_cypher(self):
-        statements = parse_schema_statements(SCHEMA_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(len(statements), 7)
-        self.assertTrue(all(s.startswith("CREATE CONSTRAINT") for s in statements))
-        self.assertEqual(len(expected_constraint_names()), 7)
-        self.assertIn("workitem_source_key", expected_constraint_names())
 
 
 class CheckGraphTests(unittest.TestCase):
@@ -37,14 +28,12 @@ class CheckGraphTests(unittest.TestCase):
         problems = check_graph(facts(
             labels={"WorkItem", "Ticket"},
             relationships={("WorkItem", "AUTHORED", "Person"): 2, ("Person", "LIKES", "WorkItem"): 1},
-            constraints=set(),
             missing_required={"WorkItem": 4},
         ))
         text = "\n".join(problems)
         self.assertIn("unexpected node label Ticket", text)
         self.assertIn("AUTHORED not allowed from WorkItem to Person (2 found)", text)
         self.assertIn("unknown relationship type LIKES", text)
-        self.assertIn("missing constraint workitem_source_key", text)
         self.assertIn("4 WorkItem nodes are missing source, kind or external_id", text)
 
 

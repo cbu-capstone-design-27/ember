@@ -38,7 +38,7 @@ flowchart LR
   M --> A["Claude Code, Codex,<br/>Cursor"]
 ```
 
-Intake is the one webhook listener for every source. It verifies each delivery, stores it as it arrived and answers right away. A worker per source then enriches the delivery, fetching only what the payload lacks, and writes a `source_records` row. The embed worker adds a vector to each row, and the MCP server searches those vectors. Postgres holds every hand-off, so each stage can be stopped, replayed or replaced on its own. Extracting a typed knowledge graph into Neo4j is the next stage.
+Intake is the one webhook listener for every source. It verifies each delivery, stores it as it arrived and answers right away. A worker per source then enriches the delivery, fetching only what the payload lacks, and writes a `source_records` row. The embed worker adds a vector to each row, and the MCP server searches those vectors. Postgres holds every hand-off, so each stage can be stopped, replayed or replaced on its own. The extract and load workers (`services/pipeline`) build a typed knowledge graph from those rows in Postgres's `graph` tables, which the MCP server reads through Ember's Graphiti fork ([ADR 0013](docs/adr/0013-postgres-only-graph-store.md)). They don't run on the cluster yet.
 
 The full design is in [`docs/ingestion/architecture.md`](docs/ingestion/architecture.md) and [ADR 0004](docs/adr/0004-ingestion-architecture.md).
 

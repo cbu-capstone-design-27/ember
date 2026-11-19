@@ -5,8 +5,9 @@
 
 Stdlib only, and it imports nothing from the loader on purpose: the numbers come from counting the
 intake envelopes (jira-intake.jsonl, slack-intake.jsonl) by the rules in docs/graph-schema.md and
-docs/pipeline/neo4j-load-check.md, and the answers to the sample queries come from the people-readable
-transcripts (jira.md, slack.md). So the loader's output is checked against something it did not produce.
+docs/pipeline/load-check.md. The sample questions the EMBER-146 harness asks (`graphiti_test/data.py`) and their
+answers come from the people-readable transcripts (jira.md, slack.md). So the loader's output is checked against
+something it did not produce.
 
 Counting rules (what one Jira issue, Jira comment or Slack message becomes):
 
@@ -193,8 +194,6 @@ def build() -> dict:
             "id": "comment-authors",
             "question": f"Who commented on {comment_issue}?",
             "source": f"jira.md, section {comment_issue}: the '> **Name** date PT:' comment lines",
-            "cypher": "MATCH (p:Person)-[:AUTHORED]->(:Message)-[:REFERENCES]->(w:WorkItem {group_id: $jira, external_id: $issue}) "
-                      "WHERE p.group_id = $jira RETURN DISTINCT p.name AS person ORDER BY person",
             "params": {"issue": comment_issue},
             "expect": [{"person": name} for name in jira_comment_authors(comment_issue)],
         },
@@ -202,19 +201,13 @@ def build() -> dict:
             "id": "thread-messages",
             "question": f"Which messages are in the #photon-bugs thread that starts '{posts[0][1][:30]}...', and who sent them?",
             "source": "slack.md, section #photon-bugs: the parent line and its indented replies",
-            "cypher": "MATCH (m:Message {group_id: $slack})-[:PART_OF]->(c:Conversation {group_id: $slack, external_id: $thread}) "
-                      "MATCH (i:Identity {group_id: $slack})-[:RESOLVES_TO]->(:Person)-[:AUTHORED]->(m) "
-                      "RETURN i.external_id AS sender, m.embed_text AS text ORDER BY m.created_at, m.external_id",
             "params": {"thread": thread_key},
             "expect": [{"sender": members[name], "text": body} for name, body in posts],
-            "ordered": True,
         },
         {
             "id": "issues-linked-to",
             "question": f"Which issues are linked to {related_to} ('relates to')?",
             "source": f"jira.md: '- relates to' lines of {related_to} and of the issues naming it",
-            "cypher": "MATCH (a:WorkItem {group_id: $jira})-[:RELATES_TO]-(b:WorkItem {group_id: $jira, external_id: $issue}) "
-                      "RETURN DISTINCT a.external_id AS issue ORDER BY issue",
             "params": {"issue": related_to},
             "expect": [{"issue": key} for key in jira_related(related_to)],
         },
@@ -222,10 +215,6 @@ def build() -> dict:
             "id": "issue-state",
             "question": f"What are {status_issue}'s type and status, and how many issues are in each status?",
             "source": f"jira.md: the '{type_}, {status}' line of {status_issue}, and the status line of every issue",
-            "cypher": "MATCH (w:WorkItem {group_id: $jira}) "
-                      "RETURN w.status AS status, count(*) AS issues, "
-                      "collect(CASE WHEN w.external_id = $issue THEN w.item_type END)[0] AS type_of_issue "
-                      "ORDER BY status",
             "params": {"issue": status_issue},
             "expect": [{"status": s, "issues": n, "type_of_issue": type_ if s == status else None}
                        for s, n in jira_status_totals().items()],
@@ -235,11 +224,6 @@ def build() -> dict:
             "question": "Does anything cross from the Jira subgraph into the Slack one?",
             "source": "the data: Jira and Slack records are loaded into their own subgraphs, so no edge may join them "
                       "and each node's source must match its subgraph",
-            "cypher": "MATCH (n) WHERE n.group_id IN [$jira, $slack] "
-                      "WITH n.group_id AS grp, collect(DISTINCT n.source) AS sources, count(*) AS nodes "
-                      "CALL { MATCH (a)-[r]->(b) WHERE a.group_id IN [$jira, $slack] AND a.group_id <> b.group_id "
-                      "RETURN count(r) AS crossing } "
-                      "RETURN grp, sources, nodes, crossing ORDER BY grp",
             "params": {},
             "expect": [{"grp": "{tenant}_jira", "sources": ["jira"], "nodes": None, "crossing": 0},
                        {"grp": "{tenant}_slack", "sources": ["slack"], "nodes": None, "crossing": 0}],

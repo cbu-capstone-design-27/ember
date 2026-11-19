@@ -68,7 +68,7 @@ Slack Web API ◀──bot token── Ingestion Worker: pull_test.py backfill
                               {"type":"slack","body":<raw>}
                                               │
                                               ▼
-                     Ingestion Router ──▶ Slack Source Pipeline (EMBER-7) ──▶ Neo4j Slack subgraph
+                     Ingestion Router ──▶ Slack Source Pipeline (EMBER-7) ──▶ Postgres Slack graph
 ```
 
 - **Live path:**
@@ -101,7 +101,7 @@ Details: [Handoff to the pipeline](#handoff-to-the-pipeline).
 
 ## Why Slack matters to Ember
 
-Slack is where a team argues its way to a decision: "why Neo4j?", "we're dropping X", "ship Friday". The proposal's example answer ("your manager chose DI in a Teams meeting…") only works if chat is captured. Most messages carry no durable context, so the hard part is **filtering** (finding threads where a decision is made, attributing statements to people, collapsing a thread into one record). That lives downstream in the Slack source pipeline. This document covers everything before it: how raw Slack data reaches the pipeline, complete and unmodified.
+Slack is where a team argues its way to a decision: "why Postgres?", "we're dropping X", "ship Friday". The proposal's example answer ("your manager chose DI in a Teams meeting…") only works if chat is captured. Most messages carry no durable context, so the hard part is **filtering** (finding threads where a decision is made, attributing statements to people, collapsing a thread into one record). That lives downstream in the Slack source pipeline. This document covers everything before it: how raw Slack data reaches the pipeline, complete and unmodified.
 
 ## Requirements
 
@@ -317,7 +317,7 @@ flowchart LR
         RT["Ingestion Router<br/>routes by type"]
         SP["Slack Source Pipeline<br/>threads, filtering, attribution<br/>(EMBER-7)"]
     end
-    KG[(Neo4j<br/>Slack subgraph)]
+    KG[(Postgres graph<br/>Slack graph)]
     CFG[(Application DB<br/>integration settings)]
 
     EV -- "signed event_callback" --> RX
@@ -395,11 +395,11 @@ What happens to ingested Slack data when Ember's bot (the "agent") is removed. T
 
 ### Does purging hurt the database?
 
-**Purging a whole Slack connection: no.** This is the payoff of the per-source subgraph design (`group_id = <tenant>_slack`):
-- Everything from that Slack workspace is in one subgraph, and `clear_data` removes exactly that subgraph. The GitHub, Jira, GitLab and Teams subgraphs, the `EmberConfig` node, and the schema constraints are untouched.
-- The uniqueness keys `(group_id, source, external_id)` become free again, so a later reconnect and backfill works normally.
-- **Phase 2 caveat:** cross-source links (a Slack `Identity` → a shared `Person`, or a Slack message `REFERENCES` a Jira issue) are relationships, and `DETACH DELETE` removes them too. The other sources keep their own nodes; they just lose the Slack-side links. No dangling references are possible in Neo4j.
-- **Scale:** a large workspace should be deleted in batches (`CALL { … } IN TRANSACTIONS`) so one huge transaction doesn't stall the database. That's a performance concern, not a correctness one.
+**Purging a whole Slack connection: no.** This is the payoff of one graph per workspace (a `graph.graphs` row):
+- Everything from that Slack workspace is in one graph, and deleting its `graph.graphs` row removes exactly its nodes, edges and mentions (`on delete cascade`). The GitHub, Jira, GitLab and Teams graphs are untouched.
+- The keys `(graph_id, label, key)` go with it, so a later reconnect and backfill works normally.
+- **Phase 2 caveat:** link edges between graphs (a Slack `Identity` `SAME_AS` another source's, or a Slack message `REFERENCES` a Jira issue) point at nodes by foreign key, so they are deleted with the Slack nodes. The other sources keep their own nodes; they just lose the Slack-side links. No dangling references are possible.
+- **Scale:** a large workspace should be deleted in batches, so one huge transaction doesn't stall the database. That's a performance concern, not a correctness one.
 
 **Purging one channel while keeping the rest: yes, it can, unless the graph is built for it.** This isn't in the decision above, but it's the obvious next ask ("remove *that* channel's data"). Graphiti's built-in `remove_episode()` (checked against its source) gets this wrong in three ways:
 
@@ -409,7 +409,7 @@ What happens to ingested Slack data when Ember's bot (the "agent") is removed. T
 | **Leaked content** | Shared nodes (a `Person`, a `Decision`, a `Module`) survive if anything else mentions them, but their engine-written **summary** isn't rewritten | Sentences from the purged channel can live on inside a summary. That's a privacy failure. |
 | **Broken history** | A `Decision` made in the purged channel can be `SUPERSEDED` by one in a kept channel, or the reverse. Its `DECIDED_IN` evidence disappears. | "Why did we decide X?" chains get gaps, and retrieval may cite a decision whose source is gone |
 
-Neo4j itself stays consistent in every case: no corruption, no dangling edges. The damage is to **meaning**: lost knowledge, leaked text, broken history.
+Postgres itself stays consistent in every case: no corruption, no dangling edges. The damage is to **meaning**: lost knowledge, leaked text, broken history.
 
 ### Future: making per-channel purge safe (note for Brandon)
 
@@ -443,7 +443,7 @@ The ticket asks for a **source channel attribute** on nodes. That's necessary, b
 These need to be stated in the product and the docs, not discovered later:
 - **Answers already given:** agents (Claude Code, Codex, Cursor) may have received Ember answers built on the purged data. Those can't be recalled.
 - **Hosted LLM calls:** with "your API key" mode (architecture diagram, Extraction LLM), extraction prompts went to the model provider under their retention terms. The local model on the Spark avoids this.
-- **Backups:** Neo4j snapshots and volume backups (EMBER-30/32) keep purged data until they age out. The backup retention period is effectively the real purge deadline. Jacob should set and document it.
+- **Backups:** Postgres backups and volume backups (EMBER-30/32) keep purged data until they age out. The backup retention period is effectively the real purge deadline. Jacob should set and document it.
 
 ### Same pattern for other sources
 

@@ -208,9 +208,9 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/embed-venv"
           "$RUNNER_TEMP/embed-venv/bin/pip" install -q -r services/embed/requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/embed-venv/bin/python3" services/embed/test_embed.py
-      # EMBER-85: on the pg container and dbmate from "Postgres migrations match the ingestion doc". The
-      # writer is in memory here; the graph side runs against Neo4j when NEO4J_TEST_URI is set (README).
-      # test_pg_writer (EMBER-164) loads into the Postgres graph tables on the same container
+      # EMBER-85: on the pg container and dbmate from "Postgres migrations match the ingestion doc".
+      # test_pg_load checks the workers with an in-memory writer, and test_pg_writer (EMBER-164) loads into
+      # the Postgres graph tables on the same container
       - name: Pipeline loader against Postgres
         working-directory: services/pipeline
         env:
@@ -258,8 +258,8 @@ jobs:
       - name: Benchmark unit tests
         working-directory: services/pipeline
         run: python -m unittest discover -s benchmarks -t . -p "test_*.py" -v
-      # EMBER-146. Its own venv: graphiti-core stays out of the pipeline's requirements. Fake models and no database;
-      # the Neo4j tests stay opt-in through NEO4J_TEST_URI.
+      # EMBER-146. Its own venv: the Graphiti fork stays out of the pipeline's requirements. Fake models and no database;
+      # the Postgres tests stay opt-in through GRAPHITI_TEST_DATABASE_URL.
       - name: Graphiti test harness
         working-directory: services/pipeline
         run: |

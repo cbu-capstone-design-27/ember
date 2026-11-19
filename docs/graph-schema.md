@@ -1,16 +1,16 @@
 # Graph schema
 
-Jira: EMBER-34. Status: draft for the launch sources (GitHub, GitLab, Jira, Slack, Teams). The engine decision is in [ADR 0002](adr/0002-graph-engine-and-schema-approach.md) (Proposed). The definitions live in code at `services/pipeline/ontology/`; this document explains them, and a test checks that the fixtures map onto them.
+Jira: EMBER-34. Status: draft for the launch sources (GitHub, GitLab, Jira, Slack, Teams). The ontology's origin is [ADR 0002](adr/0002-graph-engine-and-schema-approach.md). The graph lives in Postgres only ([ADR 0013](adr/0013-postgres-only-graph-store.md)). The definitions live in code at `services/pipeline/ontology/`; this document explains them, and a test checks that the fixtures map onto them.
 
 ## Shape
 
-One subgraph per data source per tenant, all in the same Neo4j database. Every subgraph uses the same nine node types and sixteen relationship types. Source differences are attributes and a registry, not extra node types. A GitHub pull request and a GitLab merge request are both a `Change`; a Slack message and a Teams message are both a `Message`. Because the types are shared, merging subgraphs later (retrieval phase 2) joins on the same labels and ids and needs no translation between schemas.
+One subgraph per connected scope per tenant (a GitHub repo, a Jira project, a Slack workspace), all in Postgres's `graph` tables. Every subgraph uses the same nine node types and sixteen relationship types. Source differences are attributes and a registry, not extra node types. A GitHub pull request and a GitLab merge request are both a `Change`; a Slack message and a Teams message are both a `Message`. Because the types are shared, merging subgraphs later (retrieval phase 2) joins on the same labels and ids and needs no translation between schemas.
 
 Every source-backed node carries `source`, `kind`, `external_id` and `url`. `(group_id, source, external_id)` identifies it.
 
 ## Subgraphs
 
-Each subgraph is a Graphiti `group_id` of the form `<tenant>_<source>`, for example `acme_github` or `acme_slack`. `ontology.subgraph_id(tenant, source)` builds it. Tenant names use lowercase letters, digits and `-`, because `_` is the separator.
+Each subgraph is a `graph.graphs` row whose Graphiti `group_id` is `{tenant}_{source}_{id}`, for example `acme_github_12`. `ontology.graph_scope` picks the scope, and the writer creates the row. `ontology.subgraph_id(tenant, source)` (`<tenant>_<source>`) still names a tenant's source in the in-memory graph. Tenant names use lowercase letters, digits and `-`, because `_` is the separator.
 
 | Phase | What retrieval does | Graph work it needs |
 | --- | --- | --- |
@@ -114,7 +114,7 @@ Node and edge validity comes from the engine: each fact has `valid_at`, `invalid
 
 ## Embeddings and config
 
-The engine embeds entity names and fact text. The model and its settings are fixed by [ADR 0001](adr/0001-embedding-model.md). One `(:EmberConfig {key: 'embedding'})` node records the model id, revision, dimension, query template and schema version. The identity comes from the active model profile (`models.identity.identity_for`), not from a fixed constant. The loader's `--embed` step records it once, on the first successful embed, and `ontology/config.py` refuses any different identity afterwards; the fix for a mismatch is a full rebuild, not editing the node. `ontology.config.EXPECTED` (Qwen3-Embedding-0.6B) is only the identity of the `local-spark` profile. `EmberConfig` is per database, so on a shared database the first tenant to embed fixes the model for all tenants.
+The engine embeds entity names and fact text. The model and its settings are fixed by [ADR 0001](adr/0001-embedding-model.md): the embed worker writes `vector(1024)` columns and checks the endpoint's dimension when it starts. The benchmarks' in-memory embedding records the identity from the active model profile (`models.identity.identity_for`), and `ontology/config.py` refuses any different identity afterwards. `ontology.config.EXPECTED` (Qwen3-Embedding-0.6B) is only the identity of the `local-spark` profile.
 
 ## Extending
 
@@ -124,16 +124,13 @@ The engine embeds entity names and fact text. The model and its settings are fix
 - New core type: add a model to `entities.py` and edge rows. Do this only when a thing fits none of the nine.
 - Removing or renaming a type or attribute is a rebuild. Names must not collide with the engine's reserved fields; `test_ontology.py` checks this.
 
-## Loading into Neo4j
+## Loading into Postgres
 
-Once the cluster Neo4j is reachable:
+1. The dbmate migrations (`services/backend/migrations`) create `graph.graphs`, `graph.nodes`, `graph.edges` and `graph.mentions`. `unique (graph_id, label, key)` on `graph.nodes` keeps one node per key in a graph. Required attributes are enforced in code by the pydantic models.
+2. `python -m loader load` writes each episode's nodes and edges with `services/pipeline/loader/pg_writer.py`, in the transaction that stamps `episodes.loaded_at`.
+3. The embed worker (`services/embed`) fills `graph.nodes.embedding` and `graph.edges.fact_embedding`.
 
-1. Let the engine create its indexes (`build_indices_and_constraints()`).
-2. Apply `services/pipeline/ontology/schema.cypher`: uniqueness on `(group_id, source, external_id)` per source-backed type, and on `EmberConfig.key`. Neo4j Community supports uniqueness constraints but not existence or node-key constraints, so "required" attributes are enforced in code by the pydantic models. Apply these only after the ADR 0002 spike confirms custom attributes are stored as node properties. Checked on Neo4j 2026.09.0 Community, the cluster's version: 7 constraints are created, a re-run is a no-op, a duplicate `(group_id, source, external_id)` is rejected, and the same id in another subgraph is allowed.
-3. The `EmberConfig` node is written by the loader's first successful `--embed` run, from the active profile's identity (`models.identity.identity_for`); nothing writes it by hand.
-4. Start ingesting.
-
-Vector indexes are not created; similarity is an exact scan at launch scale. Add one when scale requires it, sized from the recorded dimension.
+Vectors use HNSW indexes (`nodes_embedding`, `edges_fact_embedding`).
 
 ## Open questions
 

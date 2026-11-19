@@ -1,16 +1,14 @@
 """Run the benchmark suites.
 
-  python -m benchmarks run  --tenant brandon-dev --input ../../data/raw/brandon-dev [--suite all] [--neo4j]
+  python -m benchmarks run  --tenant brandon-dev --input ../../data/raw/brandon-dev [--suite all]
   python -m benchmarks docs --tenant brandon-dev --input ../../data/raw/brandon-dev
-  python -m benchmarks docs --tenant brandon-dev --neo4j
 
-`run` loads the raw data with the loader (in memory, or into Neo4j with --neo4j, which resets the tenant first),
-embeds it when the retrieval suite is selected, runs the suites, prints a summary and saves JSON under
-benchmarks/results/. Retrieval scores are development-model scores and say which models produced them.
-`docs` lists every embeddable node (ref and text) to help write questions. It never resets or writes Neo4j:
-without --neo4j it loads --input in memory; with --neo4j it only reads the tenant's existing graph.
+`run` loads the raw data with the loader, in memory, embeds it when the retrieval suite is selected, runs the
+suites, prints a summary and saves JSON under benchmarks/results/. Retrieval scores are development-model scores
+and say which models produced them. `docs` loads --input in memory and lists every embeddable node (ref and text)
+to help write questions.
 
-The spec and questions files are read and checked before anything is reset, loaded or sent to a model.
+The spec and questions files are read and checked before anything is loaded or sent to a model.
 
 Exit code 0 means the suites ran on a clean load; 1 means a configuration, model, embedding or benchmark error,
 or that the load was not clean (rejected records, schema problems or a failed loading check; the result is still
@@ -23,7 +21,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -36,7 +33,7 @@ from models.client import Client, ModelError
 from models.config import ROOT, ConfigError, load_dotenv, load_profile
 from models.identity import identity_for
 from ontology import tenant_subgraphs
-from ontology.config import EmbeddingMismatch, check_embedding_identity
+from ontology.config import EmbeddingMismatch
 
 from .loading import run_loading, score_loading
 from .results import BenchmarkError, build_meta, render_summary, save_result
@@ -161,44 +158,26 @@ def _failures(report, results) -> list[str]:
     return failures
 
 
-def _writer(args):
-    if not args.neo4j:
-        return MemoryWriter()
-    from loader.neo4j_writer import Neo4jWriter
-
-    password = os.environ.get("NEO4J_PASSWORD", "")
-    if not password:
-        raise SystemExit("NEO4J_PASSWORD is not set (put it in .env); see .env.example")
-    return Neo4jWriter(os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
-                       os.environ.get("NEO4J_USER", "neo4j"), password)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="benchmarks", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["run", "docs"])
     parser.add_argument("--tenant", required=True)
-    parser.add_argument("--input", type=Path, help="folder of raw connector JSONL (not used by docs --neo4j)")
+    parser.add_argument("--input", type=Path, required=True, help="folder of raw connector JSONL")
     parser.add_argument("--suite", choices=["loading", "retrieval", "all"], default="all")
     parser.add_argument("--spec", type=Path, help="loading expectations (default data/loading_<tenant>.json)")
     parser.add_argument("--questions", type=Path, help="retrieval questions (default data/questions_<tenant>.json)")
     parser.add_argument("--profile", help="model profile (default: MODEL_PROFILE)")
     parser.add_argument("--out", type=Path, default=RESULTS)
     parser.add_argument("--rejects", type=Path, default=Path("rejects.jsonl"))
-    parser.add_argument("--neo4j", action="store_true",
-                        help="run: load into Neo4j (the tenant is reset) instead of memory; "
-                             "docs: read the tenant's existing Neo4j graph, never reset or load")
     parser.add_argument("--no-dotenv", action="store_true")
     args = parser.parse_args(argv)
-    reads_existing_graph = args.command == "docs" and args.neo4j
-    if args.input is None and not reads_existing_graph:
-        parser.error("--input is required (except for docs --neo4j)")
     if not args.no_dotenv:
         load_dotenv(ROOT / ".env")
 
     suites = ["loading", "retrieval"] if args.suite == "all" else [args.suite]
     needs_models = args.command == "run" and "retrieval" in suites
-    profile = client = writer = None
+    profile = client = None
     try:
         try:
             group_ids = tenant_subgraphs(args.tenant)
@@ -208,30 +187,19 @@ def main(argv: list[str] | None = None) -> int:
         questions_path = args.questions or DATA / f"questions_{args.tenant}.json"
         questions = []
         if args.command == "run":
-            # Everything that can be checked for free is checked before any reset, load or API call.
+            # Everything that can be checked for free is checked before any load or API call.
             if "loading" in suites:
                 load_spec(spec_path)
             if "retrieval" in suites:
                 _, questions = read_questions(questions_path)
         if needs_models:
             profile = load_profile(args.profile)
-            profile.embedding_key()  # fail now, before any loading or Neo4j connection
+            profile.embedding_key()  # fail now, before any loading
             client = Client(profile)
-        if not reads_existing_graph:
-            _check_input(args.input)
-        writer = _writer(args)
-
-        if args.neo4j and needs_models:
-            # --neo4j resets the tenant, so a different recorded embedding model must be found out first.
-            recorded = writer.read_embedding_identity()
-            if recorded is not None:
-                check_embedding_identity(recorded, identity_for(profile))
-
-        if reads_existing_graph:
-            report = None
-        else:
-            args.rejects.unlink(missing_ok=True)  # input is known good; the loader writes the file only on rejects
-            report = run_loader(args.tenant, args.input, writer, args.rejects, reset=args.neo4j)
+        _check_input(args.input)
+        writer = MemoryWriter()
+        args.rejects.unlink(missing_ok=True)  # input is known good; the loader writes the file only on rejects
+        report = run_loader(args.tenant, args.input, writer, args.rejects)
 
         if args.command == "docs":
             for c in sorted(writer.embed_candidates(group_ids), key=lambda c: (c["group_id"], c["key"])):
@@ -250,9 +218,6 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError, ModelError, EmbeddingMismatch, BenchmarkError, FileNotFoundError) as exc:
         print(f"benchmark failed: {exc}", file=sys.stderr)
         return 1
-    finally:
-        if hasattr(writer, "close"):
-            writer.close()
     print("\n\n".join(render_summary(r) for r in results))
     failures = _failures(report, results)
     if failures:

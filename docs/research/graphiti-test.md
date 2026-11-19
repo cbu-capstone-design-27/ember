@@ -1,5 +1,7 @@
 # Stock Graphiti on Neo4j with the photon data
 
+> Note (2026-11-18): Neo4j is removed ([ADR 0013](../adr/0013-postgres-only-graph-store.md)). The harness now runs on the fork's `PostgresDriver`; how to run it is in `services/pipeline/README.md`.
+
 Jira: EMBER-146, step 1. Code: `services/pipeline/graphiti_test/`.
 
 The team means to move the graph to Postgres with a thin Graphiti fork. Before that, this harness runs **stock** `graphiti-core==0.31.2` on Neo4j with our data and writes a reference the fork must later match. It also serves as the spike in [ADR 0002](../adr/0002-graph-engine-and-schema-approach.md).

@@ -1,22 +1,22 @@
-"""In-memory writer for unit tests and --dry-run. Same interface as Neo4jWriter."""
+"""In-memory graph for unit tests, the JSONL loader, e2e-check and the benchmarks. It applies the same ordering and
+delete rules as pg_writer.py, on nodes keyed by (label, uuid) and grouped by subgraph id ({tenant}_{source})."""
 
 from __future__ import annotations
 
 from ontology import parse_subgraph_id
 
-from .neo4j_writer import TOMBSTONE_KEYS
-from .facts import SOURCE_BACKED, GraphFacts, expected_constraint_names
-from .records import EdgeRec, NodeRec
+from .facts import SOURCE_BACKED, GraphFacts
+from .records import TOMBSTONE_KEYS, EdgeRec, NodeRec
 from .snapshot import HIDDEN_PROPS, Snapshot, make_ref
 
 
 def _apply(stored: dict, props: dict, occurred_at: str | None, deletable: bool) -> None:
-    """Neo4jWriter's ordering rule (neo4j_writer._guarded_set): a row not older than the stored
-    occurred_at sets its props; an older one only fills what is missing, and nothing on a deleted node."""
+    """The ordering rule: a row not older than the stored occurred_at sets its props; an older one only fills
+    what is missing, and nothing on a deleted node."""
     current = stored.get("occurred_at")
     if occurred_at is None or current is None or occurred_at >= current:
         stored.update(props)
-        if deletable and props.get("deleted") is True:  # a delete clears content (neo4j_writer.TOMBSTONE_KEYS)
+        if deletable and props.get("deleted") is True:  # a delete clears content (records.TOMBSTONE_KEYS)
             for key in [k for k in stored if k not in TOMBSTONE_KEYS]:
                 del stored[key]
         if occurred_at is not None:
@@ -55,9 +55,6 @@ class MemoryWriter:
             node = self.nodes[(row["label"], row["uuid"])]
             node["embedding"], node["embedding_text_hash"] = row["vector"], row["hash"]
 
-    def ensure_schema(self) -> None:
-        pass
-
     def reset(self, group_ids: list[str]) -> None:
         wanted = set(group_ids)
         self.nodes = {k: v for k, v in self.nodes.items() if v["group_id"] not in wanted}
@@ -90,7 +87,7 @@ class MemoryWriter:
 
     def read_facts(self, group_ids: list[str]) -> GraphFacts:
         wanted = set(group_ids)
-        facts = GraphFacts(constraints=expected_constraint_names())  # stands in for SHOW CONSTRAINTS
+        facts = GraphFacts()
         for (label, _), props in self.nodes.items():
             if props["group_id"] not in wanted:
                 continue

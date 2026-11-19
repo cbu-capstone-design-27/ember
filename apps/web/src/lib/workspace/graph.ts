@@ -1,7 +1,7 @@
 // The workspace as a knowledge graph, in the ontology's terms
 // (docs/graph-schema.md, services/pipeline/ontology/): nine node types,
 // relationship names from edges.py, and only the endpoint pairs it allows.
-// When the graph API exists, the graph view reads the same shape from Neo4j.
+// When the graph API exists, the graph view reads the same shape from Postgres (graph.*).
 
 import type { SourceId } from "../sources.ts";
 import { changeId, nodeId, personName, stageOf, type Model } from "./model.ts";

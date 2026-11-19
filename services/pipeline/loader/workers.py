@@ -1,11 +1,10 @@
-"""The extract and load workers (EMBER-85): source_records -> episodes -> Neo4j, through Postgres.
+"""The extract and load workers (EMBER-85): source_records -> episodes -> the Postgres graph.
 
     DATABASE_URL=postgresql://... python -m loader extract
-    DATABASE_URL=postgresql://... NEO4J_URI=bolt://localhost:7687 NEO4J_PASSWORD=... python -m loader load
-    DATABASE_URL=postgresql://... GRAPH_STORE=postgres python -m loader load
+    DATABASE_URL=postgresql://... python -m loader load
 
-GRAPH_STORE picks load's graph: neo4j (the default) or postgres (pg_writer.py, EMBER-164), which writes
-graph.* in the same transaction that stamps loaded_at, and also takes each graph's own advisory lock.
+load writes graph.* with pg_writer.py (EMBER-164), in the same transaction that stamps loaded_at, and also
+takes each graph's own advisory lock. Tests and e2e-check hand LoadWorker a MemoryWriter instead.
 
 Both claim rows like the enrich workers until the job queue lands (docs/ingestion/architecture.md,
 "Interim: claiming without the job queue"): LISTEN on a channel (extract: source_records, load:
@@ -16,16 +15,16 @@ exits at once, and what was in flight stays pending in Postgres.
 
 extract claims one source_records row that has no episode from this EXTRACTOR_VERSION (FOR UPDATE
 SKIP LOCKED, oldest occurred_at first, ties on id), maps it (extract.py) and upserts its episode in
-the same transaction. It never touches Neo4j.
+the same transaction. It never touches the graph.
 
 load takes one subgraph ({tenant}_{source}) at a time under a transaction-scoped advisory lock,
 writes up to LOAD_BATCH (default 100) of its unloaded episodes in (occurred_at, id) order, and
-stamps their loaded_at in that transaction once Neo4j has them. The writers apply each node and
+stamps their loaded_at in that transaction. The writers apply each node and
 edge by occurred_at, so replays and late, older versions change nothing they shouldn't.
 
-Failures (architecture.md, Failures and replay): an unreachable Postgres or Neo4j is transient: the
+Failures (architecture.md, Failures and replay): an unreachable Postgres is transient: the
 job rolls back and is retried with backoff, and nothing is marked done. A record the mappers skip or
-reject, or an episode Neo4j refuses, is permanent: logged and counted, and left alone until the
+reject, or an episode the writer refuses, is permanent: logged and counted, and left alone until the
 worker restarts. There is no error table; the job queue's dead letter replaces this.
 """
 
@@ -67,14 +66,8 @@ def is_transient(exc: BaseException) -> bool:
     if isinstance(exc, (asyncpg.PostgresConnectionError, asyncpg.InterfaceError,
                         asyncpg.exceptions.CannotConnectNowError, asyncpg.exceptions.AdminShutdownError)):
         return True
-    if isinstance(exc, sa_exc.DBAPIError) and (exc.connection_invalidated or isinstance(exc, (
-            sa_exc.OperationalError, sa_exc.InterfaceError))):
-        return True
-    try:
-        from neo4j import exceptions as neo4j_exc
-    except ImportError:  # pragma: no cover - neo4j is a pipeline requirement
-        return False
-    return isinstance(exc, (neo4j_exc.ServiceUnavailable, neo4j_exc.SessionExpired, neo4j_exc.TransientError))
+    return isinstance(exc, sa_exc.DBAPIError) and (exc.connection_invalidated or isinstance(exc, (
+        sa_exc.OperationalError, sa_exc.InterfaceError)))
 
 
 class Worker:
@@ -301,11 +294,10 @@ class LoadWorker(Worker):
         super().__init__(database_url, **kwargs)
         self.writer = writer
         self.batch = batch
-        self.schema_ready = False
         self.busy: set[tuple[str, str]] = set()  # subgraphs a runner of this process is loading
         self.cooldown: dict[tuple[str, str], float] = {}  # subgraph -> monotonic time it may retry
         self.failures: Counter = Counter()  # subgraph -> transient failures in a row
-        self.given_up: set[int] = set()  # episodes Neo4j refused; left alone until restart
+        self.given_up: set[int] = set()  # episodes the writer refused; left alone until restart
 
     def idle_seconds(self) -> float:
         now = time.monotonic()
@@ -398,9 +390,6 @@ class LoadWorker(Worker):
         """Write episodes to the graph, in order. Returns the ids written. A transient error raises,
         so nothing is stamped; if the batch fails otherwise, it is retried one episode at a time
         and the ones that still fail are given up."""
-        if not self.schema_ready:
-            self.writer.ensure_schema()
-            self.schema_ready = True
         try:
             self._write_batch(episodes)
             return [episode.id for episode in episodes]
@@ -455,16 +444,6 @@ def _dedupe(records: list, key) -> list:
     return [record for record in out if record is not None]
 
 
-def neo4j_writer():
-    from .neo4j_writer import Neo4jWriter
-
-    password = os.environ.get("NEO4J_PASSWORD")
-    if not password:
-        raise SystemExit("NEO4J_PASSWORD is not set")
-    return Neo4jWriter(os.environ.get("NEO4J_URI", "bolt://localhost:7687"), os.environ.get("NEO4J_USER", "neo4j"),
-                       password, database=os.environ.get("NEO4J_DATABASE") or None)
-
-
 async def serve(worker: Worker, once: bool) -> None:
     """Run the worker until SIGINT or SIGTERM (or, with once, until nothing is waiting)."""
     loop = asyncio.get_running_loop()
@@ -500,8 +479,6 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--once", action="store_true", help="work until nothing is waiting, then exit")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
-    for name in ("neo4j", "neo4j.notifications"):
-        logging.getLogger(name).setLevel(logging.ERROR)
 
     database_url = os.environ.get("DATABASE_URL", "").strip()
     if not database_url:
@@ -513,24 +490,12 @@ def main(argv: list[str]) -> int:
     except ValueError:
         print("CONCURRENCY and LOAD_BATCH must be whole numbers", file=sys.stderr)
         return 2
-    store = os.environ.get("GRAPH_STORE", "neo4j")
-    if store not in ("neo4j", "postgres"):
-        print("GRAPH_STORE must be neo4j or postgres", file=sys.stderr)
-        return 2
 
     async def start() -> None:
         if args.stage == "extract":
             worker: Worker = ExtractWorker(database_url, concurrency=concurrency)
         else:
-            if store == "postgres":
-                await serve(LoadWorker(database_url, PgWriter(), concurrency=concurrency, batch=batch), args.once)
-                return
-            writer = neo4j_writer()  # the caller owns the writer, so tests can reuse one across workers
-            try:
-                await serve(LoadWorker(database_url, writer, concurrency=concurrency, batch=batch), args.once)
-            finally:
-                writer.close()
-            return
+            worker = LoadWorker(database_url, PgWriter(), concurrency=concurrency, batch=batch)
         await serve(worker, args.once)
 
     asyncio.run(start())
