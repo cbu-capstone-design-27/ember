@@ -6,7 +6,7 @@
     DATABASE_URL=... python3 apps/mcp/seed_photon.py --no-embed    # rows only, no embedding service needed
 
 EMBER-166: the same import works for your own Jira project and Slack workspace, from the JSONL their pulls
-write (services/jira-ingestion/pull_test.py, services/slack-ingestion/pull_test.py), since the photon
+write (services/jira-ingestion/pull_test.py, and the Slack pull backfill:slack replaced), since the photon
 fixtures are that output. Until reconcile exists (ADR 0010), this is how history reaches source_records:
 
     DATABASE_URL=... python3 apps/mcp/seed_photon.py --no-embed --tenant my-org \
