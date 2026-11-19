@@ -239,7 +239,7 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         commits = [r for r in await self.records() if r["kind"] == "commit"]
         self.assertEqual(len(commits), 2)
 
-        await self.db.execute("truncate source_records, episodes")
+        await self.db.execute("truncate source_records, episodes cascade")
         full = FakeGitHub()
         await self.process(full, await self.insert("push", push(FULL_PUSH), occurred_at=datetime.fromtimestamp(1790326800, timezone.utc)))
         self.assertIn(f"/repos/acme/widget/compare/{'a' * 40}...{'b' * 40}", full.paths())

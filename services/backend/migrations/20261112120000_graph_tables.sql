@@ -3,9 +3,10 @@
 -- through role ember_graph_reader and row-level security on `ember.tenants`. The doc's Storage SQL is
 -- the source of truth, and this DDL is pinned with the Graphiti fork (EMBER-158).
 --
--- Role ember_graph_reader: on the cluster the operator creates it (a managed role in the private infra repo's CNPG Cluster),
--- because role ember, which runs the migrations, cannot create roles. Elsewhere (CI, a laptop) this
--- creates it. Roles are cluster-wide, so the down migration revokes its grants but keeps the role.
+-- Role ember_graph_reader: on the cluster the operator creates it, as a managed role in the private
+-- infra repo's CNPG Cluster, because role ember, which runs the migrations, cannot create roles.
+-- Elsewhere (CI, a laptop) this creates it. Roles are cluster-wide, so the down migration revokes its
+-- grants but keeps the role.
 -- uuid-ossp is a trusted extension, so role ember may create it. It gives uuid_generate_v5 for the
 -- episodes.uuid backfill, in loader/records.py's UUID_NAMESPACE (the literal below is a copy of it).
 
