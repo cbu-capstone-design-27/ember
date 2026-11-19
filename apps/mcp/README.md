@@ -16,7 +16,7 @@ The server reads for one Ember user, `EMBER_USER_EMAIL`, and sees every graph an
 `search` fuses two ranked lists by reciprocal rank (k = 60), then keeps the newest version of each object:
 
 1. **Records by meaning**, only when `EMBEDDING_URL` is set (EMBER-78). The question is embedded with the query template `Instruct: {task}\nQuery: {question}` ([ADR 0001](../../docs/adr/0001-embedding-model.md), [`services/embedding`](../../services/embedding/README.md)) and matched against `source_records.embedding` on its HNSW index. Only rows the embed worker has processed are searchable.
-2. **The graph**, through the Graphiti fork (`graphiti-core @ ember-v0.31.2`, `PostgresDriver`): `search_` with `COMBINED_HYBRID_SEARCH_RRF` (BM25 and cosine over nodes and facts, BM25 over episodes) and the same query vector. Without `EMBEDDING_URL` it uses BM25 plus a breadth-first walk from what BM25 found, and `whoami` says so. Graphiti's nodes, facts and episodes map back to the source records behind them. A record's node is the first `WorkItem`, `Change` or `Message` in its episode's `attrs.nodes`.
+2. **The graph**, through the Graphiti fork (`graphiti-core @ ember-v0.31.2.1`, `PostgresDriver`): `search_` with `COMBINED_HYBRID_SEARCH_RRF` (BM25 and cosine over nodes and facts, BM25 over episodes) and the same query vector. Without `EMBEDDING_URL` it uses BM25 plus a breadth-first walk from what BM25 found, and `whoami` says so. Graphiti's nodes, facts and episodes map back to the source records behind them. A record's node is the first `WorkItem`, `Change` or `Message` in its episode's `attrs.nodes`.
 
 **Identifiers first.** Before ranking, `search` looks for identifiers in the question:
 - a Jira key (`PHO-87`) whose project is one of the user's Jira graphs

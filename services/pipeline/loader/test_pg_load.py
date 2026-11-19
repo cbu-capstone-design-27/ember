@@ -25,6 +25,7 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 from urllib.parse import urlsplit, urlunsplit
 
 import asyncpg
@@ -46,12 +47,17 @@ def database_url(name: str = DB) -> str:
     return urlunsplit(parts._replace(path="/" + name))
 
 
-def photon_rows() -> list[tuple]:
-    """apps/mcp/seed_photon.py's rows: the shapes the enrich workers store, from the photon fixtures."""
+def seed_photon_module():
+    """apps/mcp/seed_photon.py: the shapes the enrich workers store, from the photon fixtures."""
     spec = importlib.util.spec_from_file_location("seed_photon", REPO / "apps" / "mcp" / "seed_photon.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.rows()
+    return module
+
+
+def photon_rows() -> list[tuple]:
+    """seed_photon.py's Jira and Slack message rows."""
+    return seed_photon_module().rows()
 
 
 def message(ts: str, text: str, channel: str = "C1") -> dict:
@@ -202,7 +208,9 @@ class PgLoadTest(unittest.IsolatedAsyncioTestCase):
         from loader import e2e_check
 
         expected = e2e_check.load_expected(e2e_check.PHOTON_EXPECTED, TENANT)
-        await self.seed_photon()
+        # What `e2e-check --seed-photon` stores, Slack users and channels included
+        with mock.patch.dict(os.environ, DATABASE_URL=database_url()):
+            await seed_photon_module().main(embed_rows=False, tenant=TENANT)
         writer = MemoryWriter()
         pipeline = await e2e_check.run_pipeline(database_url(), writer, TENANT, reset=False)
         self.assertEqual(pipeline["unloaded"], 0)

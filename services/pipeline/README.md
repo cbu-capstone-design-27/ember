@@ -199,8 +199,6 @@ reference; the steps above replace its setup).
 
 Tests: `cd services/pipeline && python -m unittest discover -s graphiti_test -t . -p "test_*.py" -v`, with
 `graphiti_test/requirements.txt` installed. The Postgres tests run only when `GRAPHITI_TEST_DATABASE_URL` is set.
-Two fork gaps show there: MMR search fails on nodes whose vector a resave nulled, and search and temporal results
-move between identical runs.
 
 ## Benchmarks (EMBER-58)
 
