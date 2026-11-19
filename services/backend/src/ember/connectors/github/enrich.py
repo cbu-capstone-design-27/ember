@@ -187,7 +187,8 @@ class GitHubEnrich(QueueWorker[RawEvent]):
             path = f"/compare/{body['before']}...{body['after']}"
             pages = await self.cached_pages(raw, (raw.tenant, repo, path), path)
             return {"compare": [commit for page in pages for commit in page.get("commits", [])]}
-        if event == "pull_request" and action in PR_FILE_ACTIONS:
+        # A backfill copy is the pull request as it is now, so it gets its files as an opened one does
+        if event == "pull_request" and (action in PR_FILE_ACTIONS or raw.origin == "reconcile"):
             pull = body["pull_request"]
             path = f"/pulls/{pull['number']}/files"
             pages = await self.cached_pages(raw, (raw.tenant, repo, path, pull["head"]["sha"]), path)
@@ -239,4 +240,5 @@ def missing_app(reason: str) -> Callable[[], str]:
     """The app_jwt of a worker with no GitHub App: rows that need a call are set aside, the rest still go."""
     def app_jwt() -> str:
         raise Permanent(f"{reason}: this event needs a GitHub API call")
+    app_jwt.missing = reason  # backfill:github can't run without the App, so it is disabled with this reason
     return app_jwt

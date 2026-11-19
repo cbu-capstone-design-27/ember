@@ -37,8 +37,10 @@ sys.path.insert(0, str(REPO / "packages" / "source-credentials"))
 
 from ember.connectors import CONNECTORS  # noqa: E402
 from ember.connectors.jira import atlassian  # noqa: E402
+from ember.connectors.jira.backfill import JiraBackfill  # noqa: E402
 from ember.connectors.jira.enrich import COMMENT_ISSUE, JiraEnrich  # noqa: E402
 from ember.connectors.jira.keep_alive import JiraKeepAlive, next_run  # noqa: E402
+from ember.core.credentials import Credentials  # noqa: E402
 from ember.core.db import Database  # noqa: E402
 from ember.core.errors import ConfigError  # noqa: E402
 from ember.core.http import Response  # noqa: E402
@@ -131,8 +133,12 @@ class Atlassian:
     first issue GETs, `delay` slows each issue GET, and `token_error` fails every refresh with that error."""
 
     def __init__(self, *, delay: float = 0.0, first: list[Response] | None = None,
-                 token_error: str | None = None, refresh_status: int = 200) -> None:
+                 token_error: str | None = None, refresh_status: int = 200, hold: str | None = None) -> None:
         self.delay = delay
+        self.hold = hold  # an issue key whose GET blocks until `release` is set
+        self.holding = threading.Event()
+        self.release = threading.Event()
+        self.updated: dict[str, str] = {}  # issue keys whose fields.updated the site now reports as this
         self.first = list(first or [])
         self.token_error = token_error
         self.refresh_status = refresh_status
@@ -152,8 +158,26 @@ class Atlassian:
                 "expires_in": 3600, "scope": "read:jira-work offline_access"}).encode())
         if method == "PUT" and url == f"{API}/rest/api/3/webhook/refresh":
             return Response(self.refresh_status, {}, b'{"expirationDate": "2026-12-05T09:17:00.000+0000"}')
+        if not headers.get("Authorization", "").startswith("Bearer access-"):
+            return Response(401, {}, b'{"message": "unexpected call"}')
+        if method == "POST" and url == f"{API}/rest/api/3/search/jql":
+            if self.first:
+                return self.first.pop(0)
+            return self.search(json.loads(body))
+        match = re.fullmatch(re.escape(API) + r"/rest/api/3/issue/(PHO-\d+)(/changelog|/comment)?\?.*", url)
+        if method == "GET" and match:
+            issue = self.issue(match.group(1))
+            if match.group(2) == "/changelog":
+                return page_of("values", [{"id": f"{issue['id']}1", "created": issue["fields"]["updated"],
+                                           "items": [{"field": "status", "toString": "Done"}]}])
+            if match.group(2) == "/comment":
+                return page_of("comments", [c for c in COMMENTS if f"/issue/{issue['id']}/comment/" in c["self"]])
+            if match.group(1) == self.hold:
+                self.holding.set()
+                self.release.wait(10)
+            return Response(200, {}, json.dumps(issue).encode())
         match = re.fullmatch(re.escape(API) + r"/rest/api/3/issue/(\d+)\?.*", url)
-        if method == "GET" and match and headers.get("Authorization", "").startswith("Bearer access-"):
+        if method == "GET" and match:
             time.sleep(self.delay)
             if self.first:
                 return self.first.pop(0)
@@ -165,6 +189,45 @@ class Atlassian:
 
     def urls(self) -> list[str]:
         return [f"{call.method} {call.url}" for call in self.calls]
+
+    def searches(self) -> list[str]:
+        return [json.loads(call.body)["jql"] for call in self.calls if call.url.endswith("/search/jql")]
+
+    def issue(self, key: str) -> dict:
+        issue = BACKFILL_ISSUES[key]
+        if key in self.updated:
+            issue = {**issue, "fields": {**issue["fields"], "updated": self.updated[key]}}
+        return issue
+
+    def search(self, payload: dict) -> Response:
+        """Keys of BACKFILL_ISSUES for the JQL backfill:jira sends: a project, `updated >= "-<n>m"`, by update."""
+        query = payload["jql"]
+        assert query.startswith("project = 10000") and query.endswith(" ORDER BY updated ASC, key ASC"), query
+        minutes = re.search(r'updated >= "-(\d+)m"', query)
+        since = datetime.now(timezone.utc) - timedelta(minutes=int(minutes.group(1))) if minutes else None
+        issues = sorted((self.issue(key) for key in BACKFILL_ISSUES), key=lambda i: (updated(i), int(i["key"][4:])))
+        keys = [i["key"] for i in issues if since is None or updated(i) >= since]
+        start = int(payload.get("nextPageToken") or 0)
+        page = {"issues": [{"key": key} for key in keys[start:start + 5]], "isLast": start + 5 >= len(keys)}
+        if not page["isLast"]:
+            page["nextPageToken"] = str(start + 5)
+        return Response(200, {}, json.dumps(page).encode())
+
+
+def updated(issue: dict) -> datetime:
+    return datetime.fromisoformat(issue["fields"]["updated"])
+
+
+def page_of(field: str, items: list[dict]) -> Response:
+    return Response(200, {}, json.dumps({"startAt": 0, "maxResults": 100, "total": len(items), "isLast": True,
+                                         field: items}).encode())
+
+
+# Project 10000 (PHO) for backfill:jira: its first 20 issues, by key, and the comments on them
+BACKFILL_ISSUES = {i["key"]: i for i in sorted(ISSUES.values(), key=lambda i: int(i["key"][4:])) if int(i["key"][4:]) <= 20}
+BACKFILL_COMMENTS = [c for c in COMMENTS if COMMENT_ISSUE.search(c["self"]).group(1)
+                     in {i["id"] for i in BACKFILL_ISSUES.values()}]
+BY_UPDATE = sorted(BACKFILL_ISSUES.values(), key=lambda i: (updated(i), int(i["key"][4:])))
 
 
 async def connect_site(db: asyncpg.Connection, *, site: str = SITE, tenant: str = TENANT,
@@ -197,7 +260,7 @@ async def stored_credential(db: asyncpg.Connection, site: str = SITE) -> dict | 
 class DatabaseTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.db = await asyncpg.connect(database_url())
-        await self.db.execute("truncate raw_events, source_records, episodes, rate_limits, installations"
+        await self.db.execute("truncate raw_events, source_records, episodes, rate_limits, cursors, installations"
                               " restart identity cascade")
         await connect_site(self.db)   # photon's site, connected by TENANT, with an hour left on its token
         self.engines = []
@@ -505,6 +568,144 @@ class KeepAliveTest(DatabaseTest):
         self.assertEqual(component.last["sites"], 1)
 
 
+class BackfillTest(DatabaseTest):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.credentials = Credentials(Database(database_url()), {"SOURCE_CREDENTIALS_API_KEYS": API_KEYS})
+
+    async def asyncTearDown(self):
+        await self.credentials.close()
+        await super().asyncTearDown()
+
+    def component(self, stub: Atlassian, **kwargs) -> JiraBackfill:
+        return JiraBackfill(Database(database_url()), self.credentials, client=CLIENT, exchange=stub, **kwargs)
+
+    async def backfill(self, stub: Atlassian, **kwargs) -> JiraBackfill:
+        component = self.component(stub, **kwargs)
+        await component.start()
+        try:
+            await component.run_once(asyncio.Event())
+        finally:
+            await component.close()
+        return component
+
+    async def run_held(self, stub: Atlassian) -> tuple[JiraBackfill, asyncio.Task]:
+        """Start a pass and return once it is fetching `stub.hold`."""
+        component = self.component(stub)
+        await component.start()
+        task = asyncio.create_task(component.run_once(asyncio.Event()))
+        self.assertTrue(await asyncio.to_thread(stub.holding.wait, 10))
+        return component, task
+
+    async def backfilled(self) -> int:
+        return await self.db.fetchval("select count(*) from raw_events where origin = 'reconcile'")
+
+    async def test_a_connected_site_is_backfilled_and_enriched_like_webhooks(self):
+        stub = Atlassian()
+        component = await self.backfill(stub)
+        objects = len(BACKFILL_ISSUES) + len(BACKFILL_COMMENTS)
+        self.assertGreater(len(BACKFILL_COMMENTS), 0)
+        self.assertEqual(set(stub.searches()), {"project = 10000 ORDER BY updated ASC, key ASC"})  # 5 issues a page
+        self.assertEqual((await self.backfilled(), component.last["rows"]), (objects, objects))
+        issue = BACKFILL_ISSUES["PHO-15"]
+        raw = await self.db.fetchrow("select * from raw_events where delivery_id = $1",
+                                     f"{issue['id']}@{issue['fields']['updated']}")
+        self.assertEqual((raw["event_name"], raw["account_id"], raw["tenant"]), ("jira:issue_updated", SITE, TENANT))
+        self.assertEqual(raw["occurred_at"], updated(issue))
+        self.assertEqual(json.loads(raw["envelope"])["body"]["issue"]["changelog"]["histories"][0]["items"][0]["toString"],
+                         "Done")
+        self.assertEqual(await self.db.fetchval("select position from cursors where stream = 'project:10000'"),
+                         BY_UPDATE[-1]["fields"]["updated"])
+
+        # A webhook copy of one of them is no new record, and no comment fetches its issue
+        await self.db.execute(
+            "insert into raw_events (source, delivery_id, account_id, tenant, event_name, origin, envelope, occurred_at)"
+            " values ('jira', $1, $2, $3, 'jira:issue_created', 'webhook', $4::jsonb, $5)",
+            f"{SITE}:created", SITE, TENANT, json.dumps({"type": "jira", "body": issue_created(ISSUES["10001"])}), T0)
+        enrich_stub = Atlassian()
+        worker = JiraEnrich(Database(database_url()), ring=RING, client=CLIENT, exchange=enrich_stub)
+        await worker.start()
+        stopping = asyncio.Event()
+        task = asyncio.create_task(worker.run(stopping))
+        try:
+            while await self.db.fetchval("select count(*) from raw_events where enriched_at is null"):
+                await asyncio.sleep(0.02)
+        finally:
+            stopping.set()
+            await asyncio.wait_for(task, 10)
+            await worker.close()
+        self.assertEqual(await self.db.fetchval("select count(*) from source_records"), objects)
+        self.assertEqual(await self.db.fetchval("select count(*) from source_records where object_id = '10001'"), 1)
+        self.assertEqual(enrich_stub.calls, [])
+
+    async def test_the_next_pass_reads_only_what_changed_and_waits_its_turn(self):
+        stub = Atlassian()
+        await self.backfill(stub)
+        stub.calls.clear()
+        await self.backfill(stub)  # read within the hour: not due
+        self.assertEqual(stub.calls, [])
+
+        await self.db.execute("update cursors set updated_at = now() - interval '2 hours' where stream = $1",
+                              f"site:{SITE}")
+        stub.updated["PHO-3"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        component = await self.backfill(stub)
+        self.assertRegex(stub.searches()[0], r'^project = 10000 AND updated >= "-\d+m" ORDER BY')
+        self.assertEqual(component.last["rows"], 1)  # the edited issue; the last one again is a no-op
+
+    async def test_a_killed_pass_resumes_from_its_cursor_without_duplicates(self):
+        stub = Atlassian(hold=BY_UPDATE[2]["key"])
+        component, task = await self.run_held(stub)
+        task.cancel()
+        stub.release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await component.close()
+        self.assertEqual(await self.db.fetchval("select position from cursors where stream = 'project:10000'"),
+                         BY_UPDATE[1]["fields"]["updated"])
+        written = await self.backfilled()
+
+        stub = Atlassian()
+        await self.backfill(stub)  # still due: the killed pass never finished
+        self.assertIn("AND updated >= ", stub.searches()[0])
+        objects = len(BACKFILL_ISSUES) + len(BACKFILL_COMMENTS)
+        self.assertLess(written, objects)
+        self.assertEqual(await self.backfilled(), objects)
+
+    async def test_a_429_is_waited_out(self):
+        stub = Atlassian(first=[Response(429, {"Retry-After": "1"}, b"{}")])
+        await self.backfill(stub)
+        throttled, retried = [call for call in stub.calls if call.url.endswith("/search/jql")][:2]
+        self.assertGreaterEqual(retried.at - throttled.at, 1.0)
+        self.assertEqual(await self.backfilled(), len(BACKFILL_ISSUES) + len(BACKFILL_COMMENTS))
+
+    async def test_a_disconnected_site_stops_and_is_not_read_again(self):
+        stub = Atlassian(hold=BY_UPDATE[2]["key"])
+        component, task = await self.run_held(stub)
+        await self.db.execute("update installations set disconnected_at = now()")
+        stub.release.set()
+        await asyncio.wait_for(task, 10)
+        self.assertEqual(await component.due(), [])
+        await component.close()
+        self.assertEqual(await self.db.fetchval("select position from cursors where stream = 'project:10000'"),
+                         BY_UPDATE[1]["fields"]["updated"])
+        self.assertIsNone(await self.db.fetchval("select position from cursors where stream like 'site:%'"))
+
+    async def test_a_refused_token_disconnects_the_site(self):
+        await connect_site(self.db, expires_at=time.time() - 10)
+        await self.backfill(Atlassian(token_error="invalid_grant"))
+        self.assertIsNotNone(await self.db.fetchval("select disconnected_at from installations"))
+        self.assertEqual(await self.backfilled(), 0)
+
+    async def test_reconcile_since_limits_a_first_pass(self):
+        since = datetime(2026, 9, 25, tzinfo=timezone.utc)
+        stub = Atlassian()
+        await self.backfill(stub, since=since)
+        self.assertRegex(stub.searches()[0], r'^project = 10000 AND updated >= "-\d+m" ORDER BY')
+        recent = [i for i in BACKFILL_ISSUES.values() if updated(i) >= since]
+        self.assertTrue(0 < len(recent) < len(BACKFILL_ISSUES))
+        self.assertEqual(await self.db.fetchval("select count(*) from raw_events where event_name = 'jira:issue_updated'"),
+                         len(recent))
+
+
 class SettingsTest(unittest.IsolatedAsyncioTestCase):
     """How SOURCE_CREDENTIALS_API_KEYS and JIRA_* become the two components, or why one is disabled."""
 
@@ -523,10 +724,12 @@ class SettingsTest(unittest.IsolatedAsyncioTestCase):
         for env, reason in cases:
             with self.subTest(reason):
                 parts = self.parts(**env)
-                self.assertEqual(set(parts), {"enrich:jira", "keep-alive:jira"})
+                self.assertEqual(set(parts), {"enrich:jira", "keep-alive:jira", "backfill:jira"})
                 with self.assertRaisesRegex(ConfigError, f"^{reason}$"):
                     await parts["keep-alive:jira"].start()
                 self.assertEqual(parts["enrich:jira"].missing, reason)
+                with self.assertRaisesRegex(ConfigError, f"^{reason}$"):
+                    await parts["backfill:jira"].start()
 
     async def test_an_unreadable_api_key_ring_disables_both(self):
         built = self.plan(SOURCE_CREDENTIALS_API_KEYS="test:not base64!")
@@ -542,6 +745,8 @@ class SettingsTest(unittest.IsolatedAsyncioTestCase):
         worker = parts["enrich:jira"]
         self.assertEqual((worker.concurrency, worker.batch, worker.client), (2, 5, atlassian.OAuthClient("id", "secret")))
         self.assertEqual(worker.ring.kind, "api")
+        backfill = self.parts(JIRA_BACKFILL_EVERY_HOURS="3", RECONCILE_SINCE="2026-01-01")["backfill:jira"]
+        self.assertEqual((backfill.every, backfill.since), (timedelta(hours=3), datetime(2026, 1, 1, tzinfo=timezone.utc)))
 
 
 if __name__ == "__main__":

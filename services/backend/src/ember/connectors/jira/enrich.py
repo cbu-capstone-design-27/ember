@@ -139,6 +139,8 @@ class JiraEnrich(QueueWorker[RawEvent]):
         described = describe(body)
         if described is not None:
             kind, object_id, version, issue_ids = described
+            if raw.origin == "reconcile":
+                issue_ids = []  # backfill:jira writes each issue with its comments, so there is nothing to fetch
             record: dict = {"payload": body}
             if version.startswith("deleted:"):
                 record["deleted"] = True

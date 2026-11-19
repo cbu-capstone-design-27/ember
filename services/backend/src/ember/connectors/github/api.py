@@ -76,6 +76,11 @@ def installation_token(jwt_token: str, repo: str, exchange: Exchange) -> str:
     installation_id = http.read_json(found, f"installation lookup for {repo}", LIMITS).get("id")
     if not isinstance(installation_id, int):
         raise Permanent(f"installation lookup for {repo} returned no id")
+    return mint_token(jwt_token, installation_id, exchange)
+
+
+def mint_token(jwt_token: str, installation_id: int | str, exchange: Exchange) -> str:
+    """A token for an installation whose id is known, as backfill:github has from `installations`."""
     minted = http.exchange_with_retry(exchange, "POST", f"{API}/app/installations/{installation_id}/access_tokens",
                                       headers(jwt_token, json_body=True), b"{}", limits=LIMITS)
     token = http.read_json(minted, "installation token", LIMITS).get("token")

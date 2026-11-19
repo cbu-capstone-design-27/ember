@@ -1,7 +1,7 @@
 """The GitLab webhook adapter (docs/ingestion/gitlab-webhooks.md).
 
 Verifies the delivery, then reads its id, account, event name and ordering value. It never calls the
-GitLab API. The checks are services/gitlab-ingestion/envelope.py's, which this replaces on the cluster.
+GitLab API. The checks are services/gitlab-ingestion/envelope.py's, which this replaced (removed in EMBER-160).
 
 Which token verifies it (EMBER-149, ADR 0010, GitLab):
 

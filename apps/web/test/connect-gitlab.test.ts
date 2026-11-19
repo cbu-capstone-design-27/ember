@@ -225,7 +225,7 @@ describe("connecting on Postgres", { skip: postgresUrl ? false : "set TEST_POSTG
       connected_by: "u-1",
       disconnected_at: null,
     });
-    // What enrich:gitlab reads (services/gitlab-ingestion/enrich.py)
+    // What enrich:gitlab reads (services/backend, connectors/gitlab/enrich.py)
     const credential = await loadCredential(pool, API_RING, { source: "gitlab", accountId });
     assert.equal(credential?.token, "glpat-good");
     assert.equal(credential?.base_url, "https://gitlab.com");

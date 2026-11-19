@@ -24,7 +24,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 import asyncpg
 import jwt
@@ -37,8 +37,11 @@ sys.path.insert(0, str(REPO / "packages" / "source-credentials"))
 
 from ember.connectors import CONNECTORS  # noqa: E402
 from ember.connectors.github import GitHubConnector, api  # noqa: E402
+from ember.connectors.github.backfill import GitHubBackfill  # noqa: E402
 from ember.connectors.github.enrich import FULL_PUSH, GitHubEnrich, missing_app  # noqa: E402
+from ember.core.credentials import Credentials  # noqa: E402
 from ember.core.db import Database  # noqa: E402
+from ember.core.errors import ConfigError  # noqa: E402
 from ember.core.models import RateLimit, RawEvent, SourceRecord  # noqa: E402
 from ember.core.settings import Settings  # noqa: E402
 from ember.runtime.controller import plan  # noqa: E402
@@ -377,6 +380,209 @@ class EnrichTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("GITHUB_APP_ID is not set: this event needs a GitHub API call", "\n".join(logs.output))
 
 
+def pull(number: int, updated_at: str) -> dict:
+    return {"id": 20000 + number, "number": number, "title": f"Pull {number}", "state": "open", "body": "",
+            "head": {"ref": f"branch-{number}", "sha": f"{number:x}" * 40}, "base": {"ref": "main", "sha": "d" * 40},
+            "review_comments": 1, "created_at": updated_at, "updated_at": updated_at}
+
+
+class FakeRepo:
+    """GitHub for backfill:github: installation 77 sees acme/widget, whose issues list (2 a page, by update) holds
+    issue #42 (the fixture's, with a comment), pull request #43 (a conversation comment, a review comment, a
+    submitted and a pending review) and issue #44. `hold` blocks the list's second page until `release`, and
+    `throttle` answers the first call to each of its paths with that response."""
+
+    def __init__(self, *, hold: bool = False, throttle: dict[str, api.Response] | None = None) -> None:
+        self.issues = [
+            FIXTURE["body"]["issue"] | {"comments": 1},
+            {"number": 43, "title": "Pull 43", "updated_at": "2026-09-24T10:00:00Z", "comments": 1,
+             "pull_request": {"url": "https://api.github.com/repos/acme/widget/pulls/43"}},
+            {"number": 44, "title": "Later", "state": "open", "updated_at": "2026-10-02T08:00:00Z", "comments": 0},
+        ]
+        self.calls: list[tuple[float, str]] = []
+        self.holding = threading.Event() if hold else None
+        self.release = threading.Event()
+        self.throttle = dict(throttle or {})
+
+    def issue_queries(self) -> list[dict]:
+        return [parse_qs(urlsplit(url).query) for _at, url in self.calls if urlsplit(url).path.endswith("/widget/issues")]
+
+    def __call__(self, method: str, url: str, headers: dict, body: bytes | None) -> api.Response:
+        self.calls.append((time.time(), url))
+        parts = urlsplit(url)
+        path, query = parts.path, parse_qs(parts.query)
+        if path in self.throttle:
+            return self.throttle.pop(path)
+        if path == "/app/installations/77/access_tokens":
+            return ok({"token": "installation-token"})
+        if path == "/installation/repositories":
+            return ok({"total_count": 1, "repositories": [REPOSITORY]})
+        if path == "/repos/acme/widget/issues":
+            since = query.get("since", [""])[0]
+            items = sorted((i for i in self.issues if i["updated_at"] >= since), key=lambda i: i["updated_at"])
+            page = int(query.get("page", ["1"])[0])
+            if page == 2 and self.holding is not None:
+                self.holding.set()
+                self.release.wait(10)
+            response = ok(items[2 * page - 2:2 * page])
+            if len(items) > 2 * page:
+                response.headers["Link"] = f'<{url.split("&page=")[0]}&page={page + 1}>; rel="next"'
+            return response
+        if path == "/repos/acme/widget/pulls/43":
+            return ok(pull(43, "2026-09-24T10:00:00Z"))
+        if path == "/repos/acme/widget/pulls/43/reviews":
+            return ok([{"id": 801, "state": "APPROVED", "body": "", "submitted_at": "2026-09-24T11:00:00Z"},
+                       {"id": 802, "state": "PENDING", "body": "draft"}])
+        if path == "/repos/acme/widget/pulls/43/comments":
+            return ok([{"id": 901, "body": "nit", "path": "app/login.py", "updated_at": "2026-09-24T11:00:00Z"}])
+        if path == "/repos/acme/widget/pulls/43/files":
+            return ok(FakeGitHub.FILES)
+        if path in ("/repos/acme/widget/issues/42/comments", "/repos/acme/widget/issues/43/comments"):
+            number = int(path.split("/")[-2])
+            return ok([{"id": 700 + number, "body": f"on #{number}", "updated_at": "2026-09-25T09:00:00Z"}])
+        raise AssertionError(f"unexpected call {method} {url}")
+
+
+# Every object FakeRepo holds, as the delivery_id the backfill gives it: "<object id>@<version>"
+BACKFILLED = sorted([
+    "acme/widget#42@2026-09-23T22:15:00Z", "acme/widget/issue-comment/742@2026-09-25T09:00:00Z",
+    "acme/widget#43@2026-09-24T10:00:00Z", "acme/widget/review/801@2026-09-24T11:00:00Z",
+    "acme/widget/review-comment/901@2026-09-24T11:00:00Z", "acme/widget/issue-comment/743@2026-09-25T09:00:00Z",
+    "acme/widget#44@2026-10-02T08:00:00Z",
+])
+
+
+class BackfillTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.db = await asyncpg.connect(database_url())
+        await self.db.execute("truncate raw_events, source_records, episodes, rate_limits, cursors, installations"
+                              " restart identity cascade")
+        # What Connect GitHub writes for installation 77
+        await self.db.execute("insert into installations (source, account_id, tenant, label)"
+                              " values ('github', '77', 'acme', 'acme')")
+
+    async def asyncTearDown(self):
+        await self.db.close()
+
+    def component(self, github: FakeRepo, **kwargs) -> GitHubBackfill:
+        return GitHubBackfill(Database(database_url()), Credentials(Database(database_url()), {}),
+                              app_jwt=lambda: "app-jwt", exchange=github, **kwargs)
+
+    async def backfill(self, github: FakeRepo, **kwargs) -> GitHubBackfill:
+        component = self.component(github, **kwargs)
+        await component.start()
+        try:
+            await component.run_once(asyncio.Event())
+        finally:
+            await component.close()
+        return component
+
+    async def delivery_ids(self) -> list[str]:
+        return [r["delivery_id"] for r in await self.db.fetch(
+            "select delivery_id from raw_events where origin = 'reconcile' order by delivery_id collate \"C\"")]
+
+    async def killed(self, github: FakeRepo) -> None:
+        """Start a pass and kill it while the issues list's second page is in flight."""
+        component = self.component(github)
+        await component.start()
+        task = asyncio.create_task(component.run_once(asyncio.Event()))
+        self.assertTrue(await asyncio.to_thread(github.holding.wait, 10))
+        task.cancel()
+        github.release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await component.close()
+
+    async def test_a_connected_installation_is_backfilled_and_enriched_like_webhooks(self):
+        component = await self.backfill(FakeRepo())
+        self.assertEqual(await self.delivery_ids(), BACKFILLED)
+        raw = await self.db.fetchrow("select * from raw_events where delivery_id = 'acme/widget#44@2026-10-02T08:00:00Z'")
+        self.assertEqual((raw["event_name"], raw["account_id"], raw["tenant"]), ("issues", "77", "acme"))
+        self.assertEqual(raw["occurred_at"], datetime(2026, 10, 2, 8, tzinfo=timezone.utc))
+        self.assertEqual(component.last["rows"], 7)
+        self.assertEqual(await self.db.fetchval("select position from cursors where stream = 'repo:acme/widget:issues'"),
+                         "2026-10-02T08:00:00Z")
+
+        # A webhook copy of one of them is no new record, and the pull request gets its files
+        webhook = await self.db.fetchval(
+            "insert into raw_events (source, delivery_id, account_id, tenant, event_name, origin, envelope, occurred_at)"
+            " values ('github', 'delivery-42', '77', 'acme', 'issues:opened', 'webhook', $1::jsonb, $2) returning id",
+            json.dumps({"type": "github", "body": issue_opened()}), T0)
+        worker = GitHubEnrich(Database(database_url()), exchange=FakeGitHub(), app_jwt=lambda: "app-jwt")
+        await worker.start()
+        stopping = asyncio.Event()
+        task = asyncio.create_task(worker.run(stopping))
+        try:
+            while await self.db.fetchval("select count(*) from raw_events where enriched_at is null"):
+                await asyncio.sleep(0.02)
+        finally:
+            stopping.set()
+            await asyncio.wait_for(task, 10)
+            await worker.close()
+        rows = await self.db.fetch("select * from source_records order by object_id")
+        self.assertEqual(sorted(f"{r['object_id']}@{r['version']}" for r in rows), BACKFILLED)
+        self.assertEqual(sum(r["object_id"] == "acme/widget#42" for r in rows), 1)
+        self.assertIsNotNone(webhook)
+        (pr,) = [r for r in rows if r["kind"] == "pull_request"]
+        self.assertEqual(json.loads(pr["record"])["fetched"], {"files": FakeGitHub.FILES})
+
+    async def test_the_next_pass_reads_only_what_is_new_and_waits_its_turn(self):
+        github = FakeRepo()
+        await self.backfill(github)
+        github.calls.clear()
+        await self.backfill(github)  # read within the hour: not due
+        self.assertEqual(github.calls, [])
+
+        await self.db.execute("update cursors set updated_at = now() - interval '2 hours' where stream = 'installation:77'")
+        github.issues.append({"number": 45, "title": "New", "state": "open", "updated_at": "2026-10-03T08:00:00Z",
+                              "comments": 0})
+        component = await self.backfill(github)
+        self.assertEqual(github.issue_queries()[0]["since"], ["2026-10-02T07:59:59Z"])
+        self.assertEqual(component.last["rows"], 1)  # #44 again is a no-op
+
+    async def test_a_killed_pass_resumes_from_its_cursor_without_duplicates(self):
+        await self.killed(FakeRepo(hold=True))
+        self.assertEqual(await self.db.fetchval("select position from cursors where stream = 'repo:acme/widget:issues'"),
+                         "2026-09-24T10:00:00Z")
+        self.assertEqual(len(await self.delivery_ids()), 6)
+        self.assertIsNone(await self.db.fetchval("select position from cursors where stream = 'installation:77'"))
+
+        github = FakeRepo()
+        component = await self.backfill(github)  # still due: the killed pass never finished
+        self.assertEqual(github.issue_queries()[0]["since"], ["2026-09-24T09:59:59Z"])
+        self.assertEqual(await self.delivery_ids(), BACKFILLED)
+        self.assertEqual(component.last["rows"], 1)
+
+    async def test_a_429_and_a_secondary_rate_limit_are_waited_out(self):
+        secondary = api.Response(403, {"Retry-After": "1"}, b'{"message": "You have exceeded a secondary rate limit."}')
+        github = FakeRepo(throttle={"/installation/repositories": api.Response(429, {"Retry-After": "1"}, b"{}"),
+                                    "/repos/acme/widget/pulls/43/reviews": secondary})
+        await self.backfill(github)
+        self.assertEqual(await self.delivery_ids(), BACKFILLED)
+        for path in ("/installation/repositories", "/repos/acme/widget/pulls/43/reviews"):
+            throttled, retried = [at for at, url in github.calls if urlsplit(url).path == path]
+            self.assertGreaterEqual(retried - throttled, 0.9, path)
+
+    async def test_a_disconnected_installation_stops_and_is_not_read_again(self):
+        github = FakeRepo(hold=True)
+        component = self.component(github)
+        await component.start()
+        task = asyncio.create_task(component.run_once(asyncio.Event()))
+        self.assertTrue(await asyncio.to_thread(github.holding.wait, 10))
+        await self.db.execute("update installations set disconnected_at = now()")
+        github.release.set()
+        await asyncio.wait_for(task, 10)
+        self.assertEqual(await component.due(), [])
+        await component.close()
+        self.assertEqual(len(await self.delivery_ids()), 6)  # #44, on the second page, isn't written
+        self.assertIsNone(await self.db.fetchval("select position from cursors where stream = 'installation:77'"))
+
+    async def test_reconcile_since_limits_a_first_pass(self):
+        github = FakeRepo()
+        await self.backfill(github, since=datetime(2026, 10, 1, tzinfo=timezone.utc))
+        self.assertEqual(github.issue_queries()[0]["since"], ["2026-10-01T00:00:00Z"])
+        self.assertEqual(await self.delivery_ids(), ["acme/widget#44@2026-10-02T08:00:00Z"])
+
+
 class AppSettingsTest(unittest.TestCase):
     """How GITHUB_APP_* become the worker's JWT, or why the worker is disabled."""
 
@@ -429,6 +635,16 @@ class AppSettingsTest(unittest.TestCase):
     def test_concurrency_and_batch_come_from_the_environment(self):
         worker = self.worker(GITHUB_ENRICH_CONCURRENCY="2", GITHUB_ENRICH_BATCH="10")
         self.assertEqual((worker.concurrency, worker.batch), (2, 10))
+
+    def test_the_backfill_reads_its_settings_and_needs_the_app(self):
+        (backfill,) = [c for c in self.plan(GITHUB_BACKFILL_EVERY_HOURS="2", RECONCILE_SINCE="2026-10-01").components
+                       if c.name == "backfill:github"]
+        self.assertEqual((backfill.every, backfill.since),
+                         (timedelta(hours=2), datetime(2026, 10, 1, tzinfo=timezone.utc)))
+        with self.assertRaisesRegex(ConfigError, "^GITHUB_APP_ID is not set$"):
+            asyncio.run(backfill.start())
+        (backfill,) = [c for c in self.plan(RECONCILE_SINCE="").components if c.name == "backfill:github"]
+        self.assertIsNone(backfill.since)  # as compose passes it unset
 
 
 if __name__ == "__main__":

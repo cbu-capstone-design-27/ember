@@ -50,7 +50,7 @@ export interface CurrentOrganizations {
   active: Membership | null;
 }
 
-/** The signed-in user's organizations (EMBER-124). Empty when signed out. */
+/** The signed-in user's organizations (EMBER-124), their personal workspace first. Empty when signed out. */
 export const getCurrentOrganizations = cache(async (): Promise<CurrentOrganizations> => {
   const session = await getSession();
   if (!session) return { memberships: [], active: null };
@@ -60,13 +60,14 @@ export const getCurrentOrganizations = cache(async (): Promise<CurrentOrganizati
 });
 
 /**
- * Like requireOnboardedUser, and sends users who belong to no organization to
- * the create-or-join screen. Every page in the signed-in app works in one.
+ * Like requireOnboardedUser, with the organization the session works in.
+ * Every page in the signed-in app works in one: at least the user's personal
+ * workspace (EMBER-165).
  */
 export async function requireOrganization(next?: string): Promise<CurrentUser & { organization: Membership; memberships: Membership[] }> {
   const user = await requireOnboardedUser(next);
   const { memberships, active } = await getCurrentOrganizations();
-  if (!active) redirect("/organizations");
+  if (!active) throw new Error(`user ${user.id} has no personal workspace`);
   return { ...user, organization: active, memberships };
 }
 
