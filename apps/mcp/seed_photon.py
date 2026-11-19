@@ -5,9 +5,9 @@
         python3 apps/mcp/seed_photon.py
     DATABASE_URL=... python3 apps/mcp/seed_photon.py --no-embed    # rows only, no embedding service needed
 
-EMBER-166: the same import works for your own Jira project and Slack workspace, from the JSONL their pulls
-write (services/jira-ingestion/pull_test.py, and the Slack pull backfill:slack replaced), since the photon
-fixtures are that output. Until reconcile exists (ADR 0010), this is how history reaches source_records:
+EMBER-166: the same import takes any Jira or Slack JSONL in the fixtures' shape, the {type, body} envelopes the
+old pull scripts wrote, under your own tenant. (Connected accounts no longer need it: ember-backend's backfill
+reads their history, ADR 0010.)
 
     DATABASE_URL=... python3 apps/mcp/seed_photon.py --no-embed --tenant my-org \
         --jira jira.jsonl --slack slack.jsonl
