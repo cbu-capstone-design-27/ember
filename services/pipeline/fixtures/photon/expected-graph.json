@@ -25,15 +25,15 @@
         "Message": 637,
         "Conversation": 340,
         "Container": 5,
-        "Identity": 5,
-        "Person": 5
+        "Identity": 7,
+        "Person": 7
       },
       "relationships": {
         "Container CONTAINS Conversation": 340,
         "Message PART_OF Conversation": 637,
         "Message REPLIES_TO Message": 297,
         "Person AUTHORED Message": 637,
-        "Identity RESOLVES_TO Person": 5
+        "Identity RESOLVES_TO Person": 7
       }
     }
   },
@@ -132,7 +132,7 @@
           "sources": [
             "slack"
           ],
-          "nodes": 992,
+          "nodes": 996,
           "crossing": 0
         }
       ]

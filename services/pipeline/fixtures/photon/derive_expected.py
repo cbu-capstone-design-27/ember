@@ -20,8 +20,9 @@ Counting rules (what one Jira issue, Jira comment or Slack message becomes):
 - Slack message: a Message, its thread's Conversation (the thread_ts, or its own ts when it starts
   one), its channel's Container, CONTAINS (channel to thread) and PART_OF (message to thread) edges,
   REPLIES_TO from a reply to its thread's first message, and the sender as Identity + Person with an
-  AUTHORED edge. Slack users and channels are not stored in source_records by seed_photon.py, so
-  they appear only through their messages.
+  AUTHORED edge.
+- Slack user and channel: seed_photon.py stores them as enrich:slack does, so every user is an
+  Identity + Person (RESOLVES_TO) and every channel a Container, with or without messages.
 """
 
 from __future__ import annotations
@@ -99,15 +100,18 @@ def slack_counts() -> dict:
     for channel, ts in replies:
         parent = (channel, messages[(channel, ts)]["thread_ts"])
         assert parent in messages, f"reply {ts} in {channel} has no first message (it would load as a placeholder)"
-    senders = {m["user"] for m in messages.values() if m.get("user")}
+    bodies = envelopes("slack-intake.jsonl")
+    people = {m["user"] for m in messages.values() if m.get("user")}
+    people |= {b["id"] for b in bodies if "profile" in b or "real_name" in b}
+    channels = {c for c, _ in messages} | {b["id"] for b in bodies if "is_channel" in b or "is_group" in b}
     nodes = {"Message": len(messages), "Conversation": len(threads),
-             "Container": len({c for c, _ in messages}), "Identity": len(senders), "Person": len(senders)}
+             "Container": len(channels), "Identity": len(people), "Person": len(people)}
     rels = {
         "Container CONTAINS Conversation": len(threads),
         "Message PART_OF Conversation": len(messages),
         "Message REPLIES_TO Message": len(replies),
         "Person AUTHORED Message": len({k for k, m in messages.items() if m.get("user")}),
-        "Identity RESOLVES_TO Person": len(senders),
+        "Identity RESOLVES_TO Person": len(people),
     }
     return {"nodes": nodes, "relationships": rels}
 

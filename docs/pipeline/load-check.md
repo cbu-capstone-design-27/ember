@@ -47,6 +47,8 @@ questions with their answers from the readable transcripts (`jira.md`, `slack.md
 - Slack message: a Message, its thread's Conversation (the `thread_ts`, or its own `ts` when it starts one), the
   channel's Container, CONTAINS (channel to thread), PART_OF (message to thread), REPLIES_TO (reply to the thread's
   first message), the sender as Identity + Person with AUTHORED.
+- Slack user and channel (stored by `--seed-photon`, as enrich:slack does): an Identity + Person (RESOLVES_TO), and a
+  Container, with or without messages.
 
 ## Photon result (2026-10-28)
 
