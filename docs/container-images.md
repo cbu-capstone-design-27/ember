@@ -21,14 +21,14 @@ The `image targets` and `image (<name>)` jobs in `.github/workflows/ci.yml` hand
 
 Publishing uses the workflow's `GITHUB_TOKEN`, so no secrets need to be set up.
 
-Today's targets are `backend`, `embed`, `github-ingestion`, `intake`, `jira-ingestion`, `llm-tunnel`, `pipeline` and `web`.
+Today's targets are `backend`, `embed`, `github-ingestion`, `intake`, `llm-tunnel`, `pipeline` and `web`.
 
 ## Adding a new service
 
 1. Create `services/<name>/Dockerfile`, or `apps/<name>/Dockerfile` for a user-facing app.
    - `<name>` must be lowercase and unique across `services/` and `apps/`. The `image targets` job fails on a collision.
    - The build context is the **repo root**, so paths in `COPY` start with `services/<name>/...`. That lets a Dockerfile pull in `packages/` later.
-   - Follow the existing services: a slim base image, `USER nobody`, and config through environment variables. `services/jira-ingestion/Dockerfile` is the smallest example, and `services/intake/Dockerfile` adds a `requirements.txt`.
+   - Follow the existing services: a slim base image, `USER nobody`, and config through environment variables. `services/backend/Dockerfile` is the example to follow, and `services/intake/Dockerfile` adds a `requirements.txt`.
 2. Check that the image builds locally from the repo root:
 
    ```sh
