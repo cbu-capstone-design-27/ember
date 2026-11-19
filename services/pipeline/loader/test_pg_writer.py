@@ -188,13 +188,28 @@ class PgWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.db.fetchval(
             """select count(*) from graph.edges e join graph.nodes s on s.id = e.src join graph.nodes d on d.id = e.dst
                where e.graph_id is not null and (s.graph_id <> e.graph_id or d.graph_id <> e.graph_id)"""), 0)
-        # one current status per ticket, known only from its snapshot
-        self.assertEqual(await self.db.fetchval(
-            """select count(distinct src) from graph.edges where type = 'HAS_STATUS' and invalid_at is null
-               and props->>'valid_from' = 'snapshot'"""), issues)
-        self.assertEqual(await self.db.fetchval(
-            "select count(*) from (select src from graph.edges where type = 'HAS_STATUS' and invalid_at is null"
-            " group by 1 having count(*) > 1) x"), 0)
+        # Statuses each ticket held, from its changelog histories (seed_photon, EMBER-166): the first move's
+        # from, then every move's to. None: no changelog pages, so the status is known only from the snapshot.
+        held = {}
+        for source, kind, _, _, _, payload in rows:
+            if (source, kind) == ("jira", "issue"):
+                moves = [item for entry in (payload["issue"].get("changelog") or {}).get("histories", [])
+                         for item in entry["items"] if item["field"] == "status"]
+                held[payload["issue"]["key"]] = [moves[0]["fromString"], *(m["toString"] for m in moves)] if moves else None
+        facts = {r["key"]: (r["n"], r["ended"], r["current"], r["snapshot"]) for r in await self.db.fetch(
+            """select n.key, count(*) as n, count(e.invalid_at) as ended,
+                      count(*) filter (where e.invalid_at is null) as current,
+                      count(*) filter (where e.props->>'valid_from' = 'snapshot') as snapshot
+                 from graph.edges e join graph.nodes n on n.id = e.src where e.type = 'HAS_STATUS' group by 1""")}
+        self.assertEqual(set(facts), set(held))
+        for key, statuses in held.items():
+            n, ended, current, snapshot = facts[key]
+            self.assertEqual(current, 1, f"{key} has one current status")
+            if statuses:
+                self.assertEqual((n, ended, snapshot), (len(statuses), len(statuses) - 1, 0), f"{key} held {statuses}")
+            else:
+                self.assertEqual((n, snapshot), (1, 1), f"{key} is known only from its snapshot")
+        self.assertEqual([key for key, statuses in held.items() if statuses is None], ["PHO-19"])
         # Slack messages naming a PHO key reference the ticket in the Jira graph
         jira_id = graphs[0]["id"]
         links = await self.db.fetch(
