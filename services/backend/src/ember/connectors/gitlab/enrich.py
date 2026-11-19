@@ -203,6 +203,33 @@ def next_link(link_header: str | None) -> str | None:
     return None
 
 
+async def get(limits: SharedRateLimit, exchange: http.Exchange, tenant: str, account_id: str, token: str,
+              url: str) -> tuple:
+    """(JSON body, response) of one GET with the group's token, on the group's shared rate_limits row."""
+    paced = limits.exchange(tenant, account_id, exchange)
+    headers = {"PRIVATE-TOKEN": token, "Accept": "application/json", "User-Agent": http.USER_AGENT}
+    response = await asyncio.to_thread(http.exchange_with_retry, paced, "GET", url, headers, None, limits=LIMITS)
+    what = f"GET {urlsplit(url).path}"
+    if response.status == 401:
+        raise TokenRefused(f"{what} failed (401)")
+    return http.read_json(response, what, LIMITS), response
+
+
+async def pages(limits: SharedRateLimit, exchange: http.Exchange, tenant: str, account_id: str, token: str,
+                api: str, path: str, params: dict | None = None):
+    """Each page of a list, following rel="next" only within `api`, so the token never goes elsewhere."""
+    url: str | None = f"{api}{path}?{urlencode({**(params or {}), 'per_page': PAGE_SIZE})}"
+    for _ in range(MAX_PAGES):
+        body, response = await get(limits, exchange, tenant, account_id, token, url)
+        yield body
+        url = next_link(response.headers.get("Link") or response.headers.get("link"))
+        if url is None:
+            return
+        if not url.startswith(api + "/"):
+            raise Permanent(f"refusing a pagination link outside {api}")
+    LOG.warning("stopped after %d pages of %s", MAX_PAGES, path)
+
+
 class GitLabEnrich(QueueWorker[RawEvent]):
     channel = "raw_events"
     model = RawEvent
@@ -256,27 +283,10 @@ class GitLabEnrich(QueueWorker[RawEvent]):
             raise Permanent(f"GitLab group {raw.account_id} isn't connected to tenant {raw.tenant},"
                             " and this event needs an API call")
         api, token = api_root(raw.account_id, credential)
-        exchange = self.limits.exchange(raw.tenant, raw.account_id, self.exchange)
-        headers = {"PRIVATE-TOKEN": token, "Accept": "application/json", "User-Agent": http.USER_AGENT}
-
-        async def get(url: str) -> http.Response:
-            response = await asyncio.to_thread(http.exchange_with_retry, exchange, "GET", url, headers, None,
-                                               limits=LIMITS)
-            if response.status == 401:
-                raise TokenRefused(f"GET {path} failed (401)")
-            return response
-
         if shape == "object":
-            response = await get(api + path)
-            return {"compare": http.read_json(response, f"GET {path}", LIMITS).get("commits") or []}
-        url: str | None = f"{api}{path}?per_page={PAGE_SIZE}"
+            body, _ = await get(self.limits, self.exchange, raw.tenant, raw.account_id, token, api + path)
+            return {"compare": body.get("commits") or []}
         diffs: list = []
-        for _ in range(MAX_PAGES):
-            response = await get(url)
-            diffs += http.read_json(response, f"GET {path}", LIMITS)
-            url = next_link(response.headers.get("Link") or response.headers.get("link"))
-            if url is None:
-                break
-            if not url.startswith(api + "/"):  # the token only ever goes to its own instance
-                raise Permanent(f"refusing a pagination link outside {api}")
+        async for page in pages(self.limits, self.exchange, raw.tenant, raw.account_id, token, api, path):
+            diffs += page
         return {"diffs": diffs}
