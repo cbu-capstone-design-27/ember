@@ -2,7 +2,7 @@
 
 - Jira: EMBER-71 (drop-first), epic EMBER-20 (GitLab Ingestion).
 - Status: proposed, for team review. Headers, payloads and API endpoints were checked against GitLab's docs (docs.gitlab.com) on 2026-10-14. Links are in [Sources](#sources).
-- This is the spec for the `enrich:gitlab` worker (EMBER-68). [`architecture.md`](architecture.md) covers the pipeline as a whole. [`gitlab.md`](gitlab.md) covers auth, rate limits and the connector in `services/gitlab-ingestion`.
+- This is the spec for the `enrich:gitlab` worker (EMBER-68). [`architecture.md`](architecture.md) covers the pipeline as a whole. [`gitlab.md`](gitlab.md) covers auth and rate limits. The connector is `connectors/gitlab` in `services/backend`.
 - Related: EMBER-62 (intake), EMBER-63 (source ordering column), EMBER-54 and EMBER-55 (GitLab connector and rate limits), EMBER-47 (test project)
 
 GitLab sends the data itself (`architecture.md`, [Webhooks per source](architecture.md#webhooks-per-source-data-or-signal)). Intake stores each delivery in `raw_events` as it arrived. `enrich:gitlab` adds only what the payload lacks, then writes `source_records`.
@@ -18,7 +18,7 @@ GitLab sends the data itself (`architecture.md`, [Webhooks per source](architect
 
 ## How a delivery arrives
 
-A project or group webhook posts JSON to `/webhook/gitlab`. Intake checks the signing token (`webhook-signature`, an HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`), stores the body, and answers. The token is one Connect GitLab stored for the delivery's `account_id` (EMBER-149): GitLab generates one per webhook and the owner pastes each into the web app. A group with none is checked with the shared tokens for webhooks set up by hand (signing token, or legacy secret token in `X-Gitlab-Token`), and is refused when there are none. There is no handshake. Intake's `gitlab` adapter (`services/intake/adapters/gitlab.py`, EMBER-83) does this, with the checks `services/gitlab-ingestion/receiver.py` makes.
+A project or group webhook posts JSON to `/webhook/gitlab`. Intake checks the signing token (`webhook-signature`, an HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`), stores the body, and answers. The token is one Connect GitLab stored for the delivery's `account_id` (EMBER-149): GitLab generates one per webhook and the owner pastes each into the web app. A group with none is checked with the shared tokens for webhooks set up by hand (signing token, or legacy secret token in `X-Gitlab-Token`), and is refused when there are none. There is no handshake. Intake's `gitlab` adapter (`services/backend`, `connectors/gitlab/webhook.py`) does this.
 
 GitLab sends deliveries "asynchronously from Sidekiq nodes" and documents no order. It wants a 200 or 201 within 10 seconds on GitLab.com. A 4xx, a 5xx or a timeout is a failure. After 4 failures in a row the webhook is temporarily disabled, for 1 minute at first and up to 24 hours. After 40 it is disabled for good, until someone re-enables it. GitLab says to "prepare for duplicate events if a webhook times out".
 
@@ -52,7 +52,7 @@ GitLab sends deliveries "asynchronously from Sidekiq nodes" and documents no ord
 
 ## Event types: payload and what enrich fetches
 
-The webhook's triggers are `RECOMMENDED_WEBHOOK_TRIGGERS` in `services/gitlab-ingestion/receiver.py`. Intake doesn't filter on them. EMBER-68's acceptance criteria include push events, which the first cut left off, so this doc proposes adding **Push events**.
+The webhook's triggers are `WEBHOOK_TRIGGERS` in `apps/web/src/lib/gitlab-connect.ts`, which Connect GitLab asks the owner to tick. Intake doesn't filter on them. EMBER-68's acceptance criteria include push events, which the first cut left off, so this doc proposes adding **Push events**.
 
 | Trigger | `X-Gitlab-Event` | `object_kind` | Status |
 |---|---|---|---|

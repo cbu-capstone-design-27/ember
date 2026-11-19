@@ -17,10 +17,7 @@ sys.path.insert(0, str(HERE))
 import generate  # noqa: E402
 from validate import assert_valid, load_schema  # noqa: E402
 
-OUTPUTS = (
-    "slack-intake.jsonl",
-    "slack-intake.jsonl.readable.md",
-    "slack.md",
+OUTPUTS = (  # the Slack files are frozen (generate.py)
     "jira-intake.jsonl",
     "jira-intake.jsonl.readable.md",
     "jira.md",

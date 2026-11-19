@@ -48,7 +48,7 @@ Inside `event`, `ts` is the item's own timestamp (a message's id within its chan
 
 ## Event types: payload and what enrich fetches
 
-The app subscribes to 18 bot events (`services/slack-ingestion/slack-app-manifest.json`, listed in [`slack.md`](slack.md#events)).
+The app subscribes to 18 bot events (`slack-app-manifest.json` beside this doc, listed in [`slack.md`](slack.md#events)).
 
 **Rules enrich follows:**
 - **Fetch only what's missing.** The payload is the record of that moment and is kept as it is. Fetched data is added beside it in `source_records.record`.
@@ -104,7 +104,7 @@ Intake's key is `unique (source, delivery_id)` (`architecture.md`, [Storage](arc
 
 | Body | `delivery_id` | Why |
 |---|---|---|
-| `event_callback` | `event_id` | Slack says it's globally unique across workspaces, so no `team_id` prefix is needed. A retry is the same event with the same `event_id`, so retries become no-ops. Slack's reference doesn't spell this out. It's how Slack retries in practice ([Sources](#sources)), and `services/slack-ingestion/receiver.py` already relies on it |
+| `event_callback` | `event_id` | Slack says it's globally unique across workspaces, so no `team_id` prefix is needed. A retry is the same event with the same `event_id`, so retries become no-ops. Slack's reference doesn't spell this out. It's how Slack retries in practice ([Sources](#sources)), and intake relies on it |
 | `app_rate_limited` | `rate_limited:<team_id>:<minute_rate_limited>` | It has no `event_id`. Slack sends one per throttled minute, so this is unique |
 | `url_verification` | none | Not stored |
 | Reconcile or backfill | `<object id>@<version>`, as `architecture.md` defines | A message: `<channel>/<ts>@<edited.ts, or ts if never edited>`. A person: `<user id>@<updated>`. A channel: `<channel id>@<updated>` (`conversations.info`/`list`) |
