@@ -115,7 +115,7 @@ def map_github(ctx: MapContext, body: dict) -> Mapped:
 #
 # extract (loader/extract.py) hands each row here as (kind, object_id, record). The record is
 # {"payload": <webhook body, or one commit>, "fetched": {...}, "tombstone": true}, the last two only
-# when present, as services/github-ingestion/enrich.py's to_records writes it. A node's key is the
+# when present, as enrich:github's to_records (services/backend) writes it. A node's key is the
 # row's object_id wherever the object has one, so a tombstone finds its node from the row alone.
 
 # Kinds that become graph records. ref, release, label and milestone have no home in

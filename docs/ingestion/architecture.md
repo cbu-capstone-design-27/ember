@@ -106,7 +106,7 @@ GET  /metrics               # Prometheus: intake_deliveries_total{source,result}
 
 ### Source adapters
 
-Everything source-specific about receiving is one adapter per source. Body limits, storage, enqueueing, health and metrics are written once around it. Today's `services/*-ingestion/receiver.py` and `envelope.py` become these adapters. GitHub's is `services/intake/adapters/github.py` (EMBER-62), Slack's `services/intake/adapters/slack.py` (EMBER-67).
+Everything source-specific about receiving is one adapter per source. Body limits, storage, enqueueing, health and metrics are written once around it. The old `services/*-ingestion/receiver.py` and `envelope.py` became these adapters, now `connectors/<source>/webhook.py` in `services/backend` (EMBER-160); the `services/*-ingestion` folders are removed.
 
 ```python
 Source = Literal["github", "gitlab", "jira", "slack", "teams"]   # matches envelope v1 "type"
@@ -498,7 +498,7 @@ class GraphLoader(Protocol):                  # load: the only code that imports
     def delete_tenant(self, tenant: str) -> None: ...   # every tenant_subgraphs(tenant)
 ```
 
-Today's backfills (`pull_test.py` in each `services/*-ingestion`) become `Enricher.reconcile`. The ontology in `services/pipeline/ontology` is used by extract only.
+The old backfills (`pull_test.py` in each `services/*-ingestion`) became `backfill:<source>` in `services/backend` (`work/backfill.py`, EMBER-160 and EMBER-167). The ontology in `services/pipeline/ontology` is used by extract only.
 
 ## Admin and observability
 

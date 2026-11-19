@@ -60,7 +60,7 @@ services:
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
       SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET:-}"
 
-  # EMBER-160 (ADR 0012): intake and the workers in one image, replacing intake and the *-ingestion
+  # EMBER-160 (ADR 0012): intake and the workers in one image, replacing intake and the old *-ingestion
   # services as each connector moves in. With the postgres profile it waits for the migrations:
   #   docker compose -f infra/docker-compose.yml --env-file .env --profile postgres --profile backend up -d --build
   # A source whose secret is unset or unusable is disabled, not fatal: GET /status says why.

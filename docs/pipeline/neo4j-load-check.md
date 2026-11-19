@@ -101,7 +101,7 @@ data, by the `deleted-state` smoke query below.
 ## GitHub (EMBER-107)
 
 `python -m loader extract` maps the `source_records` that `enrich:github` writes
-(`services/github-ingestion/enrich.py`, `to_records`) into the `<tenant>_github` subgraph, with the same ordering,
+(`services/backend`, `connectors/github/enrich.py`, `to_records`) into the `<tenant>_github` subgraph, with the same ordering,
 delete and placeholder rules as Jira and Slack. Code: `loader/mappers/github.py` (`map_github_record`,
 `github_tombstone`). Only types `docs/graph-schema.md` already defines are used. Every node's key is the row's
 `object_id` where the object has one.

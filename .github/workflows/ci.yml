@@ -90,7 +90,7 @@ jobs:
       - name: Repo layout present
         run: |
           set -euo pipefail
-          for p in apps/web apps/cli apps/mcp services/backend services/pipeline services/github-ingestion apps/web/package.json apps/web/Dockerfile packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
+          for p in apps/web apps/cli apps/mcp services/backend services/pipeline apps/web/package.json apps/web/Dockerfile packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
             test -e "$p" || { echo "missing: $p"; exit 1; }
           done
           echo "layout ok"
@@ -186,18 +186,6 @@ jobs:
           docker run --rm --network host --entrypoint dbmate \
             -e DATABASE_URL='postgresql://postgres:ci-local@127.0.0.1:55432/ember_image_ci?sslmode=disable' \
             ember-backend:ci --no-dump-schema up
-      - name: GitHub ingestion local pull contract
-        run: python3 services/github-ingestion/test_pull.py
-      # EMBER-65: uses the pg container and dbmate the migrations step started and downloaded
-      - name: GitHub enrich worker against Postgres
-        env:
-          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
-        run: |
-          set -euo pipefail
-          # A venv per service, so each one's pinned requirements stay apart
-          python3 -m venv "$RUNNER_TEMP/github-enrich-venv"
-          "$RUNNER_TEMP/github-enrich-venv/bin/pip" install -q -r services/github-ingestion/requirements.txt
-          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/github-enrich-venv/bin/python3" services/github-ingestion/test_enrich.py
       # EMBER-77: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
       - name: Embed worker against Postgres
         env:

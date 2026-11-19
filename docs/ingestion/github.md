@@ -2,7 +2,7 @@
 
 - Jira: EMBER-44 (floor). The worker itself is EMBER-35.
 - GitHub's published limits were checked against docs.github.com on 2026-10-02. Links are in [Sources](#sources).
-- Operator steps for the pull live in `services/github-ingestion/README.md`. This page is the limit contract.
+- Status: the pull described here (`services/github-ingestion/pull_test.py`) was removed in EMBER-160. `backfill:github` (EMBER-167) and `enrich:github` in `ember-backend` call as the same App installation and keep these limit rules on the shared `rate_limits` rows. This page is the limit contract.
 
 The backfill (`services/github-ingestion/pull_test.py`) authenticates as a **GitHub App installation**. It spends two App JWT calls (installation lookup, then an installation access token) and then every repository read uses that installation token. A personal access token is not what this command sends. The numbers below are both documented because a later caller, or a person debugging a 403, needs to know which budget they are on.
 
