@@ -32,8 +32,8 @@ export const STATE_COOKIE = "ember_slack_connect";
 export const STATE_TTL_SECONDS = 15 * 60;
 
 /**
- * The bot scopes, as services/slack-ingestion/slack-app-manifest.json and
- * receiver.REQUIRED_BOT_SCOPES list them (docs/ingestion/slack.md, Auth).
+ * The bot scopes, as docs/ingestion/slack-app-manifest.json lists them
+ * (docs/ingestion/slack.md, Auth).
  * All read-only; no user scopes.
  */
 export const BOT_SCOPES = [
@@ -208,7 +208,7 @@ export function missingScopes(granted: string): string[] {
 
 // ---------------------------------------------------------------------------
 // The `api` credential. Its JSON is what enrich:slack reads
-// (services/slack-ingestion/workspaces.py, WorkspaceTokens), so the field names
+// (services/backend, connectors/slack/enrich.py: bot_token, bot_user_id), so the field names
 // are snake_case and stable.
 
 export interface SlackCredential {

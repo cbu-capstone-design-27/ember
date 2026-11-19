@@ -30,8 +30,7 @@ export const DEFAULT_INSTANCE = "https://gitlab.com";
 const API_PREFIX = "/api/v4";
 
 /**
- * The webhook triggers to tick, as `RECOMMENDED_WEBHOOK_TRIGGERS` in
- * services/gitlab-ingestion/receiver.py lists them (docs/ingestion/gitlab-webhooks.md).
+ * The webhook triggers to tick (docs/ingestion/gitlab-webhooks.md, Event types).
  */
 export const WEBHOOK_TRIGGERS = ["Push events", "Comments", "Issues events", "Merge request events"] as const;
 /** Signing tokens kept per group: one per webhook, so one per project on Free. */
@@ -247,7 +246,7 @@ export function parseSigningToken(raw: string): string | null {
 
 /**
  * The `api` credential. Its JSON is what enrich:gitlab reads
- * (services/gitlab-ingestion/enrich.py), so the field names are snake_case and stable.
+ * (services/backend, connectors/gitlab/enrich.py: token, base_url), so the field names are snake_case and stable.
  */
 export interface GitLabCredential {
   token: string;

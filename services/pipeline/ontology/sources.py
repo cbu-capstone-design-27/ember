@@ -38,7 +38,7 @@ def _gitlab(body: dict[str, Any]) -> str | None:
     # Webhook bodies name themselves in object_kind.
     if "object_kind" in body:
         return _GITLAB_HOOK_KINDS.get(body["object_kind"])
-    # REST objects from the backfill (services/gitlab-ingestion/pull.py) carry no
+    # REST objects from the backfill (backfill:gitlab in services/backend) carry no
     # object_kind, so they are classified by the fields only that object type has.
     if "noteable_type" in body:
         return "note"

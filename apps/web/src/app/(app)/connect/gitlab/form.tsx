@@ -18,7 +18,7 @@ interface Common {
   organizationId: string;
   organizationName: string;
   webhookUrl: string;
-  /** services/gitlab-ingestion/receiver.py's RECOMMENDED_WEBHOOK_TRIGGERS, from the server. */
+  /** lib/gitlab-connect.ts's WEBHOOK_TRIGGERS, from the server. */
   triggers: readonly string[];
 }
 

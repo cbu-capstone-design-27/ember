@@ -3,14 +3,15 @@
 Jira: EMBER-43. Stdlib only. Reads photon-source.json (a snapshot of the
 repo's GitHub issues, pull requests, comments, and releases) and writes:
 
-- slack-intake.jsonl, jira-intake.jsonl: EMBER-39 envelopes
-- slack-intake.jsonl.readable.md, jira-intake.jsonl.readable.md: the
-  connectors' own glance summaries
-- slack.md, jira.md: full-text transcripts for people
+- jira-intake.jsonl: EMBER-39 envelopes
+- jira-intake.jsonl.readable.md: the connector's own glance summary
+- jira.md: a full-text transcript for people
 
-The JSONL is not written by hand. The fake Slack Web API and fake Jira REST
-API below answer the real pull code in services/slack-ingestion and
-services/jira-ingestion, so the output is what those connectors emit.
+The JSONL is not written by hand. The fake Jira REST API below answers the
+real pull code in services/jira-ingestion, so the output is what that
+connector emits. The Slack files (slack-intake.jsonl, its .readable.md and
+slack.md) are frozen: they came from services/slack-ingestion's pull, removed
+in EMBER-160. The Slack world is still built here because Jira links to it.
 
     python3 services/pipeline/fixtures/photon/generate.py
     python3 services/pipeline/fixtures/photon/generate.py --out /tmp/photon
@@ -26,7 +27,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[3]
@@ -84,19 +85,6 @@ PEOPLE = {
 }
 
 TEAM_ID = "T08PHOTON01"
-TEAM = {
-    "id": TEAM_ID,
-    "name": "Photon",
-    "url": "https://photon-synthetic.slack.com/",
-    "domain": "photon-synthetic",
-    "email_domain": "",
-    "icon": {"image_default": True},
-    "avatar_base_url": "https://ca.slack-edge.com/",
-    "is_verified": False,
-    "lob_sales_home_enabled": False,
-    "is_sfdc_auto_slack": False,
-}
-
 U_RYAN = PEOPLE["ryan"]["slack"]
 U_SLACKBOT = "USLACKBOT"
 U_GITHUB = "U08GITHUB01"
@@ -484,35 +472,6 @@ class SlackWorld:
     def bug_created(self, reporter: str, key: str, summary: str, created: datetime, url: str) -> None:
         text = f"{reporter} created Bug <{url}|{key}: {summary}>"
         self._thread("photon-bugs", self._message(U_JIRA, created + timedelta(seconds=20), text), [], [])
-
-    def finish(self) -> None:
-        for cid in self.messages:
-            self.messages[cid].sort(key=lambda m: float(m["ts"]), reverse=True)
-
-    def answer(self, method: str, params: dict) -> dict:
-        page = {"ok": True, "response_metadata": {"next_cursor": ""}}
-        if method == "team.info":
-            return {"ok": True, "team": TEAM}
-        if method == "users.list":
-            return dict(page, members=self.users, cache_ts=int(utc("2026-10-05T16:30:00Z").timestamp()))
-        if method == "conversations.list":
-            return dict(page, channels=self.channels)
-        if method == "conversations.history":
-            return dict(page, messages=self.messages[params["channel"]], has_more=False, pin_count=0)
-        if method == "conversations.replies":
-            parent = next(m for m in self.messages[params["channel"]] if m["ts"] == params["ts"])
-            return dict(page, messages=[parent] + self.replies[(params["channel"], params["ts"])], has_more=False)
-        return {"ok": False, "error": "unknown_method"}
-
-def slack_exchange(world: SlackWorld, module):
-    def exchange(method: str, url: str, headers: dict, body):
-        parts = urlsplit(url)
-        api_method = parts.path.rsplit("/", 1)[-1]
-        params = {k: v[0] for k, v in parse_qs(parts.query).items()}
-        payload = world.answer(api_method, params)
-        return module.Response(200, {}, json.dumps(payload).encode("utf-8"))
-
-    return exchange
 
 ORIGIN = "https://photon-synthetic.atlassian.net"
 API = f"{ORIGIN}/rest/api/3"
@@ -1142,33 +1101,6 @@ def jira_exchange(world: JiraWorld, module):
 
     return exchange
 
-def slack_markdown(envelopes: list[dict]) -> str:
-    bodies = [env["body"] for env in envelopes]
-    names = {b["id"]: b.get("real_name") or b["name"] for b in bodies if "profile" in b and "is_bot" in b}
-    channels = [b for b in bodies if b.get("is_channel")]
-    team = bodies[0]
-    lines = [f"# Slack: {team['name']} (synthetic)", "",
-             f"Workspace `{team['id']}` at {team['url']}. Generated for EMBER-43 from the ryan-stoffel/photon history. "
-             "Times are Pacific. Thread replies are indented under their parent.", "",
-             "## Members", ""]
-    for b in bodies:
-        if "profile" in b and "is_bot" in b:
-            kind = "bot" if b["is_bot"] else "person"
-            email = f", {b['profile']['email']}" if b["profile"].get("email") else ""
-            lines.append(f"- {names[b['id']]} (`{b['id']}`, {kind}{email})")
-    for channel in channels:
-        messages = [b for b in bodies if b.get("type") == "message" and b.get("channel") == channel["id"]]
-        lines += ["", f"## #{channel['name']}", "", f"_{channel['purpose']['value']}_ {len(messages)} messages.", ""]
-        for m in messages:
-            when = pacific(datetime.fromtimestamp(float(m["ts"]), tz=timezone.utc))
-            text = m["text"].replace("\n", " ")
-            reacts = "".join(f" :{r['name']}:" for r in m.get("reactions", []))
-            if m.get("thread_ts") not in (None, m["ts"]):
-                lines.append(f"    - **{names.get(m['user'], m['user'])}** {when}: {text}")
-            else:
-                lines.append(f"- **{names.get(m['user'], m['user'])}** {when}: {text}{reacts}")
-    return "\n".join(lines).rstrip() + "\n"
-
 def adf_markdown(node, depth: int = 0) -> str:
     if isinstance(node, list):
         return "".join(adf_markdown(child, depth) for child in node)
@@ -1271,34 +1203,29 @@ def write_jsonl(path: Path, envelopes: list[dict]) -> None:
             stream.write(json.dumps(envelope, separators=(",", ":"), ensure_ascii=False) + "\n")
 
 def generate(out: Path) -> dict[str, int]:
+    """Writes the Jira files. The Slack files are frozen: the Slack pull they came from was removed (EMBER-160),
+    but the Slack world is still built, since the Jira board links to its threads."""
     source = json.loads(SOURCE.read_text(encoding="utf-8"))
-    slack_pull = _load("slack-ingestion", "slack_pull")
     jira_pull = _load("jira-ingestion", "jira_pull")
 
     slack = SlackWorld(source)
     jira = JiraWorld(source, slack)
-    slack.finish()
 
-    client = slack_pull.make_client("xoxb-synthetic", slack_exchange(slack, slack_pull), gates=slack_pull.MethodGates())
-    slack_envelopes = [slack_pull.wrap_slack(body) for body in slack_pull.collect(client, workers=1)]
     jira_envelopes = list(jira_pull.pull(ORIGIN, "synthetic@example.com", "synthetic-token", PROJECT_KEY,
                                          jira_exchange(jira, jira_pull), workers=1))
 
     out.mkdir(parents=True, exist_ok=True)
-    write_jsonl(out / "slack-intake.jsonl", slack_envelopes)
     write_jsonl(out / "jira-intake.jsonl", jira_envelopes)
-    (out / "slack-intake.jsonl.readable.md").write_text(slack_pull.render_summary(slack_envelopes), encoding="utf-8")
     (out / "jira-intake.jsonl.readable.md").write_text(jira_pull.render_summary(PROJECT_KEY, jira_envelopes), encoding="utf-8")
-    (out / "slack.md").write_text(slack_markdown(slack_envelopes), encoding="utf-8")
     (out / "jira.md").write_text(jira_markdown(jira_envelopes, jira_pull), encoding="utf-8")
-    return {"slack": len(slack_envelopes), "jira": len(jira_envelopes)}
+    return {"jira": len(jira_envelopes)}
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate the synthetic photon Slack and Jira fixtures.")
     parser.add_argument("--out", type=Path, default=HERE, help="Output folder. Default: next to this script.")
     args = parser.parse_args(argv)
     counts = generate(args.out)
-    print(f"slack {counts['slack']} envelopes, jira {counts['jira']} envelopes -> {args.out}", file=sys.stderr)
+    print(f"jira {counts['jira']} envelopes -> {args.out}", file=sys.stderr)
     return 0
 
 if __name__ == "__main__":
