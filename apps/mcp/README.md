@@ -8,7 +8,7 @@ The server reads for one Ember user, `EMBER_USER_EMAIL`, and sees every graph an
 
 - **Tenants.** On each tool call it runs `ember_user_tenants(email)`, which reads the web app's Better Auth tables (`web.user` → `web.member` → `web.organization.tenant`, matched on the lowercased email). The function is `security definer`, owned by `ember`. That is simpler than column grants: the web app creates `web.*` on its first start, after the migrations, so a migration can't grant on them, and the reader never gets a direct view of other users' memberships. The function is plpgsql, so it finds the tables at call time and returns no tenants before they exist.
 - **Row-level security.** Every call is one read-only transaction that sets `ember.tenants` to that list (`set_config(..., true)`). The policies from EMBER-164 do the rest on `graph.*`, `episodes` and `source_records`. Graphiti runs on the same connection.
-- **The role.** `DATABASE_URL` must be a login role in `ember_graph_reader`, `ember_mcp`. The server refuses to run as the tables' owner, a superuser or a role with `bypassrls`, since those skip row-level security. Locally, compose's `postgres-mcp-role` creates it (password `MCP_POSTGRES_PASSWORD`, default `change-me-locally`). On the cluster, the operator manages it (`infra/k8s/apps/postgres/cluster.yaml`), with its password in Secret `postgres-mcp`.
+- **The role.** `DATABASE_URL` must be a login role in `ember_graph_reader`, `ember_mcp`. The server refuses to run as the tables' owner, a superuser or a role with `bypassrls`, since those skip row-level security. Locally, compose's `postgres-mcp-role` creates it (password `MCP_POSTGRES_PASSWORD`, default `change-me-locally`). On the cluster, the CloudNativePG Cluster in the private infra repo has to manage it as a role with `inRoles: [ember_graph_reader]` and its password in Secret `postgres-mcp`.
 - **No access.** An email in no organization gets a tool error from `search`, `get_record` and `history`, and `whoami` shows no tenants.
 
 ## Search
@@ -69,7 +69,7 @@ scripts/local-stack.sh
 It starts Postgres, applies the migrations and creates `ember_mcp` (`postgres-mcp-role`). Then it runs, until Ctrl+C, with logs in `/tmp/ember-local-stack`:
 
 - the web app on that Postgres at http://localhost:3000, so the MCP sees the accounts and organizations you make there
-- each source's enrich worker whose credentials are in `.env`; it prints which ones it skipped and why
+- `ember-backend` (`services/backend`): intake on `localhost:8080`, plus each enrich and backfill part whose settings are in `.env`. `python -m ember check` prints which parts are disabled and why
 - extract, then load with `GRAPH_STORE=postgres`
 - embed, when `EMBEDDING_URL` is set. Without it, search runs on BM25 and graph traversal
 
@@ -77,7 +77,7 @@ It ignores `DATABASE_URL` from `.env`. Then sign up at http://localhost:3000 and
 
 ### Connecting accounts: what you still do by hand
 
-No source pulls its history into `source_records` yet. Reconcile isn't built (ADR 0010, "Replay and backfill on connect"), and the pull scripts only write JSONL. Webhooks bring new events only, and they need a public HTTPS URL to intake (a tunnel to `localhost:8080`). For Jira and Slack, `seed_photon.py` imports a pull's JSONL under your tenant, since the photon fixtures are that same output. The running extract and load then build the graph.
+Only Slack pulls its history on connect. The backend's `backfill:slack` reads each connected workspace's channels. GitHub and Jira reconcile aren't built (ADR 0010, "Replay and backfill on connect"), and their pull scripts only write JSONL. Webhooks bring new events only, and they need a public HTTPS URL to intake (a tunnel to `localhost:8080`). For Jira, `seed_photon.py` imports a pull's JSONL under your tenant, since the photon fixtures are that same output. The running extract and load then build the graph.
 
 - [ ] **Every source.** In `.env`: `SOURCE_CREDENTIALS_API_KEYS` and `SOURCE_CREDENTIALS_WEBHOOK_KEYS`, each `k1:<openssl rand -base64 32>` (`packages/source-credentials`).
 - [ ] **Jira.** Create an OAuth 2.0 (3LO) app in the Atlassian developer console with scopes `read:jira-work`, `read:jira-user` and `manage:jira-webhook`, callback `http://localhost:3000/connect/jira/callback`, and sharing on. Set `JIRA_OAUTH_CLIENT_ID`, `JIRA_OAUTH_CLIENT_SECRET` and `JIRA_WEBHOOK_URL` (it must be HTTPS, or Connect Jira is disabled). Connect in Settings → Connections. History, with an API token for `JIRA_BASE_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN`:
@@ -86,11 +86,7 @@ No source pulls its history into `source_records` yet. Reconcile isn't built (AD
   DATABASE_URL=postgresql://ember:change-me-locally@localhost:5432/ember \
     .venv/bin/python apps/mcp/seed_photon.py --no-embed --tenant <your org slug> --jira /tmp/jira.jsonl
   ```
-- [ ] **Slack.** There is no web connect flow yet (EMBER-148). Create the app from `services/slack-ingestion/slack-app-manifest.json`, install it and set `SLACK_BOT_TOKEN`. History: `pull_test.py --output /tmp/slack.jsonl`, then `seed_photon.py ... --slack /tmp/slack.jsonl` as above. For live events, map the workspace to your tenant with `infra/ansible/playbooks/map-tenant.sql` against the local database (`make map-tenant` only targets the cluster):
-  ```sh
-  psql postgresql://ember:change-me-locally@localhost:5432/ember \
-    -v source=slack -v account=<team id> -v tenant=<your org slug> -f infra/ansible/playbooks/map-tenant.sql
-  ```
+- [ ] **Slack.** Create a dev app from `services/slack-ingestion/slack-app-manifest.json`, with OAuth redirect URL `http://localhost:3000/connect/slack/callback`. Set `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`, then connect the workspace in Settings → Connections (EMBER-148). `backfill:slack` then reads the history of every channel the bot is in, within 30 s and hourly after that. Live events also need `SLACK_SIGNING_SECRET` and a public URL to intake.
 - [ ] **GitHub.** Register a dev GitHub App with callback `http://localhost:3000/connect/github/callback`, "Request user authorization (OAuth) during installation" on, and read access to Metadata, Contents, Issues, Pull requests and Members. Generate a client secret and a private key. Set `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_SLUG` and `GITHUB_APP_PRIVATE_KEY_PATH`, then connect in Settings → Connections. History: none yet. `pull_test.py`'s output isn't in a shape `seed_photon.py` reads, so only webhook events arrive, and those need `GITHUB_WEBHOOK_SECRET` and a public URL to intake.
 - [ ] **GitLab.** Connect in Settings → Connections by pasting a `read_api` token for an HTTPS instance (`GITLAB_WEBHOOK_URL` must be HTTPS too). History: none in the graph yet. `pull.py` writes JSONL only, and extract doesn't map GitLab.
 
