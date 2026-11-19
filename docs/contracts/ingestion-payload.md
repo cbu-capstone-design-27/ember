@@ -26,9 +26,9 @@ One sample each, under `packages/ingestion-envelope/fixtures/`:
 
 - `github.json` — GitHub `issues` `opened` webhook. `services/intake` stores this shape in `raw_events.envelope` for each `POST /webhook/github` (EMBER-62), and `services/github-ingestion`'s local pull emits it once per REST object (EMBER-35). `body` stays the raw webhook or API object.
 - `jira.json` — Jira `jira:issue_updated` webhook
-- `slack.json` — Slack `event_callback` message. `services/slack-ingestion` emits this shape from `POST /webhook/slack` (EMBER-36). Requirements and architecture: `docs/ingestion/slack.md`.
+- `slack.json` — Slack `event_callback` message. `services/backend` stores this shape for each `POST /webhook/slack`, and `backfill:slack` shapes each message it reads the same way (EMBER-36, EMBER-160). Requirements and architecture: `docs/ingestion/slack.md`.
 - `teams.json` — Microsoft Graph change notification
-- `gitlab.json` — GitLab merge request hook. `services/gitlab-ingestion` emits this shape from `POST /webhook/gitlab` and, on the backfill, once per REST object (EMBER-54). Requirements and architecture: `docs/ingestion/gitlab.md`.
+- `gitlab.json` — GitLab merge request hook. `services/backend` stores this shape for each `POST /webhook/gitlab`, and `backfill:gitlab` stores one REST object per row (EMBER-54, EMBER-160). Requirements and architecture: `docs/ingestion/gitlab.md`.
 
 ```sh
 python3 packages/ingestion-envelope/test_contract.py

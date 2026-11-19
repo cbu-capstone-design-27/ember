@@ -1,6 +1,7 @@
-// Create or join an organization (EMBER-124). Where the signed-in app sends a
-// user who belongs to none, and where the sidebar's menu leads to make or
-// join another one. Invites addressed to the user's email wait here.
+// Create or join an organization (EMBER-124), where the sidebar's menu leads
+// to make or join another one. Invites addressed to the user's email wait here.
+// Every user already has a personal workspace (EMBER-165), so nobody is sent
+// here for lack of one.
 
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -20,7 +21,6 @@ const DATE = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", 
 export default async function OrganizationsPage() {
   const user = await requireUser("/organizations");
   const [{ memberships }, invitations] = await Promise.all([getCurrentOrganizations(), invitationsFor(getAuth(), user.email)]);
-  const firstTime = memberships.length === 0;
 
   return (
     <div className={shell.page}>
@@ -29,17 +29,15 @@ export default async function OrganizationsPage() {
           <Wordmark size={20} />
         </Link>
         <div className={shell.headerActions}>
-          {!firstTime && (
-            <Link href="/dashboard" className="btn btn-ghost btn-sm">
-              Back to the dashboard
-            </Link>
-          )}
+          <Link href="/dashboard" className="btn btn-ghost btn-sm">
+            Back to the dashboard
+          </Link>
           <SignOutButton />
         </div>
       </header>
       <main className={shell.main}>
         <div className={shell.intro}>
-          <h1>{firstTime ? "Create or join an organization" : "Organizations"}</h1>
+          <h1>Organizations</h1>
           <p>
             An organization is a project your team works on together: its members see the same tickets, pull requests and
             discussions. You can belong to several.
@@ -68,26 +66,24 @@ export default async function OrganizationsPage() {
             </section>
           )}
 
-          {!firstTime && (
-            <section className={styles.panel} aria-labelledby="yours">
-              <div className={styles.panelHead}>
-                <h2 id="yours">Your organizations</h2>
-              </div>
-              <ul className={styles.rows} role="list">
-                {memberships.map((org) => (
-                  <li key={org.id} className={styles.row}>
-                    <div className={styles.rowText}>
-                      <b>{org.name}</b>
-                      <span>
-                        {org.slug} · {org.role}
-                      </span>
-                    </div>
-                    <OpenOrganizationButton organizationId={org.id} />
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
+          <section className={styles.panel} aria-labelledby="yours">
+            <div className={styles.panelHead}>
+              <h2 id="yours">Your organizations</h2>
+            </div>
+            <ul className={styles.rows} role="list">
+              {memberships.map((org) => (
+                <li key={org.id} className={styles.row}>
+                  <div className={styles.rowText}>
+                    <b>{org.name}</b>
+                    <span>
+                      {org.slug} · {org.role}
+                    </span>
+                  </div>
+                  <OpenOrganizationButton organizationId={org.id} />
+                </li>
+              ))}
+            </ul>
+          </section>
 
           <section className={styles.panel} aria-labelledby="create">
             <div className={styles.panelHead}>

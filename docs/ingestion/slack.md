@@ -1,7 +1,7 @@
 # Slack ingestion: requirements and architecture
 
 - Jira: EMBER-36 (floor), epic EMBER-7 (Slack Ingestion)
-- Status: proposed, for team review. Intake worker built: `services/slack-ingestion`.
+- Status: built in `ember-backend` (EMBER-160): intake's Slack adapter, `enrich:slack` and `backfill:slack`, on the tokens Connect Slack stores (EMBER-148). `services/slack-ingestion`, which this doc describes in places (its receiver, `pull_test.py`, `SLACK_BOT_TOKEN`), was removed. [`slack-webhooks.md`](slack-webhooks.md) is current.
 - Verified live against the Ember workspace (2026-09-29):
   - Receiver, reached through a temporary tunnel: Slack's Request URL check passed with signing on. Slack delivered a message, a thread reply, a `message_changed` edit, a reaction, and six `channel_join` events. Each one was signature-checked and each envelope validated.
   - Backfill: it read the workspace, its members, and the history of the channels the bot had been invited to. Channels the bot wasn't in were skipped.
@@ -14,7 +14,7 @@ This section answers the three EMBER-36 acceptance criteria directly. Each answe
 ### 1. Requirements documented (auth, events, data shapes, rate limits)
 
 - **Auth:**
-  - One Slack app per deployment, created from `services/slack-ingestion/slack-app-manifest.json`.
+  - One Slack app per deployment, created from [`slack-app-manifest.json`](slack-app-manifest.json).
   - Each workspace installs the app and gets a **bot token** (`xoxb-…`). The app has one **signing secret**, which checks that every live request came from Slack.
   - The bot has 8 read-only scopes:
     - `channels:history` and `groups:history`
