@@ -71,7 +71,7 @@ The app's scopes and events are in `docs/ingestion/slack-app-manifest.json`. Set
 
 ## Jira adapter
 
-[`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md) is the spec. `enrich:jira` (`services/jira-ingestion/enrich.py`) reads the rows.
+[`docs/ingestion/jira-webhooks.md`](../../docs/ingestion/jira-webhooks.md) is the spec. `enrich:jira` in `services/backend` reads the rows.
 
 - **Verification,** one of two ways, by what the delivery carries:
   - **`Authorization: Bearer <JWT>`**, from a dynamic webhook that Connect Jira registered (EMBER-131). The token must be HS256, signed with the 3LO app's client secret (`JIRA_OAUTH_CLIENT_SECRET`), and unexpired, with 60 s leeway on `exp` and `iat`. The algorithm is pinned, so a token can't pick its own. Atlassian doesn't document the claims, so intake checks none beyond these. It logs their names once per process, to settle that question on the first real delivery. Neither the body nor the URL is signed, so the token proves the delivery came from Ember's app, not which site sent it.
