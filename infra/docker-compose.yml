@@ -4,16 +4,14 @@
 #   cp .env.example .env          # first time only; fill in values
 #   docker compose -f infra/docker-compose.yml --env-file .env up -d
 #
-# Neo4j starts by default. intake, backend and jira-ingestion are optional profiles so a
-# plain `up` stays Neo4j-only (Slack and GitLab run in backend, EMBER-160):
+# Neo4j starts by default. intake, backend and the rest are optional profiles so a
+# plain `up` stays Neo4j-only (Slack, GitLab and Jira run in backend, EMBER-160):
 #   # webhook listener on localhost:8080; needs the postgres profile below running
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile intake up --build intake
 #   # Ember web app on http://localhost:3000 (SQLite in volume web-data):
 #   docker compose -f infra/docker-compose.yml --env-file .env \
 #     --profile web up --build web
-#   docker compose -f infra/docker-compose.yml --env-file .env \
-#     --profile jira-ingestion up --build jira-ingestion
 # Postgres, the ingestion store, on localhost:5432, then the migrations applied once.
 # `down -v` drops its data:
 #   docker compose -f infra/docker-compose.yml --env-file .env \
@@ -192,19 +190,6 @@ services:
               count: all
               capabilities: [gpu]
 
-  # EMBER-31. Not part of the default `up` (see profiles).
-  jira-ingestion:
-    profiles: ["jira-ingestion"]
-    build:
-      context: ..
-      dockerfile: services/jira-ingestion/Dockerfile
-    container_name: ember-jira-ingestion
-    ports:
-      - "${JIRA_INGESTION_PORT:-8081}:${JIRA_INGESTION_PORT:-8081}"
-    environment:
-      # receiver.py reads only these two. The API token is pull_test.py's, run by hand, not here.
-      JIRA_WEBHOOK_SECRET: "${JIRA_WEBHOOK_SECRET:-}"
-      JIRA_INGESTION_PORT: "${JIRA_INGESTION_PORT:-8081}"
 
   web:
     profiles: ["web"]

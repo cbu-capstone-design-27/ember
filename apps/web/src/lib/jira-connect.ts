@@ -304,7 +304,7 @@ export class AtlassianClient {
 
 // ---------------------------------------------------------------------------
 // The `api` credential. Its JSON is what enrich:jira and the keep-alive read
-// (services/jira-ingestion), so the field names are snake_case and stable.
+// (services/backend, connectors/jira/atlassian.py), so the field names are snake_case and stable.
 
 export interface JiraCredential {
   access_token: string;

@@ -2,7 +2,7 @@
 
 - Jira: EMBER-69 (floor). GitHub's half is [`github-webhooks.md`](github-webhooks.md).
 - Status: proposed, for team review. Headers, retries and limits were checked against Atlassian's docs (developer.atlassian.com) on 2026-10-13. Links are in [Sources](#sources).
-- This is the spec for the `enrich:jira` worker (EMBER-66). [`architecture.md`](architecture.md) covers the pipeline as a whole. `services/jira-ingestion/README.md` covers webhook registration, credentials and the backfill.
+- This is the spec for the `enrich:jira` worker (EMBER-66). [`architecture.md`](architecture.md) covers the pipeline as a whole. The connector is `connectors/jira` in `services/backend`.
 - Related: EMBER-62 (intake), EMBER-63 (source ordering column), EMBER-31 (Jira connector)
 
 Jira sends the data itself (`architecture.md`, [Webhooks per source](architecture.md#webhooks-per-source-data-or-signal)). Intake stores each delivery in `raw_events` as it arrived. `enrich:jira` adds only what the payload lacks, then writes `source_records`.
@@ -25,7 +25,7 @@ Jira posts JSON to `/webhook/jira` one of two ways. Intake verifies the delivery
 
 `services/intake/README.md`, Jira adapter, has both checks. Every other rule on this page applies to both paths, except where it says otherwise.
 
-**Intake must answer exactly 200.** Atlassian: "All other response codes should be treated as an unsuccessful attempt." Today's `services/jira-ingestion/receiver.py` answers 202. Intake as `architecture.md` describes it answers 200.
+**Intake must answer exactly 200.** Atlassian: "All other response codes should be treated as an unsuccessful attempt." Intake answers 200.
 
 **Headers:**
 
@@ -46,15 +46,34 @@ Jira posts JSON to `/webhook/jira` one of two ways. Intake verifies the delivery
 | `issue_event_type_name` | The Jira event behind an issue webhook, e.g. `issue_generic`, `issue_commented` | Kept in the record |
 | `user` | Who did it. "Always present … for issue events" (Atlassian) | Kept in the record |
 | `issue`, `changelog`, `comment`, `worklog`, … | The entity, per event below | Everything below |
-| `cloudId` | The site's id. Admin webhook bodies often omit it (`services/jira-ingestion/README.md`) | Not relied on |
+| `cloudId` | The site's id. Admin webhook bodies often omit it | Not relied on |
 
 **`event_name`** for `raw_events`: `webhookEvent` as sent, e.g. `comment_created`.
 
 **Body size:** Jira doesn't deliver webhooks over 25 MB. Intake refuses bodies over 8 MiB with a 413, which Jira doesn't retry. Reconcile stores the issue later.
 
+### Registering an admin webhook
+
+A site connected from the web app (Connect Jira, EMBER-131) needs none of this: the web app registers a dynamic webhook. An admin webhook is for a site set up by hand. Moved from the removed `services/jira-ingestion/README.md` (EMBER-160).
+
+1. Jira Administration → System → Webhooks → Create a webhook (or `POST /rest/webhooks/1.0/webhook`).
+2. URL: intake's public address, `https://<public-host>/webhook/jira`. Jira delivers admin webhooks only to allow-listed ports (`443`, `8080`, `8443` and the rest of Atlassian's list), so terminate TLS on `443`.
+3. Leave "Exclude body" off, so the issue object is in the POST.
+4. Subscribe to:
+   - `jira:issue_created`, `jira:issue_updated`, `jira:issue_deleted`
+   - `comment_created`, `comment_updated`, `comment_deleted`
+   - `worklog_created`, `worklog_updated`, `worklog_deleted`
+   - `attachment_created`, `attachment_deleted`
+   - `issuelink_created`, `issuelink_deleted`
+   - `issue_property_set`, `issue_property_deleted`
+
+   `jira:issue_updated` carries the changelog for that edit; there is no separate changelog event. Watchers, votes and remote links have no admin webhook event.
+5. JQL: empty receives every project on the site.
+6. Generate a secret, set it as `JIRA_WEBHOOK_SECRET` for intake, and save it on the webhook. Jira won't show it again.
+
 ## Event types: payload and what enrich fetches
 
-**Admin webhook:** the subscription list is in `services/jira-ingestion/README.md` (registration step 4). Intake accepts any JSON object and doesn't read `webhookEvent` except to store it. The webhook's JQL is empty, so every project on the site is sent.
+**Admin webhook:** the subscription list is in [Registering an admin webhook](#registering-an-admin-webhook), step 4. Intake accepts any JSON object and doesn't read `webhookEvent` except to store it. The webhook's JQL is empty, so every project on the site is sent.
 
 **Dynamic webhook:** `WEBHOOK_EVENTS` in `apps/web/src/lib/jira-connect.ts`. A dynamic webhook can carry only issue, comment, issue property, sprint and version events. So Connect Jira subscribes to the issue, comment and issue property events below, and **worklog, attachment and issue link events never arrive** from it. Each of those changes the issue too (time spent, the attachment list, the links), so a `jira:issue_updated` with that edit in its `changelog` arrives instead, and reconcile reads the worklogs, attachments and links themselves. Sprint and version events are left out, as they are on the admin webhook ([open questions](#open-questions)). The JQL names the projects the owner ticked, by id, because a key changes when a project is renamed. A project created later isn't sent until the owner reconnects and ticks it.
 
@@ -174,13 +193,13 @@ Connect Jira stores one `api` row per site in `source_credentials` (`account_id`
 | `jql` | The webhook's filter, `project in (<ids>)` |
 | `atlassian_account_id`, `atlassian_name` | The Atlassian user who consented. The token and the webhooks are theirs |
 
-**Refreshing:** lock the row (`select … for update`), refresh if `expires_at` is less than 5 minutes away, write the new pair back, and commit before using it. Two workers refreshing the same token at once would leave one with a refresh token that no longer works. `freshJiraCredential` in `apps/web/src/lib/jira-connect.ts` and `SiteCredentials.fresh` in `services/jira-ingestion/atlassian.py` do this.
+**Refreshing:** lock the row (`select … for update`), refresh if `expires_at` is less than 5 minutes away, write the new pair back, and commit before using it. Two workers refreshing the same token at once would leave one with a refresh token that no longer works. `freshJiraCredential` in `apps/web/src/lib/jira-connect.ts` and `SiteCredentials.fresh` in `services/backend` (`connectors/jira/atlassian.py`) do this.
 
 **Who uses it:** enrich calls `api.atlassian.com/ex/jira/<cloud_id>` with `access_token`, but only for rows of the tenant that connected the site, and only while it is connected. It has no other way to read Jira: a row without its tenant's token fails and is retried on the next poll. The site's `rate_limits` bucket is `https://<site>`.
 
 ## Keeping dynamic webhooks alive
 
-A dynamic webhook lapses 30 days after it was registered or last extended (`PUT /rest/api/3/webhook/refresh`, which moves the expiry to 30 days from now). A refresh token expires after 90 days without use. `services/jira-ingestion/keep_alive.py` runs daily as CronJob `enrich-jira-keep-alive`; in `services/backend` it is component `keep-alive:jira`, at the same 10:17 UTC, one replica at a time by a Postgres advisory lock (EMBER-160). For each connected site with an `api` credential, it refreshes the token whether or not it is due, then extends the site's `webhook_ids`.
+A dynamic webhook lapses 30 days after it was registered or last extended (`PUT /rest/api/3/webhook/refresh`, which moves the expiry to 30 days from now). A refresh token expires after 90 days without use. Component `keep-alive:jira` in `services/backend` runs daily at 10:17 UTC, one replica at a time by a Postgres advisory lock (EMBER-160). For each connected site with an `api` credential, it refreshes the token whether or not it is due, then extends the site's `webhook_ids`.
 
 - **Refresh refused** (`invalid_grant`: the user lost access to the site, revoked the app, or left the token unused for 90 days): it disconnects the site, as Settings' Disconnect does, without the webhook delete that no token can make. Settings then asks for a reconnect. Any other refusal (a wrong client secret, say) is ours to fix, so the site stays connected.
 - **Anything else fails** (Atlassian down, a webhook id it no longer knows): the site is logged and the run exits 1, so the Job shows as failed (in the backend, `/status` shows the run's failed count). The next day's run tries again, well inside the 30 days.

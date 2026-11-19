@@ -90,7 +90,7 @@ jobs:
       - name: Repo layout present
         run: |
           set -euo pipefail
-          for p in apps/web apps/cli apps/mcp services/backend services/pipeline services/github-ingestion services/jira-ingestion apps/web/package.json apps/web/Dockerfile packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
+          for p in apps/web apps/cli apps/mcp services/backend services/pipeline services/github-ingestion apps/web/package.json apps/web/Dockerfile packages infra docs/adr .github/PULL_REQUEST_TEMPLATE.md .github/CODEOWNERS; do
             test -e "$p" || { echo "missing: $p"; exit 1; }
           done
           echo "layout ok"
@@ -221,26 +221,6 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/pipeline-venv"
           "$RUNNER_TEMP/pipeline-venv/bin/pip" install -q -r requirements.txt
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/pipeline-venv/bin/python3" -m unittest loader.test_pg_load loader.test_pg_writer -v
-      - name: Jira ingestion webhook contract
-        run: python3 services/jira-ingestion/test_webhook.py
-      - name: Jira ingestion local pull contract
-        run: python3 services/jira-ingestion/test_pull.py
-      - name: Jira ingestion webhook smoke
-        env:
-          JIRA_WEBHOOK_SECRET: ci-local-smoke
-        run: python3 services/jira-ingestion/smoke_webhook.py
-      # EMBER-66: on the pg container and dbmate from "Postgres migrations match the ingestion doc"
-      - name: Jira enrich worker and keep-alive
-        env:
-          PGTEST_URL: postgresql://postgres:ci-local@127.0.0.1:55432/postgres?sslmode=disable
-        run: |
-          set -euo pipefail
-          # A venv per service, so each one's pinned requirements stay apart
-          python3 -m venv "$RUNNER_TEMP/enrich-venv"
-          "$RUNNER_TEMP/enrich-venv/bin/pip" install -q -r services/jira-ingestion/requirements.txt
-          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/enrich-venv/bin/python3" services/jira-ingestion/test_enrich.py
-          # EMBER-131: Connect Jira's tokens kept alive daily
-          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/enrich-venv/bin/python3" services/jira-ingestion/test_keep_alive.py
       - name: Photon synthetic Slack and Jira fixtures
         run: python3 services/pipeline/fixtures/photon/test_fixtures.py
       # EMBER-79: on the pg container and dbmate from "Postgres migrations match the ingestion doc". EMBER-166's
