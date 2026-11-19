@@ -20,7 +20,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from graphiti_test import fake_models
-from graphiti_test.report import compare, split_ranking
+from graphiti_test.report import compare
 
 URL = os.environ.get("GRAPHITI_TEST_DATABASE_URL")
 
@@ -84,10 +84,8 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(len(rows), 9 * 5)
         self.assertEqual([r for r in rows if "error" in r and r["reranker"] != "mmr"], [])
 
-    @unittest.expectedFailure
     def test_mmr_runs_on_every_question(self):
-        """Known fork gap: its node upsert sets embedding = excluded.embedding, so a resave without a vector nulls
-        it, and MMR gets None. Passes once the fork keeps the stored vector."""
+        """MMR needs every node's vector. The fork keeps it on a resave, even when Ember's embed trigger drops it."""
         rows = self.reference["comparable"]["search"]
         self.assertEqual([r for r in rows if "error" in r and r["reranker"] == "mmr"], [])
 
@@ -112,10 +110,7 @@ class EndToEnd(unittest.TestCase):
         fresh_out = Path(self.tmp.name) / "fresh"
         self.assertEqual(go(arguments(fresh_out)), 0)
         fresh = json.loads((fresh_out / "reference.json").read_text(encoding="utf-8"))
-        hard, _order = split_ranking(compare(self.reference, fresh))  # order moves on its own: see split_ranking
-        # Known fork gap: on Postgres, search and temporal results move between identical runs (top-3 membership,
-        # not just order), so only what was written is compared here.
-        self.assertEqual([d for d in hard if not d.startswith(("/search", "/temporal"))][:10], [])
+        self.assertEqual(compare(self.reference, fresh)[:10], [])  # search order included: the fork breaks ties by id
 
 
 @unittest.skipUnless(URL, "GRAPHITI_TEST_DATABASE_URL not set")
