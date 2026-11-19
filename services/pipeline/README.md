@@ -145,6 +145,42 @@ dbmate, and is CI's `Pipeline loader against Postgres` step:
 With `NEO4J_TEST_URI` and `NEO4J_PASSWORD` set it also loads into that Neo4j (tenant `it-pg-load`, reset
 by the test).
 
+### The graph in Postgres (EMBER-164)
+
+`GRAPH_STORE=postgres` makes load write `graph.graphs`, `graph.nodes`, `graph.edges` and `graph.mentions`
+(ADR 0011, Phase A) instead of Neo4j, in the same transaction that stamps `loaded_at`. The default stays
+`neo4j`. Each connected scope gets its own graph, owned by its tenant: a GitHub repo, a GitLab project, a
+Jira project (`<site host>/<KEY>`) or a Slack workspace (`ontology.graph_scope`), with group_id
+`{tenant}_{source}_{graphs.id}`. A link step adds `SAME_AS` (same source identity, or same email across
+sources) and `REFERENCES` (Jira keys and pull request URLs in text) between one tenant's graphs, with
+`graph_id` null and `props.method` set. Rules: `loader/pg_writer.py`. Embeddings stay null for now.
+
+With the compose Postgres started and migrated as above, from the repo root:
+
+    export DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable'
+    python3 apps/mcp/seed_photon.py --no-embed
+    cd services/pipeline
+    python -m loader extract --once
+    GRAPH_STORE=postgres python -m loader load --once
+
+A tenant's graphs with their node and edge counts (placeholders not counted; `link_edges` start in that graph):
+
+```sql
+select g.tenant, g.source, g.scope, g.group_id,
+       (select count(*) from graph.nodes n where n.graph_id = g.id and not n.placeholder) as nodes,
+       (select count(*) from graph.edges e where e.graph_id = g.id) as edges,
+       (select count(*) from graph.edges e join graph.nodes s on s.id = e.src
+         where e.graph_id is null and s.graph_id = g.id) as link_edges
+  from graph.graphs g
+ where g.tenant = 'photon'
+ order by g.source, g.scope;
+```
+
+Readers (MCP, web) `set role ember_graph_reader` and set `ember.tenants` to a comma-separated list per
+transaction (`select set_config('ember.tenants', 'photon', true)`). Row-level security shows them only those
+tenants' graphs, episodes and source_records, and nothing when it is unset. `test_pg_writer.py` runs beside
+`test_pg_load.py`, with the same `PGTEST_URL`.
+
 ## Models (EMBER-49)
 
 The pipeline calls a chat model and an embedding model chosen by a profile in `config/models.toml`.

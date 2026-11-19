@@ -7,11 +7,18 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-_NAMESPACE = uuid.UUID("6f1c2b4e-0a1d-4c53-9d57-3f4f0f8c2a10")
+# The namespace of every uuid5 Ember derives: nodes, edges and episodes. Migration 20261112120000_graph_tables
+# copies this literal into its episodes.uuid backfill (uuid_generate_v5); test_pg_writer checks they agree.
+UUID_NAMESPACE = uuid.UUID("6f1c2b4e-0a1d-4c53-9d57-3f4f0f8c2a10")
 
 
 def node_uuid(group_id: str, label: str, key: str) -> str:
-    return str(uuid.uuid5(_NAMESPACE, f"{group_id}|{label}|{key}"))
+    return str(uuid.uuid5(UUID_NAMESPACE, f"{group_id}|{label}|{key}"))
+
+
+def episode_uuid(key: str) -> str:
+    """episodes.uuid (EMBER-164): uuid5 of the episode key, as the migration's backfill computes it."""
+    return str(uuid.uuid5(UUID_NAMESPACE, key))
 
 
 def ordering_time(value: datetime) -> str:
