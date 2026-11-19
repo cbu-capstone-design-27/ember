@@ -2,7 +2,7 @@
 
 - Jira: EMBER-44 (floor). The worker itself is EMBER-31.
 - Atlassian's published limits were checked against developer.atlassian.com on 2026-10-02. The rate-limiting page itself says it was last updated **2026-10-01**. Links are in [Sources](#sources).
-- Operator steps for the pull live in `services/jira-ingestion/README.md`. This page is the limit contract.
+- Status: the pull described here (`services/jira-ingestion/pull_test.py`, basic auth) was removed in EMBER-160. `backfill:jira` and `enrich:jira` in `ember-backend` use Connect Jira's OAuth tokens and keep the same limit rules on the shared `rate_limits` rows. This page is the limit contract.
 
 The backfill (`services/jira-ingestion/pull_test.py`) calls Jira Cloud with **HTTP basic auth: email + API token**. That is not a Forge, Connect, or OAuth 2.0 (3LO) app. Which budget applies depends on that choice, so both are written down.
 
