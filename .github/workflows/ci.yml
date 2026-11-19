@@ -165,6 +165,7 @@ jobs:
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_enrich_github.py
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_enrich_jira.py
           DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_enrich_slack.py
+          DBMATE="$RUNNER_TEMP/dbmate" "$RUNNER_TEMP/backend-venv/bin/python3" services/backend/tests/test_enrich_gitlab.py
       # The image: as nobody, exiting 2 without DATABASE_URL, healthy against the pg container, a source
       # with no secret disabled rather than fatal, and the migrations it ships apply (the migrate Job)
       - name: Backend container
