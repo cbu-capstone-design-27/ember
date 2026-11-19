@@ -126,7 +126,7 @@ The engine embeds entity names and fact text. The model and its settings are fix
 
 ## Loading into Postgres
 
-1. The dbmate migrations (`infra/k8s/apps/postgres/migrations`) create `graph.graphs`, `graph.nodes`, `graph.edges` and `graph.mentions`. `unique (graph_id, label, key)` on `graph.nodes` keeps one node per key in a graph. Required attributes are enforced in code by the pydantic models.
+1. The dbmate migrations (`services/backend/migrations`) create `graph.graphs`, `graph.nodes`, `graph.edges` and `graph.mentions`. `unique (graph_id, label, key)` on `graph.nodes` keeps one node per key in a graph. Required attributes are enforced in code by the pydantic models.
 2. `python -m loader load` writes each episode's nodes and edges with `services/pipeline/loader/pg_writer.py`, in the transaction that stamps `episodes.loaded_at`.
 3. The embed worker (`services/embed`) fills `graph.nodes.embedding` and `graph.edges.fact_embedding`.
 

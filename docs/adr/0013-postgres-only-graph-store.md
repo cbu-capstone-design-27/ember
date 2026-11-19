@@ -28,4 +28,4 @@ Neo4j only remained in the load step's default writer, the local tooling and the
 - One database. Graph writes commit with `episodes.loaded_at`, and backups, access and row-level security cover the graph with everything else.
 - The EMBER-146 reference now runs on Postgres. Comparing the fork with stock Graphiti on Neo4j isn't possible from this repo anymore. Two runs of the harness show two fork gaps: MMR search fails on nodes whose vector a resave nulled, and search and temporal results move between identical runs.
 - `e2e-check` no longer runs Cypher sample queries. Its counts and schema check run in memory, and `test_pg_writer.py` checks what the graph tables hold.
-- The cluster's Neo4j deployment (`infra/k8s/apps/neo4j`, the Ansible playbook) and its password are retired as a follow-up for Jacob. The password has been in the repository's history since 2026-09-25, so it is changed, not only removed.
+- The cluster's Neo4j deployment, which lives in the private infra repo, and its password are retired as a follow-up for Jacob. The password has been in the repository's history since 2026-09-25, so it is changed, not only removed.

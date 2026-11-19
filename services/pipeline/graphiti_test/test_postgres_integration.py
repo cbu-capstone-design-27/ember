@@ -1,5 +1,5 @@
 """Graphiti on the fork's PostgresDriver, a real Postgres, the fake models. Skipped unless GRAPHITI_TEST_DATABASE_URL
-is set to a local Postgres with the repo's migrations (infra/k8s/apps/postgres/migrations):
+is set to a local Postgres with the repo's migrations (services/backend/migrations):
 
     GRAPHITI_TEST_DATABASE_URL='postgresql://ember:change-me-locally@localhost:5432/ember?sslmode=disable' \
         python -m unittest graphiti_test.test_postgres_integration -v
